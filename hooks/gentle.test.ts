@@ -338,6 +338,14 @@ const rowOf = (tree: unknown, label: string): Node | null => {
   return walk(tree)
 }
 
+test('Gentle AI text buttons draw only their own [label], no Button chrome around it', async ($, on) => {
+  await start($, on)
+  const tree = JSON.stringify(await (await mountPane($)).drawn())
+  for (const key of ['rdd-project-on', 'rdd-global-off', 'gga-install', 'gentle-refresh']) {
+    expect(tree).toMatch(new RegExp(`"key":"${key}"[^}]*"plain":true`))
+  }
+})
+
 test('narrow sidebar: RDD scope labels never shrink and sit on their own rows', async ($, on) => {
   await start($, on)
   const tree = await (await mountPane($)).drawn()

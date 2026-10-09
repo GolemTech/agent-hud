@@ -200,6 +200,9 @@ for (const cols of [28, 60, 100]) {
         const row = all(tree, 'Box').find(b => elements(b).some(i => all(i, 'Text').includes(title)) && b.props?.flexWrap === 'wrap')
         expect(row).toBeDefined()
         const items = elements(row as Node)
+        // A non-plain Button draws `[ label ]` chrome the text does not show,
+        // so a measured row holds plain Buttons only.
+        for (const b of all(row, 'Button')) expect({ button: textOf(b), plain: b.props?.plain }).toEqual({ button: textOf(b), plain: true })
         const rule = (textOf(items[items.length - 1]).match(/^─+$/) ?? [''])[0]
         if (rule) expect(textOf(row).length + items.length - 1).toBe(columns)
         else expect(textOf(row).length).toBeLessThanOrEqual(columns)

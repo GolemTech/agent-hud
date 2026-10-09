@@ -1264,6 +1264,7 @@ export const register: Register = on => {
       <Box flexShrink={0}>
         <Button
           key={`toggle-${id}`}
+          plain
           onPress={() => void update($, collapsed, prev => ({ ...prev, [id]: !prev[id] }))}
         >
           <Text bold inverse color="claude">
@@ -1291,9 +1292,12 @@ export const register: Register = on => {
     // acts: it only says so.
     // `selected` marks the value a setting has now (`[● on]`), so a row of
     // choices reads as its current state.
+    // `plain`: the label already reads `[on]`, and a non-plain Button would
+    // wrap it in its own `[ … ]` chrome, which the row widths do not count.
     const action = (key: string, label: string, act: () => Promise<unknown>, selected = false) => (
       <Button
         key={key}
+        plain
         onPress={() => {
           if (view.demo) return $.ui.toast('demo mode')
           void act()
@@ -1654,6 +1658,7 @@ export const register: Register = on => {
             {!c.subagents && counts.done + counts.err > 0 && (
               <Button
                 key="clear-subagents"
+                plain
                 onPress={() => {
                   if (view.demo) return // sample data: nothing real to clear
                   for (const r of list) if (r.done) clearedAgents.add(r.id)
@@ -1708,6 +1713,7 @@ export const register: Register = on => {
             {!c.todos && todoDone > 0 && (
               <Button
                 key="clear-todos"
+                plain
                 onPress={() => {
                   if (view.demo) return // sample data: nothing real to clear
                   for (const t of todoList) if (t.status === 'completed') clearedTodos.add(t.content)
@@ -1744,6 +1750,7 @@ export const register: Register = on => {
             {!c.gentle && (
               <Button
                 key="gentle-refresh"
+                plain
                 onPress={() => {
                   if (view.demo) return $.ui.toast('demo mode')
                   void refreshGentle($)
