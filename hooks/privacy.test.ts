@@ -21,6 +21,8 @@ const liveFixture = (): HudView => ({
   account: ACCOUNT,
   mainModel: { model: 'claude-opus-5-5', effort: 'high' },
   branch: BRANCH,
+  changes: { added: 12, removed: 3 },
+  outputStyle: 'Explanatory',
   cwd: CWD,
   home: HOME,
   contextPercent: 42,
@@ -56,6 +58,9 @@ test('maskView keeps every non-identity field as it was', () => {
   const masked = maskView(live)
   expect(masked.demo).toBe(false)
   expect(masked.mainModel).toEqual(live.mainModel)
+  // Not identity: the output style and the change counts stay visible.
+  expect(masked.outputStyle).toBe('Explanatory')
+  expect(masked.changes).toEqual({ added: 12, removed: 3 })
   expect(masked.contextPercent).toBe(live.contextPercent)
   expect(masked.meters).toEqual(live.meters)
   expect(masked.footer).toBe(live.footer)

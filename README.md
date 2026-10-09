@@ -11,7 +11,7 @@ doing, and the main loop's todo list.
 
 | Section   | Contents |
 | --------- | -------- |
-| Session   | Session title (or short id), signed-in account, model and effort, git branch, working directory shortened to fit. |
+| Session   | Session title (or short id), signed-in account, model and effort, output style (when not the default), git branch with working-tree changes (`+N` added, `-M` removed lines, shown only when there are any), working directory shortened to fit. |
 | Context   | Meters for the context window and each rate-limit window, with time to reset and the local reset time; a footer with total tokens and cost. |
 | MCP       | MCP servers, connected first; servers waiting for authentication are dimmed. |
 | Subagents | Running / done / error counts, then one card per subagent: description, type, model, elapsed time and context tokens. |
@@ -79,6 +79,18 @@ rest, and the limits that come with them:
   files are read from that folder instead.
 - **Git branch** comes from `git branch --show-current`, refreshed about every
   5 seconds.
+- **Working-tree changes** come from `git diff --shortstat HEAD` on the same
+  cadence: staged and unstaged lines added and removed against `HEAD`.
+  Untracked files are not counted, and nothing shows in a repository with no
+  commit yet.
+- **Output style** is the one Claude Code composes each request's system
+  prompt with, observed on `prompt.compose` without changing the prompt.
+  Before the first request it is read from the `outputStyle` setting
+  (`.claude/settings.local.json`, then `.claude/settings.json` in the
+  repository root, then the user `settings.json`, which also follows
+  `CLAUDE_CONFIG_DIR`), about every 30 seconds; nothing else in those files is
+  used. The default style shows no line. Privacy mode leaves the style and the
+  change counts visible: they are not identity.
 - **Reset times** use the system UTC offset from `date +%z`.
 - **Dock width** cannot be forced by a plugin; a width you set wins.
 - **No network calls** are made.

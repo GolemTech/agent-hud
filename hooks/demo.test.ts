@@ -9,6 +9,8 @@ test('demoSnapshot: fixed sample session, no personal data', () => {
   const d = demoSnapshot(0)
   expect(d.session.title).toBe('checkout-refactor')
   expect(d.session.account).toBe('you@Acme')
+  expect(d.session.outputStyle).toBe('Explanatory')
+  expect(d.session.changes).toEqual({ added: 42, removed: 7 })
   expect(d.session.cwd.startsWith(d.session.home)).toBe(true)
   expect(d.meters.map(m => m.label)).toEqual(['ctx', '5h', '7d'])
   expect(d.footer).toBe('420,118 tokens · $3.42 spent')
