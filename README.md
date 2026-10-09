@@ -49,6 +49,13 @@ To add the marketplace first and install separately:
 - `/hud-demo` toggles a sample session (fixed data, progressing subagents
   and todos) for demos and screenshots. It spends no tokens and shows no
   personal data; run it again to return to the live session.
+- `/hud-private` toggles privacy mode for screen sharing and streaming. The
+  sidebar stays live (model, context, rate limits, cost, MCP, subagents,
+  todos), but the account shows as `you@example`, the session title as
+  `private session`, the session id is hidden, the branch shows as `••••` and
+  the path as `~/…`; `🔒 private` next to the Session header shows it is on.
+  It persists across plugin reloads until you run it again. Claude Code's own
+  welcome header and status line are not affected: a plugin cannot draw them.
 
 ## How it gets its data
 
@@ -64,7 +71,8 @@ rest, and the limits that come with them:
   `~/.claude/projects/<project>/<session>/custom-title.json`. If that file
   moves or changes shape, the short session id is shown instead.
 - **Account** (email user and organization) is read from the `oauthAccount`
-  field of `~/.claude.json`; nothing else in that file is used.
+  field of `~/.claude.json`; nothing else in that file is used. When
+  `CLAUDE_CONFIG_DIR` is set, both files are read from that folder instead.
 - **Git branch** comes from `git branch --show-current`, refreshed about every
   5 seconds.
 - **Reset times** use the system UTC offset from `date +%z`.
