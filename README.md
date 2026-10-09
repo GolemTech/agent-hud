@@ -16,7 +16,7 @@ doing, and the main loop's todo list.
 | MCP       | MCP servers, connected first; servers waiting for authentication are dimmed. |
 | Subagents | Running / done / error counts, then one card per subagent: description, type, model, elapsed time and context tokens. |
 | Todo      | The main loop's task list: done first, then in progress, then pending. |
-| Gentle AI | The [gentle-ai](https://github.com/Gentleman-Programming/gentle-ai) toolset: `gentle-ai`, `gga` and `engram` versions with `✓ up to date` or `↑ <newer>` (as fresh as your local brew tap), the gga review hook and its rules file, receipt-driven development (RDD) on or off and where that comes from, and the TDD policy (test-first by default under ODD; strict TDD on, off or unset). Shows "gentle-ai not installed" when it is not. |
+| Gentle AI | The [gentle-ai](https://github.com/Gentleman-Programming/gentle-ai) toolset: one aligned grid in four groups. **Tools**: `gentle-ai`, `gga` and `engram` versions with `✓` up to date or `↑ <newer>` (as fresh as your local brew tap, "as of" its last fetch); **gga**: the review hook and its rules file; **RDD**: receipt-driven development on or off and which scope decides it, then each scope's own setting; **TDD**: test-first by default under ODD, and strict TDD. One status vocabulary throughout: `✓` ok, `✗` missing, `↑` update, `●` on, `○` off, `—` unset, `?` unknown. Shows "gentle-ai not installed" when it is not. |
 
 ## Install
 
@@ -68,7 +68,7 @@ To add the marketplace first and install separately:
     minutes, and after each action).
   - Command buttons ask first: `[install]` (gga pre-commit hook, `gga install`),
     `[init]` (sample `.gga`, `gga init`, only when the project has none), and
-    RDD `project [on] [off]` / `global [on] [off]`
+    RDD `project [on] [off]` / `global [on] [off]` (the current value is marked `[● on]`)
     (`gentle-ai review mode enable|disable --scope clone|global`). Nothing runs
     unless you choose **Run it**; a short toast says how it went. Off always
     wins: a project "on" cannot override a global "off".
@@ -123,7 +123,7 @@ rest, and the limits that come with them:
   `gentle-ai --version`. **Update status** comes from
   `brew outdated --json=v2` run with `HOMEBREW_NO_AUTO_UPDATE=1`: it compares
   against your local tap metadata, so it is only as fresh as your last
-  `brew update`; "updates as of" is when the tap was last fetched. Tools not
+  `brew update`; "as of" beside **Tools** is when the tap was last fetched. Tools not
   installed through brew show no update status.
 - **gga** is detected by reading files, never by running gga (its commands
   check GitHub for updates, and `gga config` executes the project's `.gga`):
@@ -135,11 +135,11 @@ rest, and the limits that come with them:
   text and never executed, and the rules file (`RULES_FILE`, default
   `AGENTS.md`) by checking that it exists. A `RULES_FILE` that is not a plain
   relative file name is ignored: `AGENTS.md` is checked and shown instead,
-  with the note "unsafe RULES_FILE ignored". The hook counts as installed when
+  with the note "RULES_FILE ignored". The hook counts as installed when
   a hook file holds gga's block marker, or a legacy unmarked `gga run` /
   `ai-code-review run` line; a mere mention of either name does not count.
 - **RDD** comes from `gentle-ai review mode status --json` (read only).
-- **TDD**: "test-first by default (ODD)": test-first is the default of
+- **TDD**: "test-first (ODD)": test-first is the default of
   gentle-ai's Organic Driven Development workflow; strict TDD is `strict_tdd` in
   the project's `openspec/config.yaml`, matched as text (quoted or not,
   `true`/`false` or YAML `yes`/`no`/`on`/`off`, an inline `# comment`

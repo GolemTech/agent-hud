@@ -12,15 +12,34 @@ export const MAX_BAR = 20
 // The full subagent tally (`● 12 running · ✓ 12 done · ✕ 12 error`) needs
 // about this many columns; below it the compact `●12 ✓12 ✕12` is drawn.
 const FULL_COUNTS_COLUMNS = 36
-// The tool-version column (`gentle-ai 4.0.0`) and the widest status beside
-// it (`✓ up to date`); the column is padded only when both fit on one line.
-const TOOL_COLUMN = 17
-const TOOL_STATUS = 12
 
 export const CARD_ROWS = 4 // a subagent card: description, type, model, elapsed time
 
-// Gentle AI sub-rows (gga rules, strict TDD) sit this far in, under their row.
-export const SUB_ROW_INDENT = 3
+// The Gentle AI section is a grid: subgroup headings at HEADING_INDENT, item
+// rows at ITEM_INDENT, each row a label column, a value column and its detail.
+export const HEADING_INDENT = 1
+export const ITEM_INDENT = 2
+
+// The widest of some texts, in cells (one per code unit); 0 for none.
+export const columnWidth = (texts: readonly string[]): number => texts.reduce((w, t) => Math.max(w, t.length), 0)
+
+export type Grid = {
+  /** Label column: the item indent plus the longest label. */
+  label: number
+  /** Value column: the widest value (version or status glyph). */
+  value: number
+  /** A heading's Box: label and value columns, so its summary sits in the detail column; the label column alone when that would not fit. */
+  head: number
+}
+
+// Column widths of a grid from every label and value it draws, so all its
+// rows line up whatever the width.
+export const gridFor = (labels: readonly string[], values: readonly string[], columns: number): Grid => {
+  const label = ITEM_INDENT + columnWidth(labels)
+  const value = columnWidth(values)
+  const spanned = label + 1 + value
+  return { label, value, head: spanned <= columns ? spanned : label }
+}
 
 // A text button's label as drawn: `[label]`, or `[● label]` for the value a
 // setting has now. Its length is the button's width in the row count.
@@ -48,8 +67,6 @@ export type Layout = {
   barWidth: number
   /** Narrow dock: the compact subagent tally. */
   compact: boolean
-  /** Width of the tool-version column; 0 means no padding. */
-  toolPad: number
 }
 
 const clamp = (n: number, min: number, max: number) => Math.max(min, Math.min(max, n))
@@ -62,7 +79,6 @@ export const layoutFor = (bodyColumns: number | undefined, bodyRows: number | un
     // A third of the line, so the reset note fits beside it in a wide dock.
     barWidth: clamp(Math.floor(columns / 3), MIN_BAR, MAX_BAR),
     compact: columns < FULL_COUNTS_COLUMNS,
-    toolPad: columns >= TOOL_COLUMN + TOOL_STATUS ? TOOL_COLUMN : 0,
   }
 }
 
