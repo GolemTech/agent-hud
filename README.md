@@ -81,4 +81,4 @@ git-ignored.
 
 ## License
 
-Not chosen yet.
+[MIT](LICENSE) © GolemTech
