@@ -30,6 +30,18 @@ export const parseGgaConfig = (text: string): Record<string, string> => {
 export const ggaHookInstalled = (text: string): boolean =>
   text.includes('# ======== GGA START ========') || text.includes('ai-code-review')
 
+// The repo's hooks folder. Claude Code runs git with `core.hooksPath` forced to
+// /dev/null, so `git rev-parse --git-path hooks` cannot be asked; the repo's
+// own `core.hooksPath` (read from its config file alone) or `<common dir>/hooks`
+// is what git uses outside Claude Code. Relative paths are from the repo root.
+export const hooksDir = (root: string, commonDir: string, configured: string, home: string | null): string => {
+  const abs = (p: string) => (p.startsWith('/') ? p : `${root}/${p}`)
+  const set = configured.trim()
+  if (!set) return `${abs(commonDir.trim())}/hooks`
+  if (set === '~' || set.startsWith('~/')) return home ? `${home}${set.slice(1)}` : abs(set)
+  return abs(set)
+}
+
 export type OnOff = 'on' | 'off'
 export type RddStatus = {
   effective: OnOff

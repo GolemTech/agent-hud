@@ -44,6 +44,7 @@ Everything runs from `hooks/register.tsx`. The top of the file is pure, exported
 - `$.ui.open({ columns })` is a request: a dock width the person set wins, so a narrow "rail" is not reliable.
 - `turn.step` is a streaming event: the hook must be `async function*` ending in `return yield* next(e)`, and must not await `$` before forwarding (it would delay every response).
 - `$.process.run` resolves on any exit code (it rejects only when the command cannot start or outlasts `timeoutMs`, default 30 s): check `exitCode`, as the `git diff` refresh does for a repository with no `HEAD`. Every read-only run passes `CMD_TIMEOUT_MS` or `BREW_TIMEOUT_MS` (`gentle.ts`).
+- Claude Code runs every git with `core.hooksPath` forced to `/dev/null` (also through `GIT_CONFIG_*`), so `git rev-parse --git-path hooks` answers `/dev/null`. Find a repo's hooks folder with `--git-common-dir` plus `git config --file <common>/config --get core.hooksPath` (`hooksDir` in `gentle.ts`).
 - A lambda parameter named `on` inside `register` makes the hooks module fail to load (it shadows the `on` the loader follows); use another name.
 - Gating hooks (`agent.spawn`, `tool.call`) are observers here: keep `.catch((_$, e, next) => next(e))` so a failure never blocks the call.
 - Use `$.clock.now()`, not `Date.now()`, so the clock is mockable; and get the time zone from the host (`date +%z`), not from `Date`, whose zone may differ from the user's.

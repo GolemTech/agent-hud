@@ -4,6 +4,7 @@ import type { Engine, MockClock } from 'claude-code/testing'
 
 import {
   ggaHookInstalled,
+  hooksDir,
   parseBrewList,
   parseBrewOutdated,
   parseGgaConfig,
@@ -52,6 +53,14 @@ test('ggaHookInstalled: the GGA block marker, or the legacy one', () => {
   expect(ggaHookInstalled('#!/bin/sh\n# ai-code-review\n')).toBe(true)
   expect(ggaHookInstalled('#!/bin/sh\ngitleaks protect --staged\n')).toBe(false)
   expect(ggaHookInstalled('')).toBe(false)
+})
+
+test('hooksDir: the repo-configured core.hooksPath, else <common dir>/hooks', () => {
+  expect(hooksDir('/home/myuser/p', '.git', '', null)).toBe('/home/myuser/p/.git/hooks')
+  expect(hooksDir('/home/myuser/p', '/home/myuser/main/.git\n', '', null)).toBe('/home/myuser/main/.git/hooks')
+  expect(hooksDir('/home/myuser/p', '.git', '.husky\n', null)).toBe('/home/myuser/p/.husky')
+  expect(hooksDir('/home/myuser/p', '.git', '/opt/hooks', null)).toBe('/opt/hooks')
+  expect(hooksDir('/home/myuser/p', '.git', '~/hooks', '/home/myuser')).toBe('/home/myuser/hooks')
 })
 
 test('parseRddStatus: effective mode and its source from the status JSON', () => {
@@ -127,6 +136,9 @@ type Run = { argv: readonly string[]; init?: { cwd?: string; env?: Record<string
 // is on from the global setting, openspec sets no strict_tdd.
 const ON_GLOBAL = JSON.stringify({ status: { global: 'on', clone_local: '', effective: 'on', source: 'global' } })
 
+// The repo's pre-commit hook text; a test swaps in gga's block to install it.
+let preCommit = '#!/bin/sh\ngitleaks protect --staged\n'
+
 const answerEngine = (
   on: On,
   answer: () => string | Error = () => 'Cancel',
@@ -155,7 +167,7 @@ const answerEngine = (
   on('fs.read', (_$, e) => {
     const path = (e as { path: string }).path
     if (path === `${ROOT}/.gga`) return { value: 'PROVIDER="claude"\n' } as never
-    if (path === `${ROOT}/.git/hooks/pre-commit`) return { value: '#!/bin/sh\ngitleaks protect --staged\n' } as never
+    if (path === `${ROOT}/.git/hooks/pre-commit`) return { value: preCommit } as never
     if (path === `${ROOT}/openspec/config.yaml`) return { value: 'project: demo-proj\n' } as never
     throw new Error('no such file')
   })
@@ -177,7 +189,12 @@ const answerEngine = (
         1,
       )
     if (argv.startsWith('brew --repository')) return out(`${TAP}\n`)
-    if (argv === 'git rev-parse --git-path hooks') return out('.git/hooks\n')
+    // As the engine runs git: `core.hooksPath=/dev/null` is forced, so the
+    // hooks path git reports is not the repo's; its common dir and its own
+    // config file are unaffected (here no core.hooksPath: exit 1).
+    if (argv === 'git rev-parse --git-path hooks') return out('/dev/null\n')
+    if (argv === 'git rev-parse --git-common-dir') return out('.git\n')
+    if (argv === `git config --file ${ROOT}/.git/config --get core.hooksPath`) return out('', 1)
     if (argv.startsWith('gentle-ai review mode status'))
       return rddStatus ? rddStatus(clock).then(s => out(s)) : out(ON_GLOBAL)
     if (argv === 'date +%z') return out('+0000\n')
@@ -243,6 +260,17 @@ test('the Gentle AI section shows versions, updates, gga, RDD and TDD', async ($
   expect(text).toContain('"TDD  ","test-first"')
   expect(text).toContain('" by default (ODD)"')
   expect(text).toContain('"strict: ","unset"')
+})
+
+test('an installed gga hook shows ✓ although the engine forces core.hooksPath', async ($, on) => {
+  preCommit = '#!/bin/sh\n# ======== GGA START ========\ngga run\n# ======== GGA END ========\n'
+  try {
+    await start($, on)
+    const text = JSON.stringify(await (await mountPane($)).drawn())
+    expect(text).toContain('"hook ","✓"')
+  } finally {
+    preCommit = '#!/bin/sh\ngitleaks protect --staged\n'
+  }
 })
 
 test('detection never runs gga, and brew runs without auto-update', async ($, on) => {

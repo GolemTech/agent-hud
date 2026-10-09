@@ -7,6 +7,7 @@ import {
   actionSpec,
   BREW_ENV,
   ggaHookInstalled,
+  hooksDir,
   parseBrewList,
   parseBrewOutdated,
   parseGgaConfig,
@@ -722,10 +723,18 @@ const detectGentle = async ($: EngineInterface): Promise<GentleInfo> => {
       gga.rules = null
     }
     try {
-      const r = await $.process.run(['git', 'rev-parse', '--git-path', 'hooks'], { cwd: root, timeoutMs: CMD_TIMEOUT_MS })
-      const dir = clean(r.stdout).trim()
-      if (r.exitCode === 0 && dir) {
-        const hooks = dir.startsWith('/') ? dir : `${root}/${dir}`
+      // Not `--git-path hooks`: the engine forces core.hooksPath=/dev/null on
+      // every git it runs, so ask for the common dir and read the repo's own
+      // config file for a core.hooksPath (exit 1 when it sets none).
+      const common = await $.process.run(['git', 'rev-parse', '--git-common-dir'], { cwd: root, timeoutMs: CMD_TIMEOUT_MS })
+      const commonDir = clean(common.stdout).trim()
+      if (common.exitCode === 0 && commonDir) {
+        const configFile = `${commonDir.startsWith('/') ? commonDir : `${root}/${commonDir}`}/config`
+        const set = await $.process.run(['git', 'config', '--file', configFile, '--get', 'core.hooksPath'], {
+          cwd: root,
+          timeoutMs: CMD_TIMEOUT_MS,
+        })
+        const hooks = hooksDir(root, commonDir, set.exitCode === 0 ? clean(set.stdout) : '', homeCache)
         const files = [await readOr(`${hooks}/pre-commit`), await readOr(`${hooks}/commit-msg`)]
         gga.hook = files.some(t => t !== null && ggaHookInstalled(t))
       }

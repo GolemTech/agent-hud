@@ -39,7 +39,9 @@ issue for a security problem.
   - Gentle AI section, at session start, about every 5 minutes and on `↻`:
     `gentle-ai --version`; `gentle-ai review mode status --cwd <root> --json`
     (without `--cwd` outside a repository);
-    `git rev-parse --git-path hooks` (in the repository root);
+    `git rev-parse --git-common-dir` and
+    `git config --file <common dir>/config --get core.hooksPath` (in the
+    repository root);
     `brew list --versions --formula gentle-ai gga engram`,
     `brew outdated --json=v2 --formula gentle-ai gga engram` and
     `brew --repository gentleman-programming/tap`, all three with

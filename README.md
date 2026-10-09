@@ -116,8 +116,10 @@ rest, and the limits that come with them:
   installed through brew show no update status.
 - **gga** is detected by reading files, never by running gga (its commands
   check GitHub for updates, and `gga config` executes the project's `.gga`):
-  the hook from the `pre-commit` / `commit-msg` files in
-  `git rev-parse --git-path hooks`, the configuration from the project `.gga`
+  the hook from the `pre-commit` / `commit-msg` files in the repository's
+  hooks folder (the `core.hooksPath` set in the repository's own config file,
+  else `<git common dir>/hooks`; Claude Code runs git with `core.hooksPath`
+  forced to `/dev/null`, so git cannot be asked for it), the configuration from the project `.gga`
   over `~/.config/gga/config` (`XDG_CONFIG_HOME` respected), parsed as plain
   text and never executed, and the rules file (`RULES_FILE`, default
   `AGENTS.md`) by checking that it exists.
