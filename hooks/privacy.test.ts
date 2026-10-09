@@ -74,7 +74,7 @@ test('maskView keeps every non-identity field as it was', () => {
 // The engine's bottom for the poller (title, account, branch, offset) and for
 // everything the Pane reads.
 const answerEngine = (on: On) => {
-  mock.clock(on)
+  const clock = mock.clock(on)
   mock.env(on, { HOME })
   on('command.register', () => ({ value: undefined }) as never)
   on('ui.open', () => ({ value: { isPlaced: true } }) as never)
@@ -87,6 +87,7 @@ const answerEngine = (on: On) => {
   on('session.cwd', () => ({ value: CWD }) as never)
   on('session.repo', () => ({ value: { root: CWD, remote: null } }) as never)
   on('session.model', () => ({ value: 'claude-opus-5-5' }) as never)
+  on('session.version', () => ({ value: { version: '2.1.296', base: '2.1.296' } }) as never)
   on('session.usage', () => ({ value: { startedAt: 0, context: { window: 1_000_000, percent: 55 } } }) as never)
   on('tool.list', () => ({ value: [] }) as never)
   on('agent.list', () => ({ value: [] }) as never)
@@ -101,6 +102,7 @@ const answerEngine = (on: On) => {
     const argv = (e as { argv: readonly string[] }).argv
     return { value: { stdout: argv[0] === 'git' ? `${BRANCH}\n` : '+0000\n', stderr: '', exitCode: 0 } } as never
   })
+  return clock
 }
 
 const mountPane = ($: Engine) =>
@@ -113,15 +115,17 @@ const mountPane = ($: Engine) =>
   })
 
 test('/hud-private masks the live Session section and toggles back', async ($, on) => {
-  answerEngine(on)
+  const clock = answerEngine(on)
   await $.session.start({ cwd: CWD, surface: 'terminal', isInteractive: true } as never)
   // Let the first poller tick fill the title, account and branch caches.
-  for (let i = 0; i < 50; i++) await Promise.resolve()
+  await clock.settle()
   const pane = await mountPane($)
   // The command's atom write redraws the mounted Pane.
   const paneText = async () => JSON.stringify(await pane.drawn())
 
+  const shortId = SESSION_ID.slice(0, 8)
   const live = await paneText()
+  expect(live).toContain(shortId)
   expect(live).toContain(ACCOUNT)
   expect(live).toContain(BRANCH)
   expect(live).not.toContain('🔒 private')
@@ -132,11 +136,12 @@ test('/hud-private masks the live Session section and toggles back', async ($, o
   expect(masked).toContain('🔒 private')
   expect(masked).toContain('you@example')
   expect(masked).toContain('55%')
-  for (const real of [ACCOUNT, BRANCH, TITLE, 'secret-proj', 'myuser']) expect(masked).not.toContain(real)
+  for (const real of [ACCOUNT, BRANCH, TITLE, shortId, 'secret-proj', 'myuser']) expect(masked).not.toContain(real)
 
   const off = await $.command.run({ command: 'hud-private', args: '' } as never)
   expect(off.text).toContain('off')
   const back = await paneText()
+  expect(back).toContain(shortId)
   expect(back).toContain(ACCOUNT)
   expect(back).toContain(BRANCH)
   expect(back).not.toContain('🔒 private')

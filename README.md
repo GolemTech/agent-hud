@@ -16,7 +16,7 @@ doing, and the main loop's todo list.
 | MCP       | MCP servers, connected first; servers waiting for authentication are dimmed. |
 | Subagents | Running / done / error counts, then one card per subagent: description, type, model, elapsed time and context tokens. |
 | Todo      | The main loop's task list: done first, then in progress, then pending. |
-| Gentle AI | The [gentle-ai](https://github.com/Gentleman-Programming/gentle-ai) toolset: `gentle-ai`, `gga` and `engram` versions with `✓ up to date` or `↑ <newer>` (as fresh as your local brew tap), the gga review hook and its rules file, receipt-driven development (RDD) on or off and where that comes from, and the TDD policy (test-first by default; strict TDD on, off or unset). Shows "gentle-ai not installed" when it is not. |
+| Gentle AI | The [gentle-ai](https://github.com/Gentleman-Programming/gentle-ai) toolset: `gentle-ai`, `gga` and `engram` versions with `✓ up to date` or `↑ <newer>` (as fresh as your local brew tap), the gga review hook and its rules file, receipt-driven development (RDD) on or off and where that comes from, and the TDD policy (test-first by default under ODD; strict TDD on, off or unset). Shows "gentle-ai not installed" when it is not. |
 
 ## Install
 
@@ -116,13 +116,16 @@ rest, and the limits that come with them:
   installed through brew show no update status.
 - **gga** is detected by reading files, never by running gga (its commands
   check GitHub for updates, and `gga config` executes the project's `.gga`):
-  the hook from the `pre-commit` / `commit-msg` files in
-  `git rev-parse --git-path hooks`, the configuration from the project `.gga`
+  the hook from the `pre-commit` / `commit-msg` files in the repository's
+  hooks folder (the `core.hooksPath` set in the repository's own config file,
+  else `<git common dir>/hooks`; Claude Code runs git with `core.hooksPath`
+  forced to `/dev/null`, so git cannot be asked for it), the configuration from the project `.gga`
   over `~/.config/gga/config` (`XDG_CONFIG_HOME` respected), parsed as plain
   text and never executed, and the rules file (`RULES_FILE`, default
   `AGENTS.md`) by checking that it exists.
 - **RDD** comes from `gentle-ai review mode status --json` (read only).
-- **TDD**: test-first is the gentle-ai default; strict TDD is `strict_tdd` in
+- **TDD**: "test-first by default (ODD)": test-first is the default of
+  gentle-ai's Organic Driven Development workflow; strict TDD is `strict_tdd` in
   the project's `openspec/config.yaml`, matched as text.
 - **No network calls** are made by the plugin itself.
 - **Control characters** (escape sequences, newlines, bells) are stripped from

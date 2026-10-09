@@ -7,13 +7,15 @@ import {
   actionSpec,
   BREW_ENV,
   ggaHookInstalled,
+  hooksDir,
   parseBrewList,
   parseBrewOutdated,
   parseGgaConfig,
   parseRddStatus,
   parseStrictTdd,
   parseVersion,
-  PROBE_MS,
+  BREW_TIMEOUT_MS,
+  CMD_TIMEOUT_MS,
   RUN_IT,
   CANCEL,
   rulesFileName,
@@ -23,15 +25,21 @@ import {
   TOOLS,
 } from './gentle'
 import type { GentleAction, GentleInfo, GentleView, RddStatus, StrictTdd } from './gentle'
+import { clean } from './text'
+
+// Re-exported for the unit tests, which import the helpers from here.
+export { clean }
 
 const PANE = 'hud'
-type SectionId = 'session' | 'context' | 'mcp' | 'subagents' | 'todos' | 'gentle'
 
-// Defence in depth for text from outside the plugin (files, tool inputs, the
-// agent list, MCP tool names): C0 and C1 control characters are removed where
-// that text enters, so no escape sequence, newline or bell reaches the screen.
-const CONTROL = /[\u0000-\u001f\u007f-\u009f]/g
-export const clean = (s: string): string => s.replace(CONTROL, '')
+// The Pane's row budget for subagent cards. FIXED_ROWS counts every row that
+// does not grow with a list: the hide arrow, section headers and gaps, the
+// Session lines, the Subagents tally, the Gentle AI section and the footer.
+const FIXED_ROWS = 32
+const CONTEXT_FOOTER_ROWS = 1 // the tokens · cost line under the meters
+const CARD_ROWS = 4 // description, type, model, elapsed time
+const DEFAULT_VIEWPORT_ROWS = 24 // when the engine reports no viewport
+type SectionId = 'session' | 'context' | 'mcp' | 'subagents' | 'todos' | 'gentle'
 
 // ── Todos ────────────────────────────────────────────────────────────────
 // No `$` accessor holds the task list, so the pane mirrors it from the
@@ -627,9 +635,11 @@ let versionCache: string | null = null
 // that calls `$` is here, since the hooks loader never follows `$` across an
 // import. Detection is several process runs, brew among them, so it runs at
 // session start, then every ~300 ticks, and on ↻ or after an action, never on
-// every render. One run at a time. gga itself is never run for detection.
+// every render. gga itself is never run for detection.
 let gentleCache: GentleInfo | null = null
 let gentleRun: Promise<void> | null = null
+// Numbers each detection as it starts; only the newest may write the cache.
+let gentleGeneration = 0
 
 // Every probe is guarded on its own: one failing leaves its field unknown.
 const detectGentle = async ($: EngineInterface): Promise<GentleInfo> => {
@@ -653,14 +663,14 @@ const detectGentle = async ($: EngineInterface): Promise<GentleInfo> => {
   try {
     const r = await $.process.run(['brew', 'list', '--versions', '--formula', ...TOOLS], {
       env: BREW_ENV,
-      timeoutMs: PROBE_MS,
+      timeoutMs: BREW_TIMEOUT_MS,
     })
     Object.assign(versions, parseBrewList(r.stdout))
   } catch {
     // no brew: versions come from gentle-ai itself below
   }
   try {
-    const r = await $.process.run(['gentle-ai', '--version'], { timeoutMs: PROBE_MS })
+    const r = await $.process.run(['gentle-ai', '--version'], { timeoutMs: CMD_TIMEOUT_MS })
     const v = r.exitCode === 0 ? parseVersion(r.stdout) : null
     if (v) versions['gentle-ai'] = v
   } catch {
@@ -670,7 +680,7 @@ const detectGentle = async ($: EngineInterface): Promise<GentleInfo> => {
     // Exits 1 when something is outdated: the JSON on stdout is what counts.
     const r = await $.process.run(['brew', 'outdated', '--json=v2', '--formula', ...TOOLS], {
       env: BREW_ENV,
-      timeoutMs: PROBE_MS,
+      timeoutMs: BREW_TIMEOUT_MS,
     })
     updates = parseBrewOutdated(r.stdout)
   } catch {
@@ -678,7 +688,7 @@ const detectGentle = async ($: EngineInterface): Promise<GentleInfo> => {
   }
   if (updates) {
     try {
-      const r = await $.process.run(['brew', '--repository', TAP], { env: BREW_ENV, timeoutMs: PROBE_MS })
+      const r = await $.process.run(['brew', '--repository', TAP], { env: BREW_ENV, timeoutMs: BREW_TIMEOUT_MS })
       const tap = clean(r.stdout).trim()
       if (r.exitCode === 0 && tap.startsWith('/')) updatesAsOf = (await $.fs.stat(`${tap}/.git/FETCH_HEAD`)).mtimeMs
     } catch {
@@ -713,10 +723,18 @@ const detectGentle = async ($: EngineInterface): Promise<GentleInfo> => {
       gga.rules = null
     }
     try {
-      const r = await $.process.run(['git', 'rev-parse', '--git-path', 'hooks'], { cwd: root, timeoutMs: PROBE_MS })
-      const dir = clean(r.stdout).trim()
-      if (r.exitCode === 0 && dir) {
-        const hooks = dir.startsWith('/') ? dir : `${root}/${dir}`
+      // Not `--git-path hooks`: the engine forces core.hooksPath=/dev/null on
+      // every git it runs, so ask for the common dir and read the repo's own
+      // config file for a core.hooksPath (exit 1 when it sets none).
+      const common = await $.process.run(['git', 'rev-parse', '--git-common-dir'], { cwd: root, timeoutMs: CMD_TIMEOUT_MS })
+      const commonDir = clean(common.stdout).trim()
+      if (common.exitCode === 0 && commonDir) {
+        const configFile = `${commonDir.startsWith('/') ? commonDir : `${root}/${commonDir}`}/config`
+        const set = await $.process.run(['git', 'config', '--file', configFile, '--get', 'core.hooksPath'], {
+          cwd: root,
+          timeoutMs: CMD_TIMEOUT_MS,
+        })
+        const hooks = hooksDir(root, commonDir, set.exitCode === 0 ? clean(set.stdout) : '', homeCache)
         const files = [await readOr(`${hooks}/pre-commit`), await readOr(`${hooks}/commit-msg`)]
         gga.hook = files.some(t => t !== null && ggaHookInstalled(t))
       }
@@ -729,7 +747,7 @@ const detectGentle = async ($: EngineInterface): Promise<GentleInfo> => {
     const argv = root
       ? ['gentle-ai', 'review', 'mode', 'status', '--cwd', root, '--json']
       : ['gentle-ai', 'review', 'mode', 'status', '--json']
-    const r = await $.process.run(argv, { timeoutMs: PROBE_MS })
+    const r = await $.process.run(argv, { timeoutMs: CMD_TIMEOUT_MS })
     rdd = r.exitCode === 0 ? parseRddStatus(r.stdout) : null
   } catch {
     rdd = null
@@ -785,19 +803,24 @@ const fillPrompt = async ($: EngineInterface, text: string): Promise<void> => {
   }
 }
 
-const refreshGentle = ($: EngineInterface): Promise<void> => {
-  if (!gentleRun) {
-    gentleRun = (async () => {
-      try {
-        gentleCache = await detectGentle($)
-      } catch {
-        // keep the last known detection
-      } finally {
-        gentleRun = null
-      }
-    })()
-  }
-  return gentleRun
+// A periodic or ↻ refresh joins a detection already under way. After an
+// action, `fresh` starts a new one at once: what an older run read may predate
+// the action, so that run's result is dropped when it finishes later.
+const refreshGentle = ($: EngineInterface, fresh = false): Promise<void> => {
+  if (gentleRun && !fresh) return gentleRun
+  const generation = ++gentleGeneration
+  const run = (async () => {
+    try {
+      const info = await detectGentle($)
+      if (generation === gentleGeneration) gentleCache = info
+    } catch {
+      // keep the last known detection
+    } finally {
+      if (generation === gentleGeneration) gentleRun = null
+    }
+  })()
+  gentleRun = run
+  return run
 }
 
 export const gentleView = (info: GentleInfo, now: number, offsetMin: number | null): GentleView => {
@@ -980,14 +1003,15 @@ export const register: Register = on => {
       // System UTC offset for reset times: now, then every ~10 min (DST).
       if (ticks % 600 === 1) {
         try {
-          const { stdout } = await $.process.run(['date', '+%z'])
+          const { stdout } = await $.process.run(['date', '+%z'], { timeoutMs: CMD_TIMEOUT_MS })
           utcOffsetMin = parseOffset(stdout) ?? utcOffsetMin
         } catch {
           // keep the last known offset; without one, only the countdown shows
         }
       }
       // Refresh the cached branch every ~5s (git spawns a process). Each
-      // source is guarded on its own: one failing never stops the others.
+      // source is guarded on its own: one failing never stops the others, and
+      // a command that cannot start or times out keeps its last known value.
       if (ticks % 5 === 1) {
         try {
           const repo = await $.session.repo()
@@ -998,20 +1022,22 @@ export const register: Register = on => {
             try {
               const { stdout } = await $.process.run(['git', 'branch', '--show-current'], {
                 cwd: repo.root,
+                timeoutMs: CMD_TIMEOUT_MS,
               })
               gitBranchCache = clean(stdout).trim() || null
             } catch {
-              gitBranchCache = null
+              // keep the last known branch
             }
             // Guarded on its own: no HEAD yet (an empty repository) exits
             // non-zero, which must not touch the branch.
             try {
               const { stdout, exitCode } = await $.process.run(['git', 'diff', '--shortstat', 'HEAD'], {
                 cwd: repo.root,
+                timeoutMs: CMD_TIMEOUT_MS,
               })
               gitChangesCache = exitCode === 0 ? parseShortstat(stdout) : null
             } catch {
-              gitChangesCache = null
+              // keep the last known counts
             }
           }
         } catch {
@@ -1130,8 +1156,7 @@ export const register: Register = on => {
   // `liveView`. Written to `$.state` so a reload keeps it on; writing the atom
   // redraws both surfaces.
   on('command.run', { command: 'hud-private' }, async $ => {
-    const enabled = !(await read($, privateMode))
-    await update($, privateMode, () => enabled)
+    const enabled = await update($, privateMode, masked => !masked)
     return {
       text: enabled
         ? 'Privacy mode on: account, session title and id, branch and path are masked. Run /hud-private again to exit.'
@@ -1182,9 +1207,9 @@ export const register: Register = on => {
     const counts = agentCounts(list)
     const todoList = orderTodos(view.todos)
     const todoDone = todoList.filter(t => t.status === 'completed').length
-    // Each subagent card takes four rows; show as many as fit, at least one.
-    const used = ms.length + 1 + servers.length + todoList.length + 32
-    const cards = Math.max(1, Math.floor(((e.viewport?.rows ?? 24) - used) / 4))
+    // Subagent cards fill the rows the other sections leave; at least one.
+    const used = ms.length + CONTEXT_FOOTER_ROWS + servers.length + todoList.length + FIXED_ROWS
+    const cards = Math.max(1, Math.floor(((e.viewport?.rows ?? DEFAULT_VIEWPORT_ROWS) - used) / CARD_ROWS))
 
     // 🤖 Opus 5.5 · medium — the same line for the session and each subagent.
     const modelLine = (m: ModelInfo | undefined, indent = '') =>
@@ -1224,7 +1249,7 @@ export const register: Register = on => {
     // Command buttons confirm first (`runAction`), then detection runs again.
     const command = (key: GentleAction, label: string, root: string) =>
       action(key, label, async () => {
-        if (await runAction($, key, root)) await refreshGentle($)
+        if (await runAction($, key, root)) await refreshGentle($, true)
       })
 
     const gentleSection = (g: GentleView | null) => {
@@ -1245,17 +1270,21 @@ export const register: Register = on => {
           {g.updatesKnown && g.asOf && <Text color="subtle">updates as of {g.asOf} (brew)</Text>}
           {ggaInstalled && !root && <Text color="subtle">gga  no repository</Text>}
           {ggaInstalled && root && (
-            <Box gap={1}>
-              <Text>gga</Text>
-              <Text color={g.gga.hook ? 'success' : g.gga.hook === false ? 'error' : 'subtle'}>
-                hook {g.gga.hook ? '✓' : g.gga.hook === false ? '✗' : '?'}
-              </Text>
+            <Box gap={1} flexWrap="wrap">
+              <Box flexShrink={0}>
+                <Text>gga</Text>
+              </Box>
+              <Box flexShrink={0}>
+                <Text color={g.gga.hook ? 'success' : g.gga.hook === false ? 'error' : 'subtle'}>
+                  hook {g.gga.hook ? '✓' : g.gga.hook === false ? '✗' : '?'}
+                </Text>
+              </Box>
               {g.gga.hook === false && command('gga-install', 'install', root)}
               {!g.gga.projectConfig && command('gga-init', 'init', root)}
             </Box>
           )}
           {ggaInstalled && root && (
-            <Box gap={1}>
+            <Box gap={1} flexWrap="wrap">
               <Text>{'   '}</Text>
               <Text wrap="truncate-end" color={g.gga.rules ? 'success' : g.gga.rules === false ? 'error' : 'subtle'}>
                 rules {g.gga.rules ? '✓' : g.gga.rules === false ? '✗' : '?'} {g.gga.rulesFile}
@@ -1274,17 +1303,28 @@ export const register: Register = on => {
               <Text color="subtle">unknown</Text>
             )}
           </Text>
-          <Box gap={1}>
-            {root && <Text color="subtle">project</Text>}
-            {root && command('rdd-project-on', 'on', root)}
-            {root && command('rdd-project-off', 'off', root)}
-            <Text color="subtle">global</Text>
+          {/* One row per scope. In a narrow dock the label keeps its width
+              (flexShrink 0) and the buttons wrap below it, instead of the
+              label being squeezed into one letter per line. */}
+          {root && (
+            <Box gap={1} flexWrap="wrap">
+              <Box flexShrink={0}>
+                <Text color="subtle">{'   project'}</Text>
+              </Box>
+              {command('rdd-project-on', 'on', root)}
+              {command('rdd-project-off', 'off', root)}
+            </Box>
+          )}
+          <Box gap={1} flexWrap="wrap">
+            <Box flexShrink={0}>
+              <Text color="subtle">{'   global '}</Text>
+            </Box>
             {command('rdd-global-on', 'on', root ?? view.cwd)}
             {command('rdd-global-off', 'off', root ?? view.cwd)}
           </Box>
           <Text wrap="truncate-end">
             {'TDD  '}test-first
-            <Text color="subtle"> (ODD default)</Text>
+            <Text color="subtle"> by default (ODD)</Text>
           </Text>
           {g.strictTdd && (
             <Box gap={1}>

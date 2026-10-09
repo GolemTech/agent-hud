@@ -1,9 +1,10 @@
 import type { On } from 'claude-code'
 import { expect, mock, test } from 'claude-code/testing'
-import type { Engine } from 'claude-code/testing'
+import type { Engine, MockClock } from 'claude-code/testing'
 
 import {
   ggaHookInstalled,
+  hooksDir,
   parseBrewList,
   parseBrewOutdated,
   parseGgaConfig,
@@ -52,6 +53,14 @@ test('ggaHookInstalled: the GGA block marker, or the legacy one', () => {
   expect(ggaHookInstalled('#!/bin/sh\n# ai-code-review\n')).toBe(true)
   expect(ggaHookInstalled('#!/bin/sh\ngitleaks protect --staged\n')).toBe(false)
   expect(ggaHookInstalled('')).toBe(false)
+})
+
+test('hooksDir: the repo-configured core.hooksPath, else <common dir>/hooks', () => {
+  expect(hooksDir('/home/myuser/p', '.git', '', null)).toBe('/home/myuser/p/.git/hooks')
+  expect(hooksDir('/home/myuser/p', '/home/myuser/main/.git\n', '', null)).toBe('/home/myuser/main/.git/hooks')
+  expect(hooksDir('/home/myuser/p', '.git', '.husky\n', null)).toBe('/home/myuser/p/.husky')
+  expect(hooksDir('/home/myuser/p', '.git', '/opt/hooks', null)).toBe('/opt/hooks')
+  expect(hooksDir('/home/myuser/p', '.git', '~/hooks', '/home/myuser')).toBe('/home/myuser/hooks')
 })
 
 test('parseRddStatus: effective mode and its source from the status JSON', () => {
@@ -125,7 +134,16 @@ type Run = { argv: readonly string[]; init?: { cwd?: string; env?: Record<string
 // The engine's bottom: gentle-ai 4.0.0, engram has an update, the gga hook is
 // missing, a project `.gga` names no rules file and AGENTS.md is absent, RDD
 // is on from the global setting, openspec sets no strict_tdd.
-const answerEngine = (on: On, answer: () => string | Error = () => 'Cancel') => {
+const ON_GLOBAL = JSON.stringify({ status: { global: 'on', clone_local: '', effective: 'on', source: 'global' } })
+
+// The repo's pre-commit hook text; a test swaps in gga's block to install it.
+let preCommit = '#!/bin/sh\ngitleaks protect --staged\n'
+
+const answerEngine = (
+  on: On,
+  answer: () => string | Error = () => 'Cancel',
+  rddStatus?: (clock: MockClock) => Promise<string>,
+) => {
   const runs: Run[] = []
   const fills: { text: string; mode?: string }[] = []
   const toasts: string[] = []
@@ -149,7 +167,7 @@ const answerEngine = (on: On, answer: () => string | Error = () => 'Cancel') => 
   on('fs.read', (_$, e) => {
     const path = (e as { path: string }).path
     if (path === `${ROOT}/.gga`) return { value: 'PROVIDER="claude"\n' } as never
-    if (path === `${ROOT}/.git/hooks/pre-commit`) return { value: '#!/bin/sh\ngitleaks protect --staged\n' } as never
+    if (path === `${ROOT}/.git/hooks/pre-commit`) return { value: preCommit } as never
     if (path === `${ROOT}/openspec/config.yaml`) return { value: 'project: demo-proj\n' } as never
     throw new Error('no such file')
   })
@@ -171,9 +189,14 @@ const answerEngine = (on: On, answer: () => string | Error = () => 'Cancel') => 
         1,
       )
     if (argv.startsWith('brew --repository')) return out(`${TAP}\n`)
-    if (argv === 'git rev-parse --git-path hooks') return out('.git/hooks\n')
+    // As the engine runs git: `core.hooksPath=/dev/null` is forced, so the
+    // hooks path git reports is not the repo's; its common dir and its own
+    // config file are unaffected (here no core.hooksPath: exit 1).
+    if (argv === 'git rev-parse --git-path hooks') return out('/dev/null\n')
+    if (argv === 'git rev-parse --git-common-dir') return out('.git\n')
+    if (argv === `git config --file ${ROOT}/.git/config --get core.hooksPath`) return out('', 1)
     if (argv.startsWith('gentle-ai review mode status'))
-      return out(JSON.stringify({ status: { global: 'on', clone_local: '', effective: 'on', source: 'global' } }))
+      return rddStatus ? rddStatus(clock).then(s => out(s)) : out(ON_GLOBAL)
     if (argv === 'date +%z') return out('+0000\n')
     return out('')
   })
@@ -206,12 +229,57 @@ const mountPane = ($: Engine) =>
     viewport: { rows: 80, columns: 60 },
   } as never)
 
-const start = async ($: Engine, on: On, answer?: () => string | Error) => {
-  const engine = answerEngine(on, answer)
+const start = async (
+  $: Engine,
+  on: On,
+  answer?: () => string | Error,
+  rddStatus?: (clock: MockClock) => Promise<string>,
+) => {
+  const engine = answerEngine(on, answer, rddStatus)
   await $.session.start({ cwd: ROOT, surface: 'terminal', isInteractive: true } as never)
   await engine.clock.settle()
   return engine
 }
+
+// The row: the innermost Box whose direct child holds a Text that starts with
+// `label` (the label's own Box, or the Text itself).
+type Node = { type?: string; props?: Record<string, unknown>; children?: unknown[] }
+const rowOf = (tree: unknown, label: string): Node | null => {
+  const hasLabel = (n: unknown): boolean =>
+    typeof n === 'object' && n !== null &&
+    (((n as Node).type === 'Text' && String((n as Node).children?.[0] ?? '').trimStart().startsWith(label)) ||
+      ((n as Node).children ?? []).some(hasLabel))
+  const walk = (n: unknown): Node | null => {
+    if (typeof n !== 'object' || n === null) return null
+    for (const c of (n as Node).children ?? []) {
+      const found = walk(c)
+      if (found) return found
+    }
+    const node = n as Node
+    const direct = (node.children ?? []).some(
+      c => typeof c === 'object' && c !== null && ((c as Node).type === 'Box' || (c as Node).type === 'Text') && hasLabel(c),
+    )
+    return node.type === 'Box' && direct && (node.children ?? []).length > 1 ? node : null
+  }
+  return walk(tree)
+}
+
+test('narrow sidebar: RDD scope labels never shrink and sit on their own rows', async ($, on) => {
+  await start($, on)
+  const tree = await (await mountPane($)).drawn()
+  for (const label of ['project', 'global']) {
+    const row = rowOf(tree, label)
+    expect(row).not.toBeNull()
+    expect(row?.props?.flexWrap).toBe('wrap')
+    // The label's own Box keeps its width; the buttons wrap below it instead.
+    const labelBox = (row?.children ?? []).find(
+      c => (c as Node).type === 'Box' && (c as Node).props?.flexShrink === 0,
+    )
+    expect(labelBox).toBeDefined()
+  }
+  const project = JSON.stringify(rowOf(tree, 'project'))
+  expect(project).not.toContain('global')
+})
 
 test('the Gentle AI section shows versions, updates, gga, RDD and TDD', async ($, on) => {
   await start($, on)
@@ -229,8 +297,20 @@ test('the Gentle AI section shows versions, updates, gga, RDD and TDD', async ($
   expect(text).toContain('"hook ","✗"')
   expect(text).toContain('"rules ","✗"," ","AGENTS.md"')
   expect(text).toContain('"● ","on"," (","global",")"')
-  expect(text).toContain('test-first')
+  expect(text).toContain('"TDD  ","test-first"')
+  expect(text).toContain('" by default (ODD)"')
   expect(text).toContain('"strict: ","unset"')
+})
+
+test('an installed gga hook shows ✓ although the engine forces core.hooksPath', async ($, on) => {
+  preCommit = '#!/bin/sh\n# ======== GGA START ========\ngga run\n# ======== GGA END ========\n'
+  try {
+    await start($, on)
+    const text = JSON.stringify(await (await mountPane($)).drawn())
+    expect(text).toContain('"hook ","✓"')
+  } finally {
+    preCommit = '#!/bin/sh\ngitleaks protect --staged\n'
+  }
 })
 
 test('detection never runs gga, and brew runs without auto-update', async ($, on) => {
@@ -293,4 +373,36 @@ test('in demo mode the section shows sample values and its buttons only say so',
   expect(fills.length).toBe(0)
   expect(toasts.filter(t => t === 'demo mode').length).toBe(3)
   await $.command.run({ command: 'hud-demo', args: '' } as never) // leave demo mode
+})
+
+test('an action refresh wins over an older periodic detection that finishes later', async ($, on) => {
+  const offClone = JSON.stringify({ status: { global: 'on', clone_local: 'off', effective: 'off', source: 'clone' } })
+  let calls = 0
+  // 1: session start; 2: the periodic run at tick 301, answering 3 s late
+  // with what was true before the action; 3: the refresh after the action.
+  const rddStatus = async (clock: MockClock) => {
+    calls += 1
+    if (calls === 2) {
+      await clock.sleep(3000)
+      return ON_GLOBAL
+    }
+    return calls === 1 ? ON_GLOBAL : offClone
+  }
+  const { clock, runs } = await start($, on, () => 'Run it', rddStatus)
+  const pane = await mountPane($)
+  await clock.advance(300_000) // tick 301: the periodic detection starts
+  expect(calls).toBe(2)
+
+  await pane.press({ key: 'rdd-project-off' })
+  await clock.settle()
+  expect(runs.some(r => r.argv.join(' ') === `gentle-ai review mode disable --scope clone --cwd ${ROOT} --json`)).toBe(
+    true,
+  )
+  // The action's refresh runs at once instead of joining the older run.
+  expect(calls).toBe(3)
+
+  await clock.advance(3000) // the older detection finishes now
+  const text = JSON.stringify(await pane.drawn())
+  expect(text).toContain('"● ","off"," (","clone",")"')
+  expect(text).not.toContain('"● ","on"," (","global",")"')
 })

@@ -39,13 +39,18 @@ issue for a security problem.
   - Gentle AI section, at session start, about every 5 minutes and on `↻`:
     `gentle-ai --version`; `gentle-ai review mode status --cwd <root> --json`
     (without `--cwd` outside a repository);
-    `git rev-parse --git-path hooks` (in the repository root);
+    `git rev-parse --git-common-dir` and
+    `git config --file <common dir>/config --get core.hooksPath` (in the
+    repository root);
     `brew list --versions --formula gentle-ai gga engram`,
     `brew outdated --json=v2 --formula gentle-ai gga engram` and
     `brew --repository gentleman-programming/tap`, all three with
     `HOMEBREW_NO_AUTO_UPDATE=1`, `HOMEBREW_NO_ANALYTICS=1` and
     `HOMEBREW_NO_ENV_HINTS=1`. Only versions, on/off values and the tap path
     are kept; stderr is ignored.
+  - Every read-only command has a timeout (5 s; 15 s for brew). One that
+    times out is killed and its value stays as last known (poller) or
+    unknown (Gentle AI detection).
 
   gga is never run for detection: every gga command except `run` checks
   GitHub for updates, and `gga config` sources the project's `.gga`.
@@ -58,8 +63,9 @@ issue for a security problem.
     only when there is none).
   - `gentle-ai review mode enable|disable --scope clone --cwd <root> --json`
     and `gentle-ai review mode enable|disable --scope global --json`.
-- **Plugin API**: session id, model, working directory, repository root and
-  usage; the tool list (MCP server names are derived from tool names); the
+- **Plugin API**: session id, model, working directory, repository root,
+  usage and the Claude Code version (`$.session.version()`, shown in the
+  footer); the tool list (MCP server names are derived from tool names); the
   subagent list; and the `agent.spawn`, `turn.step`, `prompt.compose` (only
   the output style's name), `turn.complete` and `tool.call` (`TodoWrite`,
   `TaskCreate`, `TaskUpdate`) events, observed without changing them.
