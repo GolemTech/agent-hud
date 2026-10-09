@@ -25,6 +25,7 @@ import {
   TOOLS,
 } from './gentle'
 import type { GentleAction, GentleInfo, GentleView, RddStatus, StrictTdd } from './gentle'
+import { BRANCH_ICON, cardsFor, flowRows, layoutFor, PANE_PADDING_X, textRows } from './layout'
 import { clean } from './text'
 
 // Re-exported for the unit tests, which import the helpers from here.
@@ -32,13 +33,6 @@ export { clean }
 
 const PANE = 'hud'
 
-// The Pane's row budget for subagent cards. FIXED_ROWS counts every row that
-// does not grow with a list: the hide arrow, section headers and gaps, the
-// Session lines, the Subagents tally, the Gentle AI section and the footer.
-const FIXED_ROWS = 32
-const CONTEXT_FOOTER_ROWS = 1 // the tokens · cost line under the meters
-const CARD_ROWS = 4 // description, type, model, elapsed time
-const DEFAULT_VIEWPORT_ROWS = 24 // when the engine reports no viewport
 type SectionId = 'session' | 'context' | 'mcp' | 'subagents' | 'todos' | 'gentle'
 
 // ── Todos ────────────────────────────────────────────────────────────────
@@ -1181,17 +1175,18 @@ export const register: Register = on => {
     const connected = view.servers.filter(s => s.connected).length
 
     return (
-      <Box>
-        <Button
-          key="expand"
-          onPress={() => void $.ui.open({ id: PANE, title: 'Agent HUD' })}
-        >
-          <Text bold color="claude">
-            ▸ Agent HUD
-          </Text>
-        </Button>
-        <Text color="subtle">
-          {' '}
+      <Box flexWrap="wrap" gap={1}>
+        <Box flexShrink={0}>
+          <Button
+            key="expand"
+            onPress={() => void $.ui.open({ id: PANE, title: 'Agent HUD' })}
+          >
+            <Text bold color="claude">
+              ▸ Agent HUD
+            </Text>
+          </Button>
+        </Box>
+        <Text wrap="truncate-end" color="subtle">
           {summaryLine(view.contextPercent, connected, view.servers.length, view.agents.length)}
         </Text>
       </Box>
@@ -1207,9 +1202,10 @@ export const register: Register = on => {
     const counts = agentCounts(list)
     const todoList = orderTodos(view.todos)
     const todoDone = todoList.filter(t => t.status === 'completed').length
-    // Subagent cards fill the rows the other sections leave; at least one.
-    const used = ms.length + CONTEXT_FOOTER_ROWS + servers.length + todoList.length + FIXED_ROWS
-    const cards = Math.max(1, Math.floor(((e.viewport?.rows ?? DEFAULT_VIEWPORT_ROWS) - used) / CARD_ROWS))
+    // Sized from the Pane's own body (props change on every resize, which
+    // re-runs this hook); the surface's rows only when the body's are unknown.
+    const L = layoutFor(e.props.bodyColumns, e.props.scroll?.bodyRows ?? e.viewport?.rows)
+    const W = L.columns
 
     // 🤖 Opus 5.5 · medium — the same line for the session and each subagent.
     const modelLine = (m: ModelInfo | undefined, indent = '') =>
@@ -1220,17 +1216,23 @@ export const register: Register = on => {
         </Text>
       )
 
+    // Responsive rule: in a row of a label and what follows it, the label
+    // keeps its width (flexShrink 0) and the row wraps (flexWrap wrap), so the
+    // rest goes below it instead of the label being squeezed letter by letter.
+    const headerText = (id: SectionId, label: string) => `${c[id] ? '▸' : '▾'} ${label}`
     // Each section header is a Button that collapses just that module.
     // `update` from a handler is the documented pattern; it redraws the pane.
     const header = (id: SectionId, label: string) => (
-      <Button
-        key={`toggle-${id}`}
-        onPress={() => void update($, collapsed, prev => ({ ...prev, [id]: !prev[id] }))}
-      >
-        <Text bold color="claude">
-          {c[id] ? '▸' : '▾'} {label}
-        </Text>
-      </Button>
+      <Box flexShrink={0}>
+        <Button
+          key={`toggle-${id}`}
+          onPress={() => void update($, collapsed, prev => ({ ...prev, [id]: !prev[id] }))}
+        >
+          <Text bold color="claude">
+            {headerText(id, label)}
+          </Text>
+        </Button>
+      </Box>
     )
 
     // A small text button of the Gentle AI section. In demo mode no button
@@ -1252,22 +1254,44 @@ export const register: Register = on => {
         if (await runAction($, key, root)) await refreshGentle($, true)
       })
 
+    const toolLabel = (t: GentleView['tools'][number]) => `${t.name} ${t.version ?? 'not installed'}`.padEnd(L.toolPad)
+    const toolStatus = (g: GentleView, t: GentleView['tools'][number]) =>
+      !t.version ? null : t.update ? `↑ ${t.update}` : g.updatesKnown ? '✓ up to date' : null
+    const asOfText = (g: GentleView) => (g.updatesKnown && g.asOf ? `updates as of ${g.asOf} (brew)` : null)
+    const rulesText = (g: GentleView) =>
+      `rules ${g.gga.rules ? '✓' : g.gga.rules === false ? '✗' : '?'} ${g.gga.rulesFile}`
+    const TDD_TEXT = 'TDD  test-first by default (ODD)'
+    const INDENT = 3 // sub-rows of gga, RDD and TDD
+
     const gentleSection = (g: GentleView | null) => {
       if (!g) return <Text color="subtle">checking…</Text>
       const byName = new Map(g.tools.map(t => [t.name, t]))
       if (!byName.get('gentle-ai')?.version) return <Text color="subtle">gentle-ai not installed</Text>
       const ggaInstalled = Boolean(byName.get('gga')?.version)
       const { root } = g
+      const asOf = asOfText(g)
       return (
         <Box flexDirection="column">
-          {g.tools.map(t => (
-            <Text wrap="truncate-end">
-              {`${t.name} ${t.version ?? 'not installed'}`.padEnd(17)}
-              {t.version && t.update && <Text color="warning">↑ {t.update}</Text>}
-              {t.version && !t.update && g.updatesKnown && <Text color="success">✓ up to date</Text>}
-            </Text>
-          ))}
-          {g.updatesKnown && g.asOf && <Text color="subtle">updates as of {g.asOf} (brew)</Text>}
+          {g.tools.map(t => {
+            const status = toolStatus(g, t)
+            return (
+              <Box flexWrap="wrap" gap={L.toolPad ? 0 : 1}>
+                <Box flexShrink={0}>
+                  <Text>{toolLabel(t)}</Text>
+                </Box>
+                {status && (
+                  <Box flexShrink={0}>
+                    {t.update ? (
+                      <Text color="warning">↑ {t.update}</Text>
+                    ) : (
+                      <Text color="success">✓ up to date</Text>
+                    )}
+                  </Box>
+                )}
+              </Box>
+            )
+          })}
+          {asOf && <Text color="subtle">{asOf}</Text>}
           {ggaInstalled && !root && <Text color="subtle">gga  no repository</Text>}
           {ggaInstalled && root && (
             <Box gap={1} flexWrap="wrap">
@@ -1284,8 +1308,7 @@ export const register: Register = on => {
             </Box>
           )}
           {ggaInstalled && root && (
-            <Box gap={1} flexWrap="wrap">
-              <Text>{'   '}</Text>
+            <Box gap={1} flexWrap="wrap" paddingLeft={INDENT}>
               <Text wrap="truncate-end" color={g.gga.rules ? 'success' : g.gga.rules === false ? 'error' : 'subtle'}>
                 rules {g.gga.rules ? '✓' : g.gga.rules === false ? '✗' : '?'} {g.gga.rulesFile}
               </Text>
@@ -1303,9 +1326,7 @@ export const register: Register = on => {
               <Text color="subtle">unknown</Text>
             )}
           </Text>
-          {/* One row per scope. In a narrow dock the label keeps its width
-              (flexShrink 0) and the buttons wrap below it, instead of the
-              label being squeezed into one letter per line. */}
+          {/* One row per scope, so each label keeps its width. */}
           {root && (
             <Box gap={1} flexWrap="wrap">
               <Box flexShrink={0}>
@@ -1322,14 +1343,15 @@ export const register: Register = on => {
             {command('rdd-global-on', 'on', root ?? view.cwd)}
             {command('rdd-global-off', 'off', root ?? view.cwd)}
           </Box>
-          <Text wrap="truncate-end">
+          <Text wrap="wrap">
             {'TDD  '}test-first
             <Text color="subtle"> by default (ODD)</Text>
           </Text>
           {g.strictTdd && (
-            <Box gap={1}>
-              <Text>{'   '}</Text>
-              <Text color={g.strictTdd === 'on' ? 'success' : 'subtle'}>strict: {g.strictTdd}</Text>
+            <Box gap={1} flexWrap="wrap" paddingLeft={INDENT}>
+              <Box flexShrink={0}>
+                <Text color={g.strictTdd === 'on' ? 'success' : 'subtle'}>strict: {g.strictTdd}</Text>
+              </Box>
               {g.strictTdd !== 'on' && action('tdd-configure', 'configure', () => fillPrompt($, STRICT_TDD_PROMPT))}
             </Box>
           )}
@@ -1337,8 +1359,88 @@ export const register: Register = on => {
       )
     }
 
+    // Rows the Gentle AI section draws at this width, mirroring gentleSection.
+    const gentleRows = (g: GentleView | null): number => {
+      if (!g || !g.tools.find(t => t.name === 'gentle-ai')?.version) return 1
+      const ggaInstalled = Boolean(g.tools.find(t => t.name === 'gga')?.version)
+      const { root } = g
+      const asOf = asOfText(g)
+      const BUTTON = (label: string) => label.length + 2
+      let n = 0
+      for (const t of g.tools) {
+        const status = toolStatus(g, t)
+        n += flowRows(status ? [toolLabel(t).length, status.length] : [toolLabel(t).length], W)
+      }
+      if (asOf) n += textRows(asOf.length, W)
+      if (ggaInstalled && !root) n += 1
+      if (ggaInstalled && root) {
+        n += flowRows(
+          [3, 6, ...(g.gga.hook === false ? [BUTTON('install')] : []), ...(g.gga.projectConfig ? [] : [BUTTON('init')])],
+          W,
+        )
+        n += flowRows([rulesText(g).length, ...(g.gga.rules === false ? [BUTTON('create rules')] : [])], W - INDENT)
+      }
+      n += 1 // RDD
+      const scope = [10, BUTTON('on'), BUTTON('off')]
+      if (root) n += flowRows(scope, W)
+      n += flowRows(scope, W)
+      n += textRows(TDD_TEXT.length, W)
+      if (g.strictTdd) {
+        n += flowRows([`strict: ${g.strictTdd}`.length, ...(g.strictTdd === 'on' ? [] : [BUTTON('configure')])], W - INDENT)
+      }
+      return n
+    }
+
+    const branch = view.branch
+    const changeText = view.changes
+      ? `${view.changes.added > 0 ? ` +${view.changes.added}` : ''}${view.changes.removed > 0 ? ` -${view.changes.removed}` : ''}`
+      : ''
+    const meterNote = (m: Meter) => (m.note ? m.note.length : 0)
+    const meterHead = 4 + L.barWidth + 5 // label, bar, percent
+    const todosHeader = todoList.length > 0 ? `Todo ${todoDone}/${todoList.length}` : 'Todo'
+    const CLEAR = '✕ clear done'.length
+
+    // Rows every section but the subagent cards takes at this width: the
+    // same rows the tree below draws, measured with the wrapping helpers.
+    // Ink wraps words, so a long text can take a row more than estimated;
+    // the pane then scrolls instead of dropping a card.
+    const section = (id: SectionId, headerRows: number, bodyRows: number) => 1 + headerRows + (c[id] ? 0 : bodyRows)
+    const usedRows =
+      1 + // the hide arrow
+      flowRows([headerText('session', 'Session').length, ...(view.private ? [10] : [])], W) +
+      (c.session
+        ? 0
+        : 1 + // title · id
+          (view.account ? 1 : 0) +
+          1 + // model
+          (view.outputStyle ? 1 : 0) +
+          (branch ? flowRows([2 + branch.length, ...(changeText ? [changeText.length] : [])], W, 0) : 0) +
+          1) + // path
+      section(
+        'context',
+        1,
+        ms.length === 0 && !footer
+          ? 1
+          : ms.reduce((n, m) => n + flowRows([meterHead, ...(m.note ? [meterNote(m)] : [])], W, 0), 0) +
+              (footer ? textRows(footer.length, W) : 0),
+      ) +
+      section('mcp', 1, Math.max(1, servers.length)) +
+      section(
+        'subagents',
+        flowRows([headerText('subagents', 'Subagents').length, ...(counts.done + counts.err > 0 ? [CLEAR] : [])], W),
+        1, // the tally
+      ) +
+      section(
+        'todos',
+        flowRows([headerText('todos', todosHeader).length, ...(todoDone > 0 ? [CLEAR] : [])], W),
+        todoList.length === 0 ? 1 : todoList.reduce((n, t) => n + textRows(4 + t.content.length, W), 0),
+      ) +
+      section('gentle', flowRows([headerText('gentle', 'Gentle AI').length, 1], W), gentleRows(view.gentle ?? null)) +
+      (versionCache ? 2 : 0)
+    const cards = cardsFor(L.rows, usedRows)
+
     return (
-      <Box flexDirection="column" paddingX={1}>
+      <Box flexDirection="column" paddingX={PANE_PADDING_X}>
         {/* Top row: → hides the sidebar, right under the pane's ✕ (the frame
             row itself is the engine's). The dock cannot be forced narrower
             (a width the person set wins over `columns`), so hiding goes to
@@ -1354,9 +1456,13 @@ export const register: Register = on => {
         </Box>
 
         <Box flexDirection="column">
-          <Box gap={1}>
+          <Box gap={1} flexWrap="wrap">
             {header('session', 'Session')}
-            {view.private && <Text color="warning">🔒 private</Text>}
+            {view.private && (
+              <Box flexShrink={0}>
+                <Text color="warning">🔒 private</Text>
+              </Box>
+            )}
           </Box>
           {!c.session && (
             <Text wrap="truncate-end">
@@ -1378,17 +1484,30 @@ export const register: Register = on => {
               🎭 <Text color="claude">{view.outputStyle}</Text>
             </Text>
           )}
-          {!c.session && view.branch && (
-            <Text wrap="truncate-end">
-              🌿 <Text bold>{view.branch}</Text>
-              {view.changes && view.changes.added > 0 && <Text color="success">{` +${view.changes.added}`}</Text>}
-              {view.changes && view.changes.removed > 0 && <Text color="error">{` -${view.changes.removed}`}</Text>}
-            </Text>
+          {!c.session && branch && (
+            <Box flexWrap="wrap">
+              <Box>
+                <Text wrap="truncate-end">
+                  <Text bold color="claude">
+                    {BRANCH_ICON}
+                  </Text>{' '}
+                  <Text bold>{branch}</Text>
+                </Text>
+              </Box>
+              {changeText ? (
+                <Box flexShrink={0}>
+                  <Text>
+                    {view.changes && view.changes.added > 0 && <Text color="success">{` +${view.changes.added}`}</Text>}
+                    {view.changes && view.changes.removed > 0 && <Text color="error">{` -${view.changes.removed}`}</Text>}
+                  </Text>
+                </Box>
+              ) : null}
+            </Box>
           )}
           {!c.session &&
             (() => {
-              // Body width less the padding and the 📁 glyph (two cells + space).
-              const { parent, leaf } = shortPath(view.cwd, view.home, (e.props.bodyColumns ?? 40) - 5)
+              // The drawable width less the 📁 glyph (two cells + space).
+              const { parent, leaf } = shortPath(view.cwd, view.home, W - 3)
               return (
                 <Text wrap="truncate-start">
                   📁 <Text color="subtle">{parent}</Text>
@@ -1403,20 +1522,30 @@ export const register: Register = on => {
           {!c.context && ms.length === 0 && !footer && <Text color="subtle">no usage yet</Text>}
           {!c.context &&
             ms.map(m => {
-              const [filled, empty] = barCells(m.percent)
+              const [filled, empty] = barCells(m.percent, L.barWidth)
               return (
-                <Text wrap="truncate-end">
-                  <Text color="subtle">{m.label.padEnd(4)}</Text>
-                  <Text color={meterColor(m.percent)}>{'━'.repeat(filled)}</Text>
-                  <Text color="subtle" dimColor>
-                    {'━'.repeat(empty)}
-                  </Text>
-                  {` ${Math.round(m.percent)}%`.padStart(5)}
-                  <Text color="subtle">{m.note}</Text>
-                </Text>
+                <Box flexWrap="wrap">
+                  <Box flexShrink={0}>
+                    <Text>
+                      <Text color="subtle">{m.label.padEnd(4)}</Text>
+                      <Text color={meterColor(m.percent)}>{'━'.repeat(filled)}</Text>
+                      <Text color="subtle" dimColor>
+                        {'━'.repeat(empty)}
+                      </Text>
+                      {` ${Math.round(m.percent)}%`.padStart(5)}
+                    </Text>
+                  </Box>
+                  {m.note ? (
+                    <Box>
+                      <Text wrap="truncate-end" color="subtle">
+                        {m.note}
+                      </Text>
+                    </Box>
+                  ) : null}
+                </Box>
               )
             })}
-          {!c.context && footer && <Text color="subtle">{footer}</Text>}
+          {!c.context && footer ? <Text color="subtle">{footer}</Text> : null}
         </Box>
 
         <Box marginTop={1} flexDirection="column">
@@ -1433,7 +1562,7 @@ export const register: Register = on => {
         </Box>
 
         <Box marginTop={1} flexDirection="column">
-          <Box gap={1}>
+          <Box gap={1} flexWrap="wrap">
             {header('subagents', 'Subagents')}
             {!c.subagents && counts.done + counts.err > 0 && (
               <Button
@@ -1448,7 +1577,13 @@ export const register: Register = on => {
               </Button>
             )}
           </Box>
-          {!c.subagents && (
+          {!c.subagents && L.compact && (
+            <Text wrap="truncate-end">
+              <Text color="claude">●{counts.run}</Text> <Text color="success">✓{counts.done}</Text>{' '}
+              <Text color="error">✕{counts.err}</Text>
+            </Text>
+          )}
+          {!c.subagents && !L.compact && (
             <Text wrap="truncate-end">
               <Text color="claude">● {counts.run} running</Text>
               <Text color="subtle"> · </Text>
@@ -1469,7 +1604,7 @@ export const register: Register = on => {
                   {'  '}(@{r.type} subagent)
                 </Text>
                 {modelLine(view.models.get(r.id), '  ')}
-                <Text color="subtle">
+                <Text wrap="truncate-end" color="subtle">
                   {'  '}◷ {fmt(r.elapsedMs)}
                   {r.tokens !== undefined && `  ≋ ${fmtTokens(r.tokens)} tok`}
                 </Text>
@@ -1478,8 +1613,8 @@ export const register: Register = on => {
         </Box>
 
         <Box marginTop={1} flexDirection="column">
-          <Box gap={1}>
-            {header('todos', todoList.length > 0 ? `Todo ${todoDone}/${todoList.length}` : 'Todo')}
+          <Box gap={1} flexWrap="wrap">
+            {header('todos', todosHeader)}
             {!c.todos && todoDone > 0 && (
               <Button
                 key="clear-todos"
@@ -1511,7 +1646,7 @@ export const register: Register = on => {
         </Box>
 
         <Box marginTop={1} flexDirection="column">
-          <Box gap={1}>
+          <Box gap={1} flexWrap="wrap">
             {header('gentle', 'Gentle AI')}
             {!c.gentle && (
               <Button

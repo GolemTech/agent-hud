@@ -292,8 +292,7 @@ test('the Gentle AI section shows versions, updates, gga, RDD and TDD', async ($
   expect(text).toContain('"↑ ","3.3.0"')
   expect(text).toContain('✓ up to date')
   // The mock clock is on another day than the fetch, so a weekday may lead.
-  expect(text).toContain('"updates as of ","')
-  expect(text).toContain('14:50"," (brew)"')
+  expect(text).toMatch(/"updates as of (\w{3} )?14:50 \(brew\)"/)
   expect(text).toContain('"hook ","✗"')
   expect(text).toContain('"rules ","✗"," ","AGENTS.md"')
   expect(text).toContain('"● ","on"," (","global",")"')
