@@ -106,6 +106,15 @@ test('the Pane is drawn at its body height: header, clipped viewport, footer', a
     // The header names the project and keeps the hide button.
     expect(textOf(p.header)).toContain('api')
     expect(all(p.header, 'Button').length).toBe(1)
+    // The name is a centered band: inverse, padded evenly on both sides.
+    const band = all(p.header, 'Text').find(t => t.props?.inverse === true)
+    expect(band).toBeDefined()
+    const label = textOf(band)
+    expect(label.trim()).toBe('📂 api')
+    const left = label.length - label.trimStart().length
+    const right = label.length - label.trimEnd().length
+    expect(Math.abs(left - right)).toBeLessThanOrEqual(1)
+    expect(left).toBeGreaterThan(1)
     expect(textOf(p.viewport)).not.toContain('📂')
     // The footer is last and holds the version.
     expect(textOf(p.footer)).toContain('2.1.296')

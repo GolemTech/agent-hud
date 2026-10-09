@@ -4,6 +4,7 @@ import type { Engine } from 'claude-code/testing'
 
 import {
   BRANCH_ICON,
+  centerBand,
   clampOffset,
   columnWidth,
   flowRows,
@@ -98,6 +99,14 @@ test('clampOffset: within [0, max], whole rows', () => {
   expect(clampOffset(5, 0)).toBe(0)
   expect(clampOffset(2.6, 10)).toBe(3)
   expect(clampOffset(Number.NaN, 10)).toBe(0)
+})
+
+test('centerBand: centered in the width, truncated with … when it does not fit', () => {
+  expect(centerBand('abc', 9)).toBe('   abc   ')
+  expect(centerBand('abcd', 9)).toBe('  abcd   ')
+  expect(centerBand('abcdef', 6)).toBe('abcdef')
+  expect(centerBand('abcdefgh', 6)).toBe('abcde…')
+  expect(centerBand('abc', 1)).toBe('…')
 })
 
 test('viewportRowsFor: the body less the sticky header and footer, at least one', () => {

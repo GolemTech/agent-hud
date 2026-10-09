@@ -45,6 +45,16 @@ export const gridFor = (labels: readonly string[], values: readonly string[], co
 // setting has now. Its length is the button's width in the row count.
 export const buttonText = (label: string, selected = false): string => (selected ? `[● ${label}]` : `[${label}]`)
 
+// The sticky header's title: `text` centered in `width` cells (the extra
+// space, if odd, on the right), or cut to fit with a trailing `…`. A terminal
+// has one font size, so a full-width inverse band is what makes it stand out.
+export const centerBand = (text: string, width: number): string => {
+  if (width <= 1) return '…'
+  if (text.length > width) return `${text.slice(0, width - 1)}…`
+  const left = Math.floor((width - text.length) / 2)
+  return `${' '.repeat(left)}${text}${' '.repeat(width - text.length - left)}`
+}
+
 // A section title as drawn: an inverse band, one space either side.
 export const sectionTitle = (text: string): string => ` ${text} `
 

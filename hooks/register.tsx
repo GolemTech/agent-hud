@@ -33,6 +33,7 @@ import {
   BRANCH_ICON,
   buttonText,
   CARD_ROWS,
+  centerBand,
   clampOffset,
   flowRows,
   gridFor,
@@ -1521,9 +1522,9 @@ export const register: Register = on => {
     const headerRow = (
       <Box flexDirection="column" flexShrink={0}>
         <Box flexWrap="wrap" gap={1}>
-          <Box width={Math.max(1, W - 2)}>
-            <Text wrap="truncate-end">
-              📂 <Text bold color="claude">{view.project ?? projectName(view.cwd)}</Text>
+          <Box width={Math.max(1, W - 2)} flexShrink={0}>
+            <Text bold inverse color="claude" wrap="truncate-end">
+              {centerBand(`📂 ${view.project ?? projectName(view.cwd)}`, Math.max(1, W - 2))}
             </Text>
           </Box>
           <Box flexShrink={0}>
