@@ -13,7 +13,7 @@ claude plugin validate .                         # manifest, marketplace and hoo
 npx -y -p typescript@5.6.3 tsc -p . --noEmit     # type-check; needs .claude-plugin/types/ (git-ignored, written by a --plugin-dir load)
 ```
 
-`validate` does not type-check: run `tsc` too, it catches errors `validate` passes. The only expected `validate` warning is the missing `author`.
+`validate` does not type-check: run `tsc` too, it catches errors `validate` passes. The only expected `validate` warning is that a root `CLAUDE.md` is not shipped as plugin context; that is intended (this file is for developers, not for users of the plugin).
 
 API reference: `.claude-plugin/types/claude-code/index.d.ts` (~15k lines). Grep for the event or noun (`'turn.step'`, `PaneOpenArgs`, `ButtonProps`) and read the doc comment; it is the source of truth over memory.
 
@@ -25,6 +25,7 @@ Everything runs from `hooks/register.tsx`. The top of the file is pure, exported
 - **State lives in two places.** `$.state` atoms (`rows`, `collapsed`, `todos`, declared in `types/index.d.ts` under `PluginState['agent-hud']`) survive reloads. Module-level variables (`seen` timing map, `loopModel`, the caches, the `cleared*` sets) reset on every reload; that is accepted.
 - **Event-sourced data.** `agent.spawn` stamps a subagent's real start time and model; `turn.step` records model and effort per loop (`agentId`, or `'main'`); `turn.complete` gives per-subagent tokens; `tool.call` on `TodoWrite` / `TaskCreate` / `TaskUpdate` mirrors the main loop's todos (`!e.agentId`). `$.agent.list()` gives live status only, and finished agents drop out of it, so `mergeRows` keeps them as history until "clear done".
 - **Two surfaces.** The `Pane` (id `hud`) and the `AbovePrompt` band. The band shows only when `isSidebarShown($.ui.panes())` is false; it asks the engine instead of tracking opens and closes (see gotchas).
+- **Demo mode.** `hooks/demo.ts` provides the sample session behind `/hud-demo`, used for README recordings; both surfaces render from one view object, live or demo, and demo data never reaches `$.state`.
 - **Fragile inputs** are read from Claude Code internals with a fallback, never trusted: `~/.claude/projects/<projectDir(root)>/<sessionId>/custom-title.json` (session title) and `~/.claude.json` `oauthAccount` (account; only email user and organization are kept).
 
 ## Mods API gotchas (all hit in practice)
