@@ -16,6 +16,7 @@ doing, and the main loop's todo list.
 | MCP       | MCP servers, connected first; servers waiting for authentication are dimmed. |
 | Subagents | Running / done / error counts, then one card per subagent: description, type, model, elapsed time and context tokens. |
 | Todo      | The main loop's task list: done first, then in progress, then pending. |
+| Gentle AI | The [gentle-ai](https://github.com/Gentleman-Programming/gentle-ai) toolset: `gentle-ai`, `gga` and `engram` versions with `✓ up to date` or `↑ <newer>` (as fresh as your local brew tap), the gga review hook and its rules file, receipt-driven development (RDD) on or off and where that comes from, and the TDD policy (test-first by default; strict TDD on, off or unset). Shows "gentle-ai not installed" when it is not. |
 
 ## Install
 
@@ -58,6 +59,20 @@ To add the marketplace first and install separately:
   subagent descriptions and todo text are **not** masked, and can contain
   project or client names. Claude Code's own welcome header and status line are
   not affected either: a plugin cannot draw them.
+- Gentle AI section:
+  - `↻` checks again now (otherwise at session start and about every 5
+    minutes, and after each action).
+  - Command buttons ask first: `[install]` (gga pre-commit hook, `gga install`),
+    `[init]` (sample `.gga`, `gga init`, only when the project has none), and
+    RDD `project [on] [off]` / `global [on] [off]`
+    (`gentle-ai review mode enable|disable --scope clone|global`). Nothing runs
+    unless you choose **Run it**; a short toast says how it went. Off always
+    wins: a project "on" cannot override a global "off".
+  - Prompt buttons only fill the prompt box, they never send it:
+    `[create rules]` (asks Claude to write the gga rules file) and
+    `[configure]` (asks Claude to set up strict TDD through the sdd-init flow).
+    Review the text and press Enter yourself.
+  - In demo mode the section shows sample values and its buttons do nothing.
 
 ## How it gets its data
 
@@ -93,7 +108,23 @@ rest, and the limits that come with them:
   change counts visible: they are not identity.
 - **Reset times** use the system UTC offset from `date +%z`.
 - **Dock width** cannot be forced by a plugin; a width you set wins.
-- **No network calls** are made.
+- **Gentle AI versions** come from `brew list --versions` and
+  `gentle-ai --version`. **Update status** comes from
+  `brew outdated --json=v2` run with `HOMEBREW_NO_AUTO_UPDATE=1`: it compares
+  against your local tap metadata, so it is only as fresh as your last
+  `brew update`; "updates as of" is when the tap was last fetched. Tools not
+  installed through brew show no update status.
+- **gga** is detected by reading files, never by running gga (its commands
+  check GitHub for updates, and `gga config` executes the project's `.gga`):
+  the hook from the `pre-commit` / `commit-msg` files in
+  `git rev-parse --git-path hooks`, the configuration from the project `.gga`
+  over `~/.config/gga/config` (`XDG_CONFIG_HOME` respected), parsed as plain
+  text and never executed, and the rules file (`RULES_FILE`, default
+  `AGENTS.md`) by checking that it exists.
+- **RDD** comes from `gentle-ai review mode status --json` (read only).
+- **TDD**: test-first is the gentle-ai default; strict TDD is `strict_tdd` in
+  the project's `openspec/config.yaml`, matched as text.
+- **No network calls** are made by the plugin itself.
 - **Control characters** (escape sequences, newlines, bells) are stripped from
   every displayed string that comes from outside the plugin.
 

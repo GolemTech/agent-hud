@@ -1,4 +1,5 @@
 import type { AgentRow, TodoItem, TodoStatus } from '../types'
+import type { GentleView } from './gentle'
 
 // A fixed sample session behind `/hud-demo`, for README recordings and
 // screenshots: no model calls, no personal data. Pure: everything derives from
@@ -28,6 +29,7 @@ export type DemoSnapshot = {
   servers: DemoServer[]
   agents: DemoAgent[]
   todos: TodoItem[]
+  gentle: GentleView
 }
 
 const SESSION: DemoSnapshot['session'] = {
@@ -59,6 +61,23 @@ const SERVERS: DemoServer[] = [
   { name: 'linear', connected: true },
   { name: 'sentry', connected: false },
 ]
+
+// The Gentle AI section: one update available, the gga hook not installed
+// yet, RDD on from the global setting, strict TDD unset. Buttons in demo mode
+// only say "demo mode".
+const GENTLE: GentleView = {
+  tools: [
+    { name: 'gentle-ai', version: '4.0.0', update: null },
+    { name: 'gga', version: '2.10.1', update: null },
+    { name: 'engram', version: '2.2.1', update: '3.3.0' },
+  ],
+  updatesKnown: true,
+  asOf: '09:30',
+  root: SESSION.cwd,
+  gga: { hook: false, projectConfig: true, rulesFile: 'AGENTS.md', rules: true },
+  rdd: { effective: 'on', source: 'global', global: 'on', project: null },
+  strictTdd: 'unset',
+}
 
 type AgentScript = {
   id: string
@@ -162,4 +181,5 @@ export const demoSnapshot = (elapsedMs: number): DemoSnapshot => ({
   servers: SERVERS,
   agents: AGENTS.filter(a => elapsedMs >= a.start).map(a => agentAt(a, elapsedMs)),
   todos: todosAt(elapsedMs),
+  gentle: GENTLE,
 })

@@ -3,9 +3,29 @@ import type { EngineInterface, Register } from 'claude-code'
 
 import type { AgentRow, TodoItem, TodoStatus } from '../types'
 import { demoSnapshot } from './demo'
+import {
+  actionSpec,
+  BREW_ENV,
+  ggaHookInstalled,
+  parseBrewList,
+  parseBrewOutdated,
+  parseGgaConfig,
+  parseRddStatus,
+  parseStrictTdd,
+  parseVersion,
+  PROBE_MS,
+  RUN_IT,
+  CANCEL,
+  rulesFileName,
+  rulesPrompt,
+  STRICT_TDD_PROMPT,
+  TAP,
+  TOOLS,
+} from './gentle'
+import type { GentleAction, GentleInfo, GentleView, RddStatus, StrictTdd } from './gentle'
 
 const PANE = 'hud'
-type SectionId = 'session' | 'context' | 'mcp' | 'subagents' | 'todos'
+type SectionId = 'session' | 'context' | 'mcp' | 'subagents' | 'todos' | 'gentle'
 
 // Defence in depth for text from outside the plugin (files, tool inputs, the
 // agent list, MCP tool names): C0 and C1 control characters are removed where
@@ -261,6 +281,7 @@ const collapsed = atom({ plugin: 'agent-hud', key: 'collapsed' } as const, {
   mcp: false,
   subagents: false,
   todos: false,
+  gentle: false,
 })
 
 // The sidebar counts as shown only while its pane is open and drawn.
@@ -594,10 +615,198 @@ export type HudView = {
   agents: AgentRow[]
   models: ReadonlyMap<string, ModelInfo>
   todos: TodoItem[]
+  /** The Gentle AI section; null (or absent) until the first detection finished. */
+  gentle?: GentleView | null
 }
 
 // The Claude Code version for the footer, read once per session start.
 let versionCache: string | null = null
+
+// ── Gentle AI ────────────────────────────────────────────────────────────
+// The section's pure parsers and constants live in `gentle.ts`; everything
+// that calls `$` is here, since the hooks loader never follows `$` across an
+// import. Detection is several process runs, brew among them, so it runs at
+// session start, then every ~300 ticks, and on ↻ or after an action, never on
+// every render. One run at a time. gga itself is never run for detection.
+let gentleCache: GentleInfo | null = null
+let gentleRun: Promise<void> | null = null
+
+// Every probe is guarded on its own: one failing leaves its field unknown.
+const detectGentle = async ($: EngineInterface): Promise<GentleInfo> => {
+  const readOr = async (path: string): Promise<string | null> => {
+    try {
+      return await $.fs.read(path)
+    } catch {
+      return null
+    }
+  }
+  const versions: Record<string, string> = {}
+  let updates: Record<string, string> | null = null
+  let updatesAsOf: number | null = null
+  let root: string | null = null
+
+  try {
+    root = (await $.session.repo())?.root ?? null
+  } catch {
+    root = null
+  }
+  try {
+    const r = await $.process.run(['brew', 'list', '--versions', '--formula', ...TOOLS], {
+      env: BREW_ENV,
+      timeoutMs: PROBE_MS,
+    })
+    Object.assign(versions, parseBrewList(r.stdout))
+  } catch {
+    // no brew: versions come from gentle-ai itself below
+  }
+  try {
+    const r = await $.process.run(['gentle-ai', '--version'], { timeoutMs: PROBE_MS })
+    const v = r.exitCode === 0 ? parseVersion(r.stdout) : null
+    if (v) versions['gentle-ai'] = v
+  } catch {
+    // not installed
+  }
+  try {
+    // Exits 1 when something is outdated: the JSON on stdout is what counts.
+    const r = await $.process.run(['brew', 'outdated', '--json=v2', '--formula', ...TOOLS], {
+      env: BREW_ENV,
+      timeoutMs: PROBE_MS,
+    })
+    updates = parseBrewOutdated(r.stdout)
+  } catch {
+    updates = null
+  }
+  if (updates) {
+    try {
+      const r = await $.process.run(['brew', '--repository', TAP], { env: BREW_ENV, timeoutMs: PROBE_MS })
+      const tap = clean(r.stdout).trim()
+      if (r.exitCode === 0 && tap.startsWith('/')) updatesAsOf = (await $.fs.stat(`${tap}/.git/FETCH_HEAD`)).mtimeMs
+    } catch {
+      updatesAsOf = null
+    }
+  }
+
+  const gga: GentleInfo['gga'] = { hook: null, projectConfig: false, rulesFile: 'AGENTS.md', rules: null }
+  let rdd: RddStatus | null = null
+  let strictTdd: StrictTdd | null = null
+
+  // Global gga config, overridden by the project's `.gga`; both read as text.
+  let config: Record<string, string> = {}
+  try {
+    const xdg = await $.env.get('XDG_CONFIG_HOME')
+    const home = await $.env.get('HOME')
+    const dir = xdg ? xdg : typeof home === 'string' ? `${home}/.config` : null
+    const text = dir ? await readOr(`${dir}/gga/config`) : null
+    if (text) config = parseGgaConfig(text)
+  } catch {
+    // no global config
+  }
+
+  if (root) {
+    const project = await readOr(`${root}/.gga`)
+    gga.projectConfig = project !== null
+    if (project) config = { ...config, ...parseGgaConfig(project) }
+    gga.rulesFile = rulesFileName(config.RULES_FILE)
+    try {
+      gga.rules = await $.fs.exists(`${root}/${gga.rulesFile}`)
+    } catch {
+      gga.rules = null
+    }
+    try {
+      const r = await $.process.run(['git', 'rev-parse', '--git-path', 'hooks'], { cwd: root, timeoutMs: PROBE_MS })
+      const dir = clean(r.stdout).trim()
+      if (r.exitCode === 0 && dir) {
+        const hooks = dir.startsWith('/') ? dir : `${root}/${dir}`
+        const files = [await readOr(`${hooks}/pre-commit`), await readOr(`${hooks}/commit-msg`)]
+        gga.hook = files.some(t => t !== null && ggaHookInstalled(t))
+      }
+    } catch {
+      gga.hook = null
+    }
+    strictTdd = parseStrictTdd((await readOr(`${root}/openspec/config.yaml`)) ?? '')
+  }
+  try {
+    const argv = root
+      ? ['gentle-ai', 'review', 'mode', 'status', '--cwd', root, '--json']
+      : ['gentle-ai', 'review', 'mode', 'status', '--json']
+    const r = await $.process.run(argv, { timeoutMs: PROBE_MS })
+    rdd = r.exitCode === 0 ? parseRddStatus(r.stdout) : null
+  } catch {
+    rdd = null
+  }
+
+  return {
+    tools: TOOLS.map(name => ({
+      name,
+      version: versions[name] ?? null,
+      update: updates?.[name] ?? null,
+    })),
+    updatesKnown: updates !== null,
+    updatesAsOf,
+    root,
+    gga,
+    rdd,
+    strictTdd,
+  }
+}
+
+// Asks first; runs only on the exact "Run it". A dismissed dialog (or a `-p`
+// run, where `ask` rejects) is a cancel. Never echoes the command's output.
+const runAction = async ($: EngineInterface, action: GentleAction, root: string): Promise<boolean> => {
+  const spec = actionSpec(action, root)
+  let answer: string
+  try {
+    answer = await $.ui.ask(spec.question, { header: 'Gentle AI', options: [RUN_IT, CANCEL] })
+  } catch {
+    return false
+  }
+  if (answer !== RUN_IT) return false
+  try {
+    const r = await $.process.run(spec.argv, {
+      cwd: root,
+      timeoutMs: 30_000,
+      ...(spec.env ? { env: spec.env } : {}),
+      ...(spec.stdin === undefined ? {} : { stdin: spec.stdin }),
+    })
+    $.ui.toast(r.exitCode === 0 ? spec.done : `failed (exit ${r.exitCode})`)
+  } catch {
+    $.ui.toast('failed (could not run)')
+  }
+  return true
+}
+
+// Puts the text in the prompt box for the person to review and send.
+const fillPrompt = async ($: EngineInterface, text: string): Promise<void> => {
+  try {
+    const r = await $.prompt.fill({ text, mode: 'replace' })
+    if (!r.isFilled) $.ui.toast('close the open dialog, then try again')
+  } catch {
+    $.ui.toast('could not fill the prompt')
+  }
+}
+
+const refreshGentle = ($: EngineInterface): Promise<void> => {
+  if (!gentleRun) {
+    gentleRun = (async () => {
+      try {
+        gentleCache = await detectGentle($)
+      } catch {
+        // keep the last known detection
+      } finally {
+        gentleRun = null
+      }
+    })()
+  }
+  return gentleRun
+}
+
+export const gentleView = (info: GentleInfo, now: number, offsetMin: number | null): GentleView => {
+  const { updatesAsOf, ...rest } = info
+  return {
+    ...rest,
+    asOf: updatesAsOf === null || offsetMin === null ? null : localClock(updatesAsOf, offsetMin, now),
+  }
+}
 
 // The release (`2.1.296`, `2.1.296-dev`) over a development build's long
 // version string; the full version when it is not spelled as a release.
@@ -629,6 +838,7 @@ const demoView = (elapsedMs: number): HudView => {
     agents: d.agents,
     models: new Map(d.agents.map(a => [a.id, { model: a.model, effort: a.effort }])),
     todos: d.todos,
+    gentle: d.gentle,
   }
 }
 
@@ -680,6 +890,7 @@ const liveView = async ($: EngineInterface, list: AgentRow[]): Promise<HudView> 
     agents: list,
     models: loopModel,
     todos: todoList,
+    gentle: gentleCache && gentleView(gentleCache, now, utcOffsetMin),
   }
   return masked ? maskView(view) : view
 }
@@ -807,6 +1018,9 @@ export const register: Register = on => {
           // keep the last known branch
         }
       }
+      // Gentle AI detection: now, then every ~5 min. Not awaited: it takes a
+      // second or more, and the rows write below must not wait for it.
+      if (ticks % 300 === 1) void refreshGentle($)
       try {
         const built = buildRows(await $.agent.list(), seen, await $.clock.now())
         await update($, rows, prev => mergeRows(prev, built).filter(r => !clearedAgents.has(r.id)))
@@ -969,7 +1183,7 @@ export const register: Register = on => {
     const todoList = orderTodos(view.todos)
     const todoDone = todoList.filter(t => t.status === 'completed').length
     // Each subagent card takes four rows; show as many as fit, at least one.
-    const used = ms.length + 1 + servers.length + todoList.length + 20
+    const used = ms.length + 1 + servers.length + todoList.length + 32
     const cards = Math.max(1, Math.floor(((e.viewport?.rows ?? 24) - used) / 4))
 
     // 🤖 Opus 5.5 · medium — the same line for the session and each subagent.
@@ -993,6 +1207,95 @@ export const register: Register = on => {
         </Text>
       </Button>
     )
+
+    // A small text button of the Gentle AI section. In demo mode no button
+    // acts: it only says so.
+    const action = (key: string, label: string, act: () => Promise<unknown>) => (
+      <Button
+        key={key}
+        onPress={() => {
+          if (view.demo) return $.ui.toast('demo mode')
+          void act()
+        }}
+      >
+        <Text color="claude">[{label}]</Text>
+      </Button>
+    )
+    // Command buttons confirm first (`runAction`), then detection runs again.
+    const command = (key: GentleAction, label: string, root: string) =>
+      action(key, label, async () => {
+        if (await runAction($, key, root)) await refreshGentle($)
+      })
+
+    const gentleSection = (g: GentleView | null) => {
+      if (!g) return <Text color="subtle">checking…</Text>
+      const byName = new Map(g.tools.map(t => [t.name, t]))
+      if (!byName.get('gentle-ai')?.version) return <Text color="subtle">gentle-ai not installed</Text>
+      const ggaInstalled = Boolean(byName.get('gga')?.version)
+      const { root } = g
+      return (
+        <Box flexDirection="column">
+          {g.tools.map(t => (
+            <Text wrap="truncate-end">
+              {`${t.name} ${t.version ?? 'not installed'}`.padEnd(17)}
+              {t.version && t.update && <Text color="warning">↑ {t.update}</Text>}
+              {t.version && !t.update && g.updatesKnown && <Text color="success">✓ up to date</Text>}
+            </Text>
+          ))}
+          {g.updatesKnown && g.asOf && <Text color="subtle">updates as of {g.asOf} (brew)</Text>}
+          {ggaInstalled && !root && <Text color="subtle">gga  no repository</Text>}
+          {ggaInstalled && root && (
+            <Box gap={1}>
+              <Text>gga</Text>
+              <Text color={g.gga.hook ? 'success' : g.gga.hook === false ? 'error' : 'subtle'}>
+                hook {g.gga.hook ? '✓' : g.gga.hook === false ? '✗' : '?'}
+              </Text>
+              {g.gga.hook === false && command('gga-install', 'install', root)}
+              {!g.gga.projectConfig && command('gga-init', 'init', root)}
+            </Box>
+          )}
+          {ggaInstalled && root && (
+            <Box gap={1}>
+              <Text>{'   '}</Text>
+              <Text wrap="truncate-end" color={g.gga.rules ? 'success' : g.gga.rules === false ? 'error' : 'subtle'}>
+                rules {g.gga.rules ? '✓' : g.gga.rules === false ? '✗' : '?'} {g.gga.rulesFile}
+              </Text>
+              {g.gga.rules === false &&
+                action('gga-rules', 'create rules', () => fillPrompt($, rulesPrompt(g.gga.rulesFile)))}
+            </Box>
+          )}
+          <Text wrap="truncate-end">
+            {'RDD  '}
+            {g.rdd ? (
+              <Text color={g.rdd.effective === 'on' ? 'success' : 'subtle'}>
+                ● {g.rdd.effective} ({g.rdd.source})
+              </Text>
+            ) : (
+              <Text color="subtle">unknown</Text>
+            )}
+          </Text>
+          <Box gap={1}>
+            {root && <Text color="subtle">project</Text>}
+            {root && command('rdd-project-on', 'on', root)}
+            {root && command('rdd-project-off', 'off', root)}
+            <Text color="subtle">global</Text>
+            {command('rdd-global-on', 'on', root ?? view.cwd)}
+            {command('rdd-global-off', 'off', root ?? view.cwd)}
+          </Box>
+          <Text wrap="truncate-end">
+            {'TDD  '}test-first
+            <Text color="subtle"> (ODD default)</Text>
+          </Text>
+          {g.strictTdd && (
+            <Box gap={1}>
+              <Text>{'   '}</Text>
+              <Text color={g.strictTdd === 'on' ? 'success' : 'subtle'}>strict: {g.strictTdd}</Text>
+              {g.strictTdd !== 'on' && action('tdd-configure', 'configure', () => fillPrompt($, STRICT_TDD_PROMPT))}
+            </Box>
+          )}
+        </Box>
+      )
+    }
 
     return (
       <Box flexDirection="column" paddingX={1}>
@@ -1165,6 +1468,24 @@ export const register: Register = on => {
                 <Text wrap="wrap">[ ] {t.content}</Text>
               ),
             )}
+        </Box>
+
+        <Box marginTop={1} flexDirection="column">
+          <Box gap={1}>
+            {header('gentle', 'Gentle AI')}
+            {!c.gentle && (
+              <Button
+                key="gentle-refresh"
+                onPress={() => {
+                  if (view.demo) return $.ui.toast('demo mode')
+                  void refreshGentle($)
+                }}
+              >
+                <Text color="subtle">↻</Text>
+              </Button>
+            )}
+          </Box>
+          {!c.gentle && gentleSection(view.gentle ?? null)}
         </Box>
 
         {/* Footer: the Claude Code version the session runs on. */}
