@@ -7,6 +7,14 @@ current session at a glance: who and where you are, how much context and
 rate limit is left, which MCP servers are connected, what your subagents are
 doing, and the main loop's todo list.
 
+<p align="center">
+  <img src="docs/assets/demo.gif" width="420" alt="Agent HUD sidebar in demo mode: the project header, a Session section with account, model, output style, branch and change counts, context and rate-limit meters, connected MCP servers, subagent cards moving from running to done or failed with their token counts, a todo list ticking off, the Gentle AI tools grid, and the Claude Code version pinned in the footer.">
+</p>
+
+The recording uses `/hud-demo` (fictional sample data, no tokens spent) on a
+signed-out Claude Code profile. To re-record it, run `docs/record-demo.sh`
+from the repository root (needs `vhs`, `ffmpeg` and `gifsicle`).
+
 ## What the sidebar shows
 
 | Section   | Contents |
