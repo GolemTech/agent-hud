@@ -1,7 +1,8 @@
 import { atom, read, update } from 'claude-code'
-import type { Register } from 'claude-code'
+import type { EngineInterface, Register } from 'claude-code'
 
 import type { AgentRow, TodoItem, TodoStatus } from '../types'
+import { demoSnapshot } from './demo'
 
 const PANE = 'hud'
 type SectionId = 'session' | 'context' | 'mcp' | 'subagents' | 'todos'
@@ -487,11 +488,101 @@ export const summaryLine = (
 ): string =>
   `${percent === undefined ? '–' : Math.round(percent)}% · MCP ${connected}/${total} · ${agents} agents`
 
+// ── View ─────────────────────────────────────────────────────────────────
+// Everything the Pane and the band display, assembled from the live sources
+// or, in demo mode, from the fixed sample session in `demo.ts`. One view keeps
+// a single JSX tree for both.
+
+type ModelInfo = { model: string; effort?: string | number }
+
+type HudView = {
+  demo: boolean
+  title: string | null
+  sessionId: string
+  account: string | null
+  mainModel: ModelInfo
+  branch: string | null
+  cwd: string
+  home: string | null
+  contextPercent: number | undefined
+  meters: Meter[]
+  footer: string
+  servers: McpServerInfo[]
+  agents: AgentRow[]
+  models: ReadonlyMap<string, ModelInfo>
+  todos: TodoItem[]
+}
+
+// When `/hud-demo` switched demo mode on (`$.clock.now()`), or null.
+// Module-level: a reload leaves demo mode, which is fine for a recording aid.
+let demoStartedAt: number | null = null
+
+const demoView = (elapsedMs: number): HudView => {
+  const d = demoSnapshot(elapsedMs)
+  return {
+    demo: true,
+    title: d.session.title,
+    sessionId: d.session.id,
+    account: d.session.account,
+    mainModel: d.session.model,
+    branch: d.session.branch,
+    cwd: d.session.cwd,
+    home: d.session.home,
+    contextPercent: d.contextPercent,
+    meters: d.meters,
+    footer: d.footer,
+    servers: d.servers,
+    agents: d.agents,
+    models: new Map(d.agents.map(a => [a.id, { model: a.model, effort: a.effort }])),
+    todos: d.todos,
+  }
+}
+
+// The live view: the real session's sources. `list` is the `rows` atom the
+// caller read first (its refresh signal).
+const liveView = async ($: EngineInterface, list: AgentRow[]): Promise<HudView> => {
+  const [usage, tools, now, session, model, cwd, todoList] = await Promise.all([
+    $.session.usage(),
+    $.tool.list(),
+    $.clock.now(),
+    $.session.id(),
+    $.session.model(),
+    $.session.cwd(),
+    read($, todos),
+  ])
+  return {
+    demo: false,
+    title: sessionTitle,
+    sessionId: session,
+    account: accountCache,
+    // Until the next request reports it, the effort is unknown.
+    mainModel: loopModel.get(MAIN) ?? { model },
+    branch: gitBranchCache,
+    cwd,
+    home: homeCache,
+    contextPercent: usage.context?.percent,
+    meters: meters(usage, now, utcOffsetMin),
+    footer: contextFooter(usage),
+    servers: mcpServers(tools),
+    agents: list,
+    models: loopModel,
+    todos: todoList,
+  }
+}
+
+// Demo view while `/hud-demo` is on, the live one otherwise.
+const hudView = async ($: EngineInterface, list: AgentRow[]): Promise<HudView> =>
+  demoStartedAt === null ? liveView($, list) : demoView((await $.clock.now()) - demoStartedAt)
+
 export const register: Register = on => {
   on('session.start', async ($, e, next) => {
     await $.command.register({
       name: 'hud',
       description: 'Open the Agent HUD sidebar',
+    })
+    await $.command.register({
+      name: 'hud-demo',
+      description: 'Toggle a sample session in Agent HUD for demos and screenshots',
     })
 
     void $.ui.open({ id: PANE, title: 'Agent HUD' })
@@ -624,6 +715,20 @@ export const register: Register = on => {
     return { text: 'Agent HUD opened.' }
   })
 
+  // Demo mode: the Pane and the band show the sample session from `demo.ts`
+  // instead of live data. Nothing is written to `$.state`; the poller keeps
+  // tracking the real session, and its `rows` write each tick redraws the
+  // demo frames as they progress.
+  on('command.run', { command: 'hud-demo' }, async $ => {
+    if (demoStartedAt !== null) {
+      demoStartedAt = null
+      return { text: 'Demo mode off.' }
+    }
+    demoStartedAt = await $.clock.now()
+    await $.ui.open({ id: PANE, title: 'Agent HUD' })
+    return { text: 'Demo mode on: sample data only, no tokens spent. Run /hud-demo again to exit.' }
+  })
+
   // Hidden-sidebar band: shown above the prompt whenever the pane is not on
   // screen (closed by → or its ✕, or open but unplaced on a narrow terminal),
   // with a button that reopens it. It asks the engine itself through
@@ -637,9 +742,8 @@ export const register: Register = on => {
     if (isSidebarShown(await $.ui.panes())) return next(e)
 
     const { Box, Text, Button } = $.ui.resolve(e)
-    const usage = await $.session.usage()
-    const servers = mcpServers(await $.tool.list())
-    const connected = servers.filter(s => s.connected).length
+    const view = await hudView($, list)
+    const connected = view.servers.filter(s => s.connected).length
 
     return (
       <Box>
@@ -653,7 +757,7 @@ export const register: Register = on => {
         </Button>
         <Text color="subtle">
           {' '}
-          {summaryLine(usage.context?.percent, connected, servers.length, list.length)}
+          {summaryLine(view.contextPercent, connected, view.servers.length, view.agents.length)}
         </Text>
       </Box>
     )
@@ -661,26 +765,19 @@ export const register: Register = on => {
 
   on('ui.render', { component: 'Pane', requestId: PANE }, async ($, e) => {
     const { Box, Text, Button } = $.ui.resolve(e)
-    const list = await read($, rows)
     const c = await read($, collapsed)
-    const servers = mcpServers(await $.tool.list())
-    const usage = await $.session.usage()
-    const ms = meters(usage, await $.clock.now(), utcOffsetMin)
-    const footer = contextFooter(usage)
-    const [session, model, cwd] = await Promise.all([
-      $.session.id(),
-      $.session.model(),
-      $.session.cwd(),
-    ])
+    const view = await hudView($, await read($, rows))
+    const { servers, footer, agents: list } = view
+    const ms = view.meters
     const counts = agentCounts(list)
-    const todoList = orderTodos(await read($, todos))
+    const todoList = orderTodos(view.todos)
     const todoDone = todoList.filter(t => t.status === 'completed').length
     // Each subagent card takes four rows; show as many as fit, at least one.
     const used = ms.length + 1 + servers.length + todoList.length + 20
     const cards = Math.max(1, Math.floor(((e.viewport?.rows ?? 24) - used) / 4))
 
     // 🤖 Opus 5.5 · medium — the same line for the session and each subagent.
-    const modelLine = (m: { model: string; effort?: string | number } | undefined, indent = '') =>
+    const modelLine = (m: ModelInfo | undefined, indent = '') =>
       m && (
         <Text wrap="truncate-end">
           {indent}🤖 <Text bold color="warning">{prettyModel(m.model)}</Text>
@@ -721,25 +818,24 @@ export const register: Register = on => {
           {header('session', 'Session')}
           {!c.session && (
             <Text wrap="truncate-end">
-              {sessionTitle && <Text bold>{sessionTitle}</Text>}
+              {view.title && <Text bold>{view.title}</Text>}
               <Text color="subtle">
-                {sessionTitle && ' · '}
-                {session.slice(0, 8)}
+                {view.title && ' · '}
+                {view.sessionId.slice(0, 8)}
               </Text>
             </Text>
           )}
-          {!c.session && accountCache && (
+          {!c.session && view.account && (
             <Text wrap="truncate-end">
-              👤 <Text bold>{accountCache}</Text>
+              👤 <Text bold>{view.account}</Text>
             </Text>
           )}
-          {/* Until the next request reports it, the effort is unknown. */}
-          {!c.session && modelLine(loopModel.get(MAIN) ?? { model })}
-          {!c.session && gitBranchCache && <Text color="subtle">⎇ {gitBranchCache}</Text>}
+          {!c.session && modelLine(view.mainModel)}
+          {!c.session && view.branch && <Text color="subtle">⎇ {view.branch}</Text>}
           {!c.session &&
             (() => {
               // Body width less the padding and the 📁 glyph (two cells + space).
-              const { parent, leaf } = shortPath(cwd, homeCache, (e.props.bodyColumns ?? 40) - 5)
+              const { parent, leaf } = shortPath(view.cwd, view.home, (e.props.bodyColumns ?? 40) - 5)
               return (
                 <Text wrap="truncate-start">
                   📁 <Text color="subtle">{parent}</Text>
@@ -790,6 +886,7 @@ export const register: Register = on => {
               <Button
                 key="clear-subagents"
                 onPress={() => {
+                  if (view.demo) return // sample data: nothing real to clear
                   for (const r of list) if (r.done) clearedAgents.add(r.id)
                   void update($, rows, prev => prev.filter(r => !r.done))
                 }}
@@ -818,7 +915,7 @@ export const register: Register = on => {
                 <Text wrap="truncate-end" color="subtle">
                   {'  '}(@{r.type} subagent)
                 </Text>
-                {modelLine(loopModel.get(r.id), '  ')}
+                {modelLine(view.models.get(r.id), '  ')}
                 <Text color="subtle">
                   {'  '}◷ {fmt(r.elapsedMs)}
                   {r.tokens !== undefined && `  ≋ ${fmtTokens(r.tokens)} tok`}
@@ -834,6 +931,7 @@ export const register: Register = on => {
               <Button
                 key="clear-todos"
                 onPress={() => {
+                  if (view.demo) return // sample data: nothing real to clear
                   for (const t of todoList) if (t.status === 'completed') clearedTodos.add(t.content)
                   void update($, todos, prev => prev.filter(t => t.status !== 'completed'))
                 }}

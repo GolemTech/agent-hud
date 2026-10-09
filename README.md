@@ -46,6 +46,9 @@ To add the marketplace first and install separately:
   `ctrl+x ctrl+a` to expand it.
 - `▾` / `▸` on each section header collapses or expands that section.
 - `✕ clear done` on Subagents and Todo removes finished entries.
+- `/hud-demo` toggles a sample session (fixed data, progressing subagents
+  and todos) for demos and screenshots. It spends no tokens and shows no
+  personal data; run it again to return to the live session.
 
 ## How it gets its data
 
