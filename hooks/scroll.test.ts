@@ -115,6 +115,13 @@ test('the Pane is drawn at its body height: header, clipped viewport, footer', a
     const right = label.length - label.trimEnd().length
     expect(Math.abs(left - right)).toBeLessThanOrEqual(1)
     expect(left).toBeGreaterThan(1)
+    // The hide button sits inside the band: a solid ► drawn inverse, with
+    // no gap between them, and a blank row separates the band from Session.
+    const hide = all(p.header, 'Button')[0]
+    expect(textOf(hide)).toContain('►')
+    expect(all(hide, 'Text').some(t => t.props?.inverse === true)).toBe(true)
+    expect(p.header.props?.marginBottom).toBe(1)
+    expect(HEADER_ROWS).toBe(2)
     expect(textOf(p.viewport)).not.toContain('📂')
     // The footer is last and holds the version.
     expect(textOf(p.footer)).toContain('2.1.296')

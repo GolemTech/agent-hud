@@ -11,7 +11,7 @@ doing, and the main loop's todo list.
 
 | Section   | Contents |
 | --------- | -------- |
-| Header    | Always at the top: the project's name (`📂`, the repository root's folder, else the working directory's), beside the `→` hide button. |
+| Header    | Always at the top: the project's name (`📂`, the repository root's folder, else the working directory's), centered in a full-width band that ends in the `►` hide button. |
 | Session   | Session title (or short id), signed-in account, model and effort, output style (when not the default), git branch (`⑂`) with working-tree changes (`+N` added, `-M` removed lines, shown only when there are any), working directory shortened to fit. |
 | Context   | Meters for the context window and each rate-limit window, with time to reset and the local reset time; a footer with total tokens and cost. |
 | MCP       | MCP servers, connected first; servers waiting for authentication are dimmed. |
@@ -41,7 +41,7 @@ To add the marketplace first and install separately:
 ## Usage
 
 - The sidebar opens on session start. `/hud` opens it again at any time.
-- `→` (top right of the sidebar) hides it. A band above the prompt then shows
+- `►` (right end of the header band) hides it. A band above the prompt then shows
   a one-line summary (`▸ Agent HUD  55% · MCP 3/4 · 2 agents`); click it to
   reopen the sidebar.
 - Claude Code can collapse that band itself, showing

@@ -38,6 +38,7 @@ import {
   flowRows,
   gridFor,
   HEADING_INDENT,
+  HIDE_BUTTON,
   ITEM_INDENT,
   layoutFor,
   maxScrollOffset,
@@ -1519,12 +1520,17 @@ export const register: Register = on => {
     // `columns`), so hiding goes to the band above the prompt, which reopens
     // it. The name's Box takes the line less the button and its gap, so the
     // row never wraps and a long name truncates.
+    // One band: the centered name and, at its right end, a solid ► that hides
+    // the sidebar, drawn inverse too and with no gap so both read as one bar.
+    // (The pane's ✕ is the engine's frame and cannot move into it.) A blank
+    // row below keeps the band apart from the first section.
+    const bandWidth = Math.max(1, W - HIDE_BUTTON.length)
     const headerRow = (
-      <Box flexDirection="column" flexShrink={0}>
-        <Box flexWrap="wrap" gap={1}>
-          <Box width={Math.max(1, W - 2)} flexShrink={0}>
+      <Box flexDirection="column" flexShrink={0} marginBottom={1}>
+        <Box flexWrap="wrap">
+          <Box width={bandWidth} flexShrink={0}>
             <Text bold inverse color="claude" wrap="truncate-end">
-              {centerBand(`📂 ${view.project ?? projectName(view.cwd)}`, Math.max(1, W - 2))}
+              {centerBand(`📂 ${view.project ?? projectName(view.cwd)}`, bandWidth)}
             </Text>
           </Box>
           <Box flexShrink={0}>
@@ -1533,7 +1539,9 @@ export const register: Register = on => {
               plain
               onPress={() => void $.ui.close({ id: PANE })}
             >
-              <Text color="subtle">→</Text>
+              <Text bold inverse color="claude">
+                {HIDE_BUTTON}
+              </Text>
             </Button>
           </Box>
         </Box>
