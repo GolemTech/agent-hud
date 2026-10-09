@@ -79,6 +79,10 @@ Type-checking needs `.claude-plugin/types/`, which Claude Code writes when a
 session loads the plugin from this folder (`claude --plugin-dir .`). It is
 git-ignored.
 
+## Credits
+
+[![Built with Gentle-AI](https://raw.githubusercontent.com/Gentleman-Programming/gentle-ai/main/docs/assets/brand/built-with-gentle-ai.png)](https://github.com/Gentleman-Programming/gentle-ai)
+
 ## License
 
 [MIT](LICENSE) © GolemTech
