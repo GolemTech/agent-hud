@@ -16,7 +16,7 @@ doing, and the main loop's todo list.
 | MCP       | MCP servers, connected first; servers waiting for authentication are dimmed. |
 | Subagents | Running / done / error counts, then one card per subagent: description, type, model, elapsed time and context tokens. |
 | Todo      | The main loop's task list: done first, then in progress, then pending. |
-| Gentle AI | The [gentle-ai](https://github.com/Gentleman-Programming/gentle-ai) toolset: `gentle-ai`, `gga` and `engram` versions with `✓ up to date` or `↑ <newer>` (as fresh as your local brew tap), the gga review hook and its rules file, receipt-driven development (RDD) on or off and where that comes from, and the TDD policy (test-first by default; strict TDD on, off or unset). Shows "gentle-ai not installed" when it is not. |
+| Gentle AI | The [gentle-ai](https://github.com/Gentleman-Programming/gentle-ai) toolset: `gentle-ai`, `gga` and `engram` versions with `✓ up to date` or `↑ <newer>` (as fresh as your local brew tap), the gga review hook and its rules file, receipt-driven development (RDD) on or off and where that comes from, and the TDD policy (test-first by default under ODD; strict TDD on, off or unset). Shows "gentle-ai not installed" when it is not. |
 
 ## Install
 
@@ -122,7 +122,8 @@ rest, and the limits that come with them:
   text and never executed, and the rules file (`RULES_FILE`, default
   `AGENTS.md`) by checking that it exists.
 - **RDD** comes from `gentle-ai review mode status --json` (read only).
-- **TDD**: test-first is the gentle-ai default; strict TDD is `strict_tdd` in
+- **TDD**: "test-first by default (ODD)": test-first is the default of
+  gentle-ai's Organic Driven Development workflow; strict TDD is `strict_tdd` in
   the project's `openspec/config.yaml`, matched as text.
 - **No network calls** are made by the plugin itself.
 - **Control characters** (escape sequences, newlines, bells) are stripped from

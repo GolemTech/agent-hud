@@ -5,8 +5,7 @@
 // commands; gga itself is never run for it (every gga command but `run` checks
 // GitHub for updates, and `gga config` sources the repository's `.gga`).
 
-const CONTROL = /[\u0000-\u001f\u007f-\u009f]/g
-const clean = (s: string): string => s.replace(CONTROL, '')
+import { clean } from './text'
 
 // ── Pure helpers ─────────────────────────────────────────────────────────
 
@@ -151,7 +150,10 @@ export const BREW_ENV = {
 } as const
 
 export const TAP = 'gentleman-programming/tap'
-export const PROBE_MS = 15_000
+// How long a read-only command may run before `$.process.run` kills it and
+// rejects: git, gentle-ai and date answer at once; brew loads Ruby first.
+export const CMD_TIMEOUT_MS = 5_000
+export const BREW_TIMEOUT_MS = 15_000
 
 // What the section draws: detection with the "as of" time already formatted
 // (the demo supplies a fixed one).

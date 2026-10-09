@@ -1,6 +1,6 @@
 import type { On } from 'claude-code'
 import { expect, mock, test } from 'claude-code/testing'
-import type { Engine } from 'claude-code/testing'
+import type { Engine, MockClock } from 'claude-code/testing'
 
 import {
   ggaHookInstalled,
@@ -125,7 +125,13 @@ type Run = { argv: readonly string[]; init?: { cwd?: string; env?: Record<string
 // The engine's bottom: gentle-ai 4.0.0, engram has an update, the gga hook is
 // missing, a project `.gga` names no rules file and AGENTS.md is absent, RDD
 // is on from the global setting, openspec sets no strict_tdd.
-const answerEngine = (on: On, answer: () => string | Error = () => 'Cancel') => {
+const ON_GLOBAL = JSON.stringify({ status: { global: 'on', clone_local: '', effective: 'on', source: 'global' } })
+
+const answerEngine = (
+  on: On,
+  answer: () => string | Error = () => 'Cancel',
+  rddStatus?: (clock: MockClock) => Promise<string>,
+) => {
   const runs: Run[] = []
   const fills: { text: string; mode?: string }[] = []
   const toasts: string[] = []
@@ -173,7 +179,7 @@ const answerEngine = (on: On, answer: () => string | Error = () => 'Cancel') => 
     if (argv.startsWith('brew --repository')) return out(`${TAP}\n`)
     if (argv === 'git rev-parse --git-path hooks') return out('.git/hooks\n')
     if (argv.startsWith('gentle-ai review mode status'))
-      return out(JSON.stringify({ status: { global: 'on', clone_local: '', effective: 'on', source: 'global' } }))
+      return rddStatus ? rddStatus(clock).then(s => out(s)) : out(ON_GLOBAL)
     if (argv === 'date +%z') return out('+0000\n')
     return out('')
   })
@@ -206,8 +212,13 @@ const mountPane = ($: Engine) =>
     viewport: { rows: 80, columns: 60 },
   } as never)
 
-const start = async ($: Engine, on: On, answer?: () => string | Error) => {
-  const engine = answerEngine(on, answer)
+const start = async (
+  $: Engine,
+  on: On,
+  answer?: () => string | Error,
+  rddStatus?: (clock: MockClock) => Promise<string>,
+) => {
+  const engine = answerEngine(on, answer, rddStatus)
   await $.session.start({ cwd: ROOT, surface: 'terminal', isInteractive: true } as never)
   await engine.clock.settle()
   return engine
@@ -229,7 +240,8 @@ test('the Gentle AI section shows versions, updates, gga, RDD and TDD', async ($
   expect(text).toContain('"hook ","✗"')
   expect(text).toContain('"rules ","✗"," ","AGENTS.md"')
   expect(text).toContain('"● ","on"," (","global",")"')
-  expect(text).toContain('test-first')
+  expect(text).toContain('"TDD  ","test-first"')
+  expect(text).toContain('" by default (ODD)"')
   expect(text).toContain('"strict: ","unset"')
 })
 
@@ -293,4 +305,36 @@ test('in demo mode the section shows sample values and its buttons only say so',
   expect(fills.length).toBe(0)
   expect(toasts.filter(t => t === 'demo mode').length).toBe(3)
   await $.command.run({ command: 'hud-demo', args: '' } as never) // leave demo mode
+})
+
+test('an action refresh wins over an older periodic detection that finishes later', async ($, on) => {
+  const offClone = JSON.stringify({ status: { global: 'on', clone_local: 'off', effective: 'off', source: 'clone' } })
+  let calls = 0
+  // 1: session start; 2: the periodic run at tick 301, answering 3 s late
+  // with what was true before the action; 3: the refresh after the action.
+  const rddStatus = async (clock: MockClock) => {
+    calls += 1
+    if (calls === 2) {
+      await clock.sleep(3000)
+      return ON_GLOBAL
+    }
+    return calls === 1 ? ON_GLOBAL : offClone
+  }
+  const { clock, runs } = await start($, on, () => 'Run it', rddStatus)
+  const pane = await mountPane($)
+  await clock.advance(300_000) // tick 301: the periodic detection starts
+  expect(calls).toBe(2)
+
+  await pane.press({ key: 'rdd-project-off' })
+  await clock.settle()
+  expect(runs.some(r => r.argv.join(' ') === `gentle-ai review mode disable --scope clone --cwd ${ROOT} --json`)).toBe(
+    true,
+  )
+  // The action's refresh runs at once instead of joining the older run.
+  expect(calls).toBe(3)
+
+  await clock.advance(3000) // the older detection finishes now
+  const text = JSON.stringify(await pane.drawn())
+  expect(text).toContain('"● ","off"," (","clone",")"')
+  expect(text).not.toContain('"● ","on"," (","global",")"')
 })
