@@ -2,6 +2,8 @@ import type { On } from 'claude-code'
 import { expect, mock, test } from 'claude-code/testing'
 import type { Engine } from 'claude-code/testing'
 
+import { BRANCH_ICON } from './layout'
+
 const HOME = '/home/myuser'
 const CWD = `${HOME}/code/demo-proj`
 const BRANCH = 'feat/session-line'
@@ -90,8 +92,17 @@ test('a clean working tree shows the branch without change counts', async ($, on
   await clock.settle()
   const text = JSON.stringify(await (await mountPane($)).drawn())
   expect(text).toContain(BRANCH)
-  expect(text).toContain('🌿')
+  expect(text).toContain(BRANCH_ICON)
+  expect(text).not.toContain('🌿')
   expect(text).not.toContain('+0')
+})
+
+test('the branch icon is the standard ⑂, bold in the theme accent', async ($, on) => {
+  const clock = answerEngine(on, '')
+  await $.session.start({ cwd: CWD, surface: 'terminal', isInteractive: true } as never)
+  await clock.settle()
+  const text = JSON.stringify(await (await mountPane($)).drawn())
+  expect(text).toContain('{"type":"Text","props":{"bold":true,"color":"claude"},"children":["⑂"]}')
 })
 
 test('the footer shows the Claude Code version', async ($, on) => {

@@ -11,7 +11,7 @@ doing, and the main loop's todo list.
 
 | Section   | Contents |
 | --------- | -------- |
-| Session   | Session title (or short id), signed-in account, model and effort, output style (when not the default), git branch with working-tree changes (`+N` added, `-M` removed lines, shown only when there are any), working directory shortened to fit. |
+| Session   | Session title (or short id), signed-in account, model and effort, output style (when not the default), git branch (`⑂`) with working-tree changes (`+N` added, `-M` removed lines, shown only when there are any), working directory shortened to fit. |
 | Context   | Meters for the context window and each rate-limit window, with time to reset and the local reset time; a footer with total tokens and cost. |
 | MCP       | MCP servers, connected first; servers waiting for authentication are dimmed. |
 | Subagents | Running / done / error counts, then one card per subagent: description, type, model, elapsed time and context tokens. |
@@ -46,6 +46,10 @@ To add the marketplace first and install separately:
   `plugin panel hidden · ctrl+x ctrl+a or click to show`. Click it or press
   `ctrl+x ctrl+a` to expand it.
 - `▾` / `▸` on each section header collapses or expands that section.
+- The sidebar adapts to the dock's width and height on every resize: labels
+  keep their width and buttons wrap below them, meter bars scale, the
+  subagent tally turns compact (`●2 ✓5 ✕0`) in a narrow dock, and the number
+  of subagent cards follows the rows left.
 - `✕ clear done` on Subagents and Todo removes finished entries.
 - `/hud-demo` toggles a sample session (fixed data, progressing subagents
   and todos) for demos and screenshots. It spends no tokens and shows no

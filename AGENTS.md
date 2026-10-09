@@ -2,7 +2,7 @@
 
 Rules for Gentleman Guardian Angel (gga) and any reviewer of this repository:
 a Claude Code plugin ("mod") in TypeScript/TSX, hooks module `hooks/register.tsx`,
-pure helpers in `hooks/gentle.ts`, `hooks/demo.ts`, `hooks/text.ts`. Fail the
+pure helpers in `hooks/gentle.ts`, `hooks/demo.ts`, `hooks/text.ts`, `hooks/layout.ts`. Fail the
 review on any **MUST** rule; report the rest as suggestions.
 
 ## Mods API (MUST)
