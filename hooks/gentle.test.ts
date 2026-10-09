@@ -241,6 +241,46 @@ const start = async (
   return engine
 }
 
+// The row: the innermost Box whose direct child holds a Text that starts with
+// `label` (the label's own Box, or the Text itself).
+type Node = { type?: string; props?: Record<string, unknown>; children?: unknown[] }
+const rowOf = (tree: unknown, label: string): Node | null => {
+  const hasLabel = (n: unknown): boolean =>
+    typeof n === 'object' && n !== null &&
+    (((n as Node).type === 'Text' && String((n as Node).children?.[0] ?? '').trimStart().startsWith(label)) ||
+      ((n as Node).children ?? []).some(hasLabel))
+  const walk = (n: unknown): Node | null => {
+    if (typeof n !== 'object' || n === null) return null
+    for (const c of (n as Node).children ?? []) {
+      const found = walk(c)
+      if (found) return found
+    }
+    const node = n as Node
+    const direct = (node.children ?? []).some(
+      c => typeof c === 'object' && c !== null && ((c as Node).type === 'Box' || (c as Node).type === 'Text') && hasLabel(c),
+    )
+    return node.type === 'Box' && direct && (node.children ?? []).length > 1 ? node : null
+  }
+  return walk(tree)
+}
+
+test('narrow sidebar: RDD scope labels never shrink and sit on their own rows', async ($, on) => {
+  await start($, on)
+  const tree = await (await mountPane($)).drawn()
+  for (const label of ['project', 'global']) {
+    const row = rowOf(tree, label)
+    expect(row).not.toBeNull()
+    expect(row?.props?.flexWrap).toBe('wrap')
+    // The label's own Box keeps its width; the buttons wrap below it instead.
+    const labelBox = (row?.children ?? []).find(
+      c => (c as Node).type === 'Box' && (c as Node).props?.flexShrink === 0,
+    )
+    expect(labelBox).toBeDefined()
+  }
+  const project = JSON.stringify(rowOf(tree, 'project'))
+  expect(project).not.toContain('global')
+})
+
 test('the Gentle AI section shows versions, updates, gga, RDD and TDD', async ($, on) => {
   await start($, on)
   const text = JSON.stringify(await (await mountPane($)).drawn())

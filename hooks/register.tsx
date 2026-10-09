@@ -1270,17 +1270,21 @@ export const register: Register = on => {
           {g.updatesKnown && g.asOf && <Text color="subtle">updates as of {g.asOf} (brew)</Text>}
           {ggaInstalled && !root && <Text color="subtle">gga  no repository</Text>}
           {ggaInstalled && root && (
-            <Box gap={1}>
-              <Text>gga</Text>
-              <Text color={g.gga.hook ? 'success' : g.gga.hook === false ? 'error' : 'subtle'}>
-                hook {g.gga.hook ? '✓' : g.gga.hook === false ? '✗' : '?'}
-              </Text>
+            <Box gap={1} flexWrap="wrap">
+              <Box flexShrink={0}>
+                <Text>gga</Text>
+              </Box>
+              <Box flexShrink={0}>
+                <Text color={g.gga.hook ? 'success' : g.gga.hook === false ? 'error' : 'subtle'}>
+                  hook {g.gga.hook ? '✓' : g.gga.hook === false ? '✗' : '?'}
+                </Text>
+              </Box>
               {g.gga.hook === false && command('gga-install', 'install', root)}
               {!g.gga.projectConfig && command('gga-init', 'init', root)}
             </Box>
           )}
           {ggaInstalled && root && (
-            <Box gap={1}>
+            <Box gap={1} flexWrap="wrap">
               <Text>{'   '}</Text>
               <Text wrap="truncate-end" color={g.gga.rules ? 'success' : g.gga.rules === false ? 'error' : 'subtle'}>
                 rules {g.gga.rules ? '✓' : g.gga.rules === false ? '✗' : '?'} {g.gga.rulesFile}
@@ -1299,11 +1303,22 @@ export const register: Register = on => {
               <Text color="subtle">unknown</Text>
             )}
           </Text>
-          <Box gap={1}>
-            {root && <Text color="subtle">project</Text>}
-            {root && command('rdd-project-on', 'on', root)}
-            {root && command('rdd-project-off', 'off', root)}
-            <Text color="subtle">global</Text>
+          {/* One row per scope. In a narrow dock the label keeps its width
+              (flexShrink 0) and the buttons wrap below it, instead of the
+              label being squeezed into one letter per line. */}
+          {root && (
+            <Box gap={1} flexWrap="wrap">
+              <Box flexShrink={0}>
+                <Text color="subtle">{'   project'}</Text>
+              </Box>
+              {command('rdd-project-on', 'on', root)}
+              {command('rdd-project-off', 'off', root)}
+            </Box>
+          )}
+          <Box gap={1} flexWrap="wrap">
+            <Box flexShrink={0}>
+              <Text color="subtle">{'   global '}</Text>
+            </Box>
             {command('rdd-global-on', 'on', root ?? view.cwd)}
             {command('rdd-global-off', 'off', root ?? view.cwd)}
           </Box>
