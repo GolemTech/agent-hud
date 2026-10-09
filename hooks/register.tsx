@@ -764,8 +764,11 @@ const detectGentle = async ($: EngineInterface): Promise<GentleInfo> => {
 
 // Asks first; runs only on the exact "Run it". A dismissed dialog (or a `-p`
 // run, where `ask` rejects) is a cancel. Never echoes the command's output.
-const runAction = async ($: EngineInterface, action: GentleAction, root: string): Promise<boolean> => {
-  const spec = actionSpec(action, root)
+// Outside a repository (`root` null) it runs in the session's real cwd, read
+// now: the drawn cwd may be the privacy mask (`~/…`), never a usable path.
+const runAction = async ($: EngineInterface, action: GentleAction, root: string | null): Promise<boolean> => {
+  const cwd = root ?? (await $.session.cwd())
+  const spec = actionSpec(action, cwd)
   let answer: string
   try {
     answer = await $.ui.ask(spec.question, { header: 'Gentle AI', options: [RUN_IT, CANCEL] })
@@ -775,7 +778,7 @@ const runAction = async ($: EngineInterface, action: GentleAction, root: string)
   if (answer !== RUN_IT) return false
   try {
     const r = await $.process.run(spec.argv, {
-      cwd: root,
+      cwd,
       timeoutMs: 30_000,
       ...(spec.env ? { env: spec.env } : {}),
       ...(spec.stdin === undefined ? {} : { stdin: spec.stdin }),
@@ -1251,7 +1254,7 @@ export const register: Register = on => {
       </Button>
     )
     // Command buttons confirm first (`runAction`), then detection runs again.
-    const command = (key: GentleAction, label: string, root: string, selected = false) =>
+    const command = (key: GentleAction, label: string, root: string | null, selected = false) =>
       action(
         key,
         label,
@@ -1352,8 +1355,8 @@ export const register: Register = on => {
             <Box flexShrink={0}>
               <Text color="subtle">{'   global '}</Text>
             </Box>
-            {command('rdd-global-on', 'on', root ?? view.cwd, g.rdd?.global === 'on')}
-            {command('rdd-global-off', 'off', root ?? view.cwd, g.rdd?.global === 'off')}
+            {command('rdd-global-on', 'on', root, g.rdd?.global === 'on')}
+            {command('rdd-global-off', 'off', root, g.rdd?.global === 'off')}
           </Box>
           <Text wrap="wrap">
             {'TDD  '}test-first

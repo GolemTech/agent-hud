@@ -136,6 +136,9 @@ type Run = { argv: readonly string[]; init?: { cwd?: string; env?: Record<string
 // is on from the global setting, openspec sets no strict_tdd.
 const ON_GLOBAL = JSON.stringify({ status: { global: 'on', clone_local: '', effective: 'on', source: 'global' } })
 
+// Whether the session runs inside a repository; a test turns it off.
+let inRepo = true
+
 // The repo's pre-commit hook text; a test swaps in gga's block to install it.
 let preCommit = '#!/bin/sh\ngitleaks protect --staged\n'
 
@@ -158,7 +161,7 @@ const answerEngine = (
   on('session.id', () => ({ value: '0a1b2c3d-4e5f-4a6b-8c7d-9e0f1a2b3c4d' }) as never)
   on('session.root', () => ({ value: ROOT }) as never)
   on('session.cwd', () => ({ value: ROOT }) as never)
-  on('session.repo', () => ({ value: { root: ROOT, remote: null } }) as never)
+  on('session.repo', () => ({ value: inRepo ? { root: ROOT, remote: null } : null }) as never)
   on('session.model', () => ({ value: 'claude-opus-5-5' }) as never)
   on('session.version', () => ({ value: { version: '2.1.296', base: '2.1.296' } }) as never)
   on('session.usage', () => ({ value: { startedAt: 0 } }) as never)
@@ -359,6 +362,20 @@ test('the project RDD button runs the clone-scoped enable after "Run it"', async
   expect(runs.some(r => r.argv.join(' ') === `gentle-ai review mode enable --scope clone --cwd ${ROOT} --json`)).toBe(
     true,
   )
+})
+
+test('outside a repository in privacy mode, the global RDD button runs in the real cwd', async ($, on) => {
+  inRepo = false
+  try {
+    const { runs } = await start($, on, () => 'Run it')
+    await $.command.run({ command: 'hud-private', args: '' } as never)
+    await (await mountPane($)).press({ key: 'rdd-global-on' })
+    const run = runs.find(r => r.argv.join(' ') === 'gentle-ai review mode enable --scope global --json')
+    expect(run).toBeDefined()
+    expect(run?.init?.cwd).toBe(ROOT)
+  } finally {
+    inRepo = true
+  }
 })
 
 test('create rules fills the prompt with the rules request, and sends nothing', async ($, on) => {
