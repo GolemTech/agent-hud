@@ -1,6 +1,6 @@
 # Agent HUD
 
-<a href="https://github.com/GolemTech/agent-hud/blob/main/LICENSE"><img src="https://img.shields.io/badge/license-MIT-F095C8?style=for-the-badge&labelColor=1A1218" alt="License: MIT"></a>
+<a href="https://github.com/GolemTech/agent-hud/blob/main/LICENSE"><img src="https://img.shields.io/badge/license-MIT-3DD6D0?style=for-the-badge&labelColor=0B1420" alt="License: MIT"></a>
 
 A live sidebar for Claude Code. It docks beside the transcript and shows the
 current session at a glance: who and where you are, how much context and

@@ -4,29 +4,29 @@
   <desc id="df-desc">Three columns. Sources: Claude Code events (agent.spawn, turn.step, prompt.compose, tool.call for TodoWrite, TaskCreate and TaskUpdate, ui.scroll); the plugin API (session usage, id, model and version, the tool list for MCP servers, the agent list); and local reads with no network (git branch and diff shortstat, settings files, custom-title.json, account fields of .claude.json, gentle-ai and the local brew tap, gga files read as text). Agent HUD core: a one-second poller with caches, the $.state atoms, one view builder liveView that becomes maskView in privacy mode or demoView in demo mode, clean() on external text, and actions only after a Run it confirmation. Surfaces: the sidebar pane with a sticky header, sections and a sticky footer, and the band above the prompt. No network calls and nothing written to disk by the plugin.</desc>
   <defs>
     <marker id="df-arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto" markerUnits="userSpaceOnUse">
-      <path d="M 0 0 L 10 5 L 0 10 z" fill="#F095C8"/>
+      <path d="M 0 0 L 10 5 L 0 10 z" fill="#3DD6D0"/>
     </marker>
     <marker id="df-arrow-dim" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto" markerUnits="userSpaceOnUse">
-      <path d="M 0 0 L 10 5 L 0 10 z" fill="#B86A92"/>
+      <path d="M 0 0 L 10 5 L 0 10 z" fill="#2A8C9A"/>
     </marker>
   </defs>
   <style type="text/css"><![CDATA[
-    text { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; fill: #F4E9EF; }
-    .title { font-size: 22px; font-weight: bold; fill: #F095C8; }
-    .col { font-size: 12px; letter-spacing: 2px; fill: #9C8A94; }
-    .h { font-size: 14px; font-weight: bold; fill: #F095C8; }
+    text { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; fill: #E6EEF5; }
+    .title { font-size: 22px; font-weight: bold; fill: #3DD6D0; }
+    .col { font-size: 12px; letter-spacing: 2px; fill: #8798AA; }
+    .h { font-size: 14px; font-weight: bold; fill: #3DD6D0; }
     .t { font-size: 12.5px; }
-    .d { font-size: 12px; fill: #9C8A94; }
-    .k { font-size: 12.5px; fill: #F095C8; }
+    .d { font-size: 12px; fill: #8798AA; }
+    .k { font-size: 12.5px; fill: #3DD6D0; }
     .ok { font-size: 12.5px; fill: #7FD39B; }
-    .panel { fill: #26191F; stroke: #B86A92; stroke-width: 1.2; }
-    .box { fill: #1A1218; stroke: #B86A92; stroke-width: 1; }
-    .guard { fill: #1A1218; stroke: #9C8A94; stroke-width: 1; stroke-dasharray: 4 3; }
-    .flow { stroke: #F095C8; stroke-width: 1.6; fill: none; }
-    .inner { stroke: #B86A92; stroke-width: 1.3; fill: none; }
+    .panel { fill: #12202F; stroke: #2A8C9A; stroke-width: 1.2; }
+    .box { fill: #0B1420; stroke: #2A8C9A; stroke-width: 1; }
+    .guard { fill: #0B1420; stroke: #8798AA; stroke-width: 1; stroke-dasharray: 4 3; }
+    .flow { stroke: #3DD6D0; stroke-width: 1.6; fill: none; }
+    .inner { stroke: #2A8C9A; stroke-width: 1.3; fill: none; }
   ]]></style>
 
-  <rect x="0" y="0" width="1000" height="640" rx="18" fill="#1A1218"/>
+  <rect x="0" y="0" width="1000" height="640" rx="18" fill="#0B1420"/>
 
   <text class="title" x="32" y="46">How Agent HUD gets its data</text>
   <text class="col" x="24" y="82">SOURCES</text>
@@ -65,7 +65,7 @@
   <path class="flow" d="M 364 465 L 418 465" marker-end="url(#df-arrow)"/>
 
   <!-- Core -->
-  <rect class="panel" x="420" y="96" width="300" height="454" rx="12" stroke="#F095C8"/>
+  <rect class="panel" x="420" y="96" width="300" height="454" rx="12" stroke="#3DD6D0"/>
   <text class="h" x="440" y="120">Agent HUD</text>
   <text class="d" x="700" y="120" text-anchor="end">hooks/</text>
 
@@ -100,18 +100,18 @@
   <!-- Surface: sidebar pane -->
   <text class="h" x="776" y="120">Sidebar pane</text>
   <rect class="panel" x="776" y="134" width="200" height="236" rx="10"/>
-  <rect x="784" y="142" width="184" height="26" rx="5" fill="#F095C8"/>
-  <text class="t" x="794" y="160" style="fill:#1A1218; font-weight:bold;">project</text>
-  <text class="t" x="958" y="160" text-anchor="end" style="fill:#1A1218; font-weight:bold;">►</text>
+  <rect x="784" y="142" width="184" height="26" rx="5" fill="#3DD6D0"/>
+  <text class="t" x="794" y="160" style="fill:#0B1420; font-weight:bold;">project</text>
+  <text class="t" x="958" y="160" text-anchor="end" style="fill:#0B1420; font-weight:bold;">►</text>
   <text class="t" x="792" y="192">▾ Session</text>
   <text class="t" x="792" y="214">▾ Context</text>
-  <rect x="884" y="205" width="80" height="8" rx="3" fill="#3A2830"/>
-  <rect x="884" y="205" width="34" height="8" rx="3" fill="#F095C8"/>
+  <rect x="884" y="205" width="80" height="8" rx="3" fill="#22364A"/>
+  <rect x="884" y="205" width="34" height="8" rx="3" fill="#3DD6D0"/>
   <text class="t" x="792" y="236">▾ MCP</text>
   <text class="t" x="792" y="258">▾ Subagents</text>
   <text class="t" x="792" y="280">▾ Todo</text>
   <text class="t" x="792" y="302">▾ Gentle AI</text>
-  <line x1="784" y1="330" x2="968" y2="330" stroke="#3A2830" stroke-width="1"/>
+  <line x1="784" y1="330" x2="968" y2="330" stroke="#22364A" stroke-width="1"/>
   <text class="d" x="792" y="354"><tspan class="ok">●</tspan> ClaudeCode x.y.z</text>
   <text class="d" x="776" y="390">sticky header · sections</text>
   <text class="d" x="776" y="408">· sticky footer</text>
@@ -119,11 +119,11 @@
   <!-- Surface: band above the prompt -->
   <text class="h" x="776" y="450">Band above prompt</text>
   <rect class="panel" x="776" y="464" width="200" height="40" rx="8"/>
-  <text x="788" y="489" style="font-size:11.5px;"><tspan fill="#F095C8">▸ Agent HUD</tspan> 42% · MCP 3/4</text>
+  <text x="788" y="489" style="font-size:11.5px;"><tspan fill="#3DD6D0">▸ Agent HUD</tspan> 42% · MCP 3/4</text>
   <text class="d" x="780" y="528">&gt; prompt</text>
 
   <!-- Footer note -->
-  <line x1="24" y1="578" x2="976" y2="578" stroke="#3A2830" stroke-width="1"/>
+  <line x1="24" y1="578" x2="976" y2="578" stroke="#22364A" stroke-width="1"/>
   <circle cx="300" cy="606" r="5" fill="#7FD39B"/>
   <text class="t" x="316" y="611">No network calls · nothing written to disk by the plugin</text>
 </svg>
