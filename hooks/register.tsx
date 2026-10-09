@@ -105,6 +105,51 @@ export const prettyModel = (raw: string): string => {
 // from `git` on a slow cadence instead of spawning a process every render.
 let gitBranchCache: string | null = null
 
+// Lines added / removed in the working tree against HEAD (staged and
+// unstaged), from `git diff --shortstat HEAD` on the branch's cadence; null
+// when clean, outside a repository or with no HEAD yet. Untracked files are
+// not counted by `git diff`.
+let gitChangesCache: Changes | null = null
+
+export type Changes = { added: number; removed: number }
+
+// ` 3 files changed, 42 insertions(+), 7 deletions(-)` → { added: 42, removed: 7 }.
+// Either count may be missing (singular or plural); null when neither is there.
+export const parseShortstat = (stdout: string): Changes | null => {
+  const added = /(\d+) insertions?\(\+\)/.exec(stdout)?.[1]
+  const removed = /(\d+) deletions?\(-\)/.exec(stdout)?.[1]
+  if (added === undefined && removed === undefined) return null
+  return { added: Number(added ?? 0), removed: Number(removed ?? 0) }
+}
+
+// The active output style's name (`Gentleman`), null for the default style.
+// `prompt.compose` reports the one each request is composed with; until the
+// first one, the settings files stand in. `undefined` means not reported yet.
+let composedStyle: string | null | undefined
+let settingsStyle: string | null = null
+
+const styleName = (raw: string): string | null => {
+  const name = clean(raw).trim()
+  return name && name.toLowerCase() !== 'default' ? name : null
+}
+
+// The `outputStyle` setting from settings files given in Claude Code's
+// precedence order (local project, project, user). The first file that sets
+// a string wins; a missing, unparsable or non-string one is skipped. Nothing
+// else in the files is kept.
+export const outputStyleFrom = (...texts: readonly (string | null | undefined)[]): string | null => {
+  for (const text of texts) {
+    if (!text) continue
+    try {
+      const style = (JSON.parse(text) as { outputStyle?: unknown }).outputStyle
+      if (typeof style === 'string' && style.trim()) return styleName(style)
+    } catch {
+      // not JSON: skip this file
+    }
+  }
+  return null
+}
+
 // The /rename title has no `$` accessor and no event either; Claude Code keeps
 // it in `~/.claude/projects/<project>/<sessionId>/custom-title.json`, so the
 // poller reads that file. An internal file: if its place or shape changes,
@@ -123,12 +168,12 @@ let accountCache: string | null = null
 export const claudePaths = (
   home: string,
   configDir: string | undefined,
-): { config: string; projects: string } => {
+): { config: string; projects: string; settings: string } => {
   const expanded = configDir === '~' || configDir?.startsWith('~/') ? `${home}${configDir.slice(1)}` : configDir
   const dir = expanded ? expanded.replace(/\/+$/, '') : null
   return dir
-    ? { config: `${dir}/.claude.json`, projects: `${dir}/projects` }
-    : { config: `${home}/.claude.json`, projects: `${home}/.claude/projects` }
+    ? { config: `${dir}/.claude.json`, projects: `${dir}/projects`, settings: `${dir}/settings.json` }
+    : { config: `${home}/.claude.json`, projects: `${home}/.claude/projects`, settings: `${home}/.claude/settings.json` }
 }
 
 export const accountLabel = (text: string): string | null => {
@@ -536,6 +581,10 @@ export type HudView = {
   account: string | null
   mainModel: ModelInfo
   branch: string | null
+  /** Working-tree lines added / removed against HEAD; null when clean. */
+  changes: Changes | null
+  /** Active output style's name; null for the default style or unknown. */
+  outputStyle: string | null
   cwd: string
   home: string | null
   contextPercent: number | undefined
@@ -561,6 +610,8 @@ const demoView = (elapsedMs: number): HudView => {
     account: d.session.account,
     mainModel: d.session.model,
     branch: d.session.branch,
+    changes: d.session.changes,
+    outputStyle: d.session.outputStyle,
     cwd: d.session.cwd,
     home: d.session.home,
     contextPercent: d.contextPercent,
@@ -610,6 +661,8 @@ const liveView = async ($: EngineInterface, list: AgentRow[]): Promise<HudView> 
     // Until the next request reports it, the effort is unknown.
     mainModel: loopModel.get(MAIN) ?? { model },
     branch: gitBranchCache,
+    changes: gitChangesCache,
+    outputStyle: composedStyle === undefined ? settingsStyle : composedStyle,
     cwd,
     home: homeCache,
     contextPercent: usage.context?.percent,
@@ -676,6 +729,30 @@ export const register: Register = on => {
           // keep the last known account
         }
       }
+      // Output style from the settings files until `prompt.compose` reports
+      // one: now, then every ~30s. Each file is optional.
+      if (composedStyle === undefined && ticks % 30 === 1) {
+        try {
+          const home = await $.env.get('HOME')
+          const configDir = await $.env.get('CLAUDE_CONFIG_DIR')
+          const root = await $.session.root()
+          const readOr = async (path: string): Promise<string | null> => {
+            try {
+              return await $.fs.read(path)
+            } catch {
+              return null // no such file
+            }
+          }
+          const user = typeof home === 'string' ? claudePaths(home, configDir ?? undefined).settings : null
+          settingsStyle = outputStyleFrom(
+            await readOr(`${root}/.claude/settings.local.json`),
+            await readOr(`${root}/.claude/settings.json`),
+            user === null ? null : await readOr(user),
+          )
+        } catch {
+          // keep the last known style
+        }
+      }
       // System UTC offset for reset times: now, then every ~10 min (DST).
       if (ticks % 600 === 1) {
         try {
@@ -692,6 +769,7 @@ export const register: Register = on => {
           const repo = await $.session.repo()
           if (!repo) {
             gitBranchCache = null
+            gitChangesCache = null
           } else {
             try {
               const { stdout } = await $.process.run(['git', 'branch', '--show-current'], {
@@ -700,6 +778,16 @@ export const register: Register = on => {
               gitBranchCache = clean(stdout).trim() || null
             } catch {
               gitBranchCache = null
+            }
+            // Guarded on its own: no HEAD yet (an empty repository) exits
+            // non-zero, which must not touch the branch.
+            try {
+              const { stdout, exitCode } = await $.process.run(['git', 'diff', '--shortstat', 'HEAD'], {
+                cwd: repo.root,
+              })
+              gitChangesCache = exitCode === 0 ? parseShortstat(stdout) : null
+            } catch {
+              gitChangesCache = null
             }
           }
         } catch {
@@ -742,6 +830,16 @@ export const register: Register = on => {
     loopModel.set(e.agentId ?? MAIN, { model: e.model, effort: e.effort })
     return yield* next(e)
   })
+
+  // Output style of each system prompt the engine renders. A pure observer:
+  // it notes one field and forwards the composition untouched. The input
+  // names no loop; the style is the session's, whichever loop composes.
+  on('prompt.compose', (_$, e, next) => {
+    // The input names no loop, and a subagent's request carries no style, so
+    // only a named style updates the line; a style-less compose leaves it.
+    if (e.outputStyle) composedStyle = styleName(e.outputStyle.name)
+    return next(e)
+  }).catch((_$, e, next) => next(e))
 
   // Per-subagent tokens: AgentInfo has none, but each finished turn of a
   // subagent's loop reports its usage with its agentId.
@@ -919,7 +1017,18 @@ export const register: Register = on => {
             </Text>
           )}
           {!c.session && modelLine(view.mainModel)}
-          {!c.session && view.branch && <Text color="subtle">⎇ {view.branch}</Text>}
+          {!c.session && view.outputStyle && (
+            <Text wrap="truncate-end">
+              🎭 <Text color="claude">{view.outputStyle}</Text>
+            </Text>
+          )}
+          {!c.session && view.branch && (
+            <Text wrap="truncate-end">
+              🌿 <Text bold>{view.branch}</Text>
+              {view.changes && view.changes.added > 0 && <Text color="success">{` +${view.changes.added}`}</Text>}
+              {view.changes && view.changes.removed > 0 && <Text color="error">{` -${view.changes.removed}`}</Text>}
+            </Text>
+          )}
           {!c.session &&
             (() => {
               // Body width less the padding and the 📁 glyph (two cells + space).

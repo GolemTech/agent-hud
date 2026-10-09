@@ -17,6 +17,8 @@ export type DemoSnapshot = {
     account: string
     model: DemoModel
     branch: string
+    changes: { added: number; removed: number }
+    outputStyle: string
     cwd: string
     home: string
   }
@@ -34,6 +36,8 @@ const SESSION: DemoSnapshot['session'] = {
   account: 'you@Acme',
   model: { model: 'claude-opus-5-5', effort: 'high' },
   branch: 'feat/checkout-v2',
+  changes: { added: 42, removed: 7 },
+  outputStyle: 'Explanatory',
   cwd: '/home/you/code/shop/api',
   home: '/home/you',
 }

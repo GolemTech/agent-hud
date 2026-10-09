@@ -22,6 +22,8 @@ import {
   fromTodoWrite,
   mcpServers,
   orderTodos,
+  outputStyleFrom,
+  parseShortstat,
   parseTitle,
   prettyModel,
   projectDir,
@@ -323,14 +325,17 @@ test('claudePaths follows CLAUDE_CONFIG_DIR, else the home defaults', () => {
   expect(claudePaths('/home/myuser', undefined)).toEqual({
     config: '/home/myuser/.claude.json',
     projects: '/home/myuser/.claude/projects',
+    settings: '/home/myuser/.claude/settings.json',
   })
   expect(claudePaths('/home/myuser', '')).toEqual({
     config: '/home/myuser/.claude.json',
     projects: '/home/myuser/.claude/projects',
+    settings: '/home/myuser/.claude/settings.json',
   })
   expect(claudePaths('/home/myuser', '/tmp/profile/')).toEqual({
     config: '/tmp/profile/.claude.json',
     projects: '/tmp/profile/projects',
+    settings: '/tmp/profile/settings.json',
   })
 })
 
@@ -338,10 +343,12 @@ test('claudePaths expands a leading ~ in CLAUDE_CONFIG_DIR with home', () => {
   expect(claudePaths('/home/myuser', '~/profile')).toEqual({
     config: '/home/myuser/profile/.claude.json',
     projects: '/home/myuser/profile/projects',
+    settings: '/home/myuser/profile/settings.json',
   })
   expect(claudePaths('/home/myuser', '~')).toEqual({
     config: '/home/myuser/.claude.json',
     projects: '/home/myuser/projects',
+    settings: '/home/myuser/settings.json',
   })
   // Only a leading `~/` or a bare `~` is a home reference.
   expect(claudePaths('/home/myuser', '/tmp/~x').config).toBe('/tmp/~x/.claude.json')
@@ -403,4 +410,35 @@ test('shortPath handles home itself, the root and paths outside home', () => {
   expect(shortPath('/var/log/nginx', '/home/myuser', 40)).toEqual({ parent: '/var/log/', leaf: 'nginx' })
   expect(shortPath('/var/log/nginx', null, 13)).toEqual({ parent: '/var/../', leaf: 'nginx' })
   expect(shortPath('/var/log/nginx', null, 12)).toEqual({ parent: '/var/../', leaf: 'ng..' })
+})
+
+test('parseShortstat reads insertions and deletions, null when clean', () => {
+  expect(parseShortstat('')).toBe(null)
+  expect(parseShortstat('\n')).toBe(null)
+  expect(parseShortstat(' 3 files changed, 42 insertions(+), 7 deletions(-)\n')).toEqual({ added: 42, removed: 7 })
+  expect(parseShortstat(' 1 file changed, 3 insertions(+)\n')).toEqual({ added: 3, removed: 0 })
+  expect(parseShortstat(' 2 files changed, 5 deletions(-)\n')).toEqual({ added: 0, removed: 5 })
+  expect(parseShortstat(' 1 file changed, 1 insertion(+), 1 deletion(-)\n')).toEqual({ added: 1, removed: 1 })
+  // A mode-only change counts no lines: nothing to show.
+  expect(parseShortstat(' 1 file changed\n')).toBe(null)
+  expect(parseShortstat('fatal: bad revision HEAD')).toBe(null)
+})
+
+test('outputStyleFrom follows settings precedence: local, project, then user', () => {
+  const s = (outputStyle: unknown) => JSON.stringify({ model: 'opus', outputStyle })
+  expect(outputStyleFrom(s('Learning'), s('Explanatory'), s('Gentleman'))).toBe('Learning')
+  expect(outputStyleFrom(undefined, s('Explanatory'), s('Gentleman'))).toBe('Explanatory')
+  expect(outputStyleFrom(null, '{}', s('Gentleman'))).toBe('Gentleman')
+  expect(outputStyleFrom(undefined, undefined, undefined)).toBe(null)
+})
+
+test('outputStyleFrom keeps only a string outputStyle, cleaned, and hides the default', () => {
+  const s = (outputStyle: unknown) => JSON.stringify({ outputStyle })
+  // A non-string or unparsable file is skipped, not taken as "no style".
+  expect(outputStyleFrom(s(42), 'not json', s('Gentleman'))).toBe('Gentleman')
+  expect(outputStyleFrom(s({ name: 'x' }), s(null), s(['a']))).toBe(null)
+  expect(outputStyleFrom(s('Gentle\u001b[31mman\n'))).toBe('Gentle[31mman')
+  expect(outputStyleFrom(s('  '), s('Learning'))).toBe('Learning')
+  expect(outputStyleFrom(s('default'))).toBe(null)
+  expect(outputStyleFrom(s('Default'), s('Learning'))).toBe(null)
 })

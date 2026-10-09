@@ -17,22 +17,27 @@ issue for a security problem.
     `oauthAccount.organizationName` are kept; the rest of the file is ignored.
   - `~/.claude/projects/<project>/<session>/custom-title.json`: only
     `customTitle` is kept.
-  - Both move under `CLAUDE_CONFIG_DIR` when it is set.
+  - `~/.claude/settings.json`, and `.claude/settings.json` and
+    `.claude/settings.local.json` in the session's repository root: only the
+    `outputStyle` setting is kept, and only until the first request reports
+    the style.
+  - The `~/.claude` files move under `CLAUDE_CONFIG_DIR` when it is set.
 - **Environment variables**: `HOME` and `CLAUDE_CONFIG_DIR`.
-- **Commands**: two, each run with a constant argument list and no shell:
-  `git branch --show-current` (in the session's repository root) and
-  `date +%z`.
+- **Commands**: three, each run with a constant argument list and no shell:
+  `git branch --show-current` and `git diff --shortstat HEAD` (both in the
+  session's repository root; only the added and removed line counts of the
+  diff are kept) and `date +%z`.
 - **Plugin API**: session id, model, working directory, repository root and
   usage; the tool list (MCP server names are derived from tool names); the
-  subagent list; and the `agent.spawn`, `turn.step`, `turn.complete` and
-  `tool.call` (`TodoWrite`, `TaskCreate`, `TaskUpdate`) events, observed
-  without changing them.
+  subagent list; and the `agent.spawn`, `turn.step`, `prompt.compose` (only
+  the output style's name), `turn.complete` and `tool.call` (`TodoWrite`,
+  `TaskCreate`, `TaskUpdate`) events, observed without changing them.
 
 ## What it keeps
 
 - **Module memory**, lost on every plugin reload: subagent timings and token
-  counts, model and effort per loop, the cached title, account, branch, home
-  folder and UTC offset, and the ids and texts the person cleared.
+  counts, model and effort per loop, the cached title, account, branch,
+  working-tree change counts, output style name, home folder and UTC offset, and the ids and texts the person cleared.
 - **Per-session host state** (`$.state`): `rows` (subagent cards), `todos`,
   `collapsed` (section toggles) and `private` (privacy mode). Claude Code holds
   this state; the plugin writes no files of its own.
@@ -43,14 +48,15 @@ when there is no organization; the email domain is never kept.
 ## What it shows
 
 The sidebar and the band above the prompt show the session title or short id,
-the account label, model and effort, git branch, a shortened working
+the account label, model and effort, output style, git branch with added and
+removed line counts, a shortened working
 directory, context and rate-limit meters, MCP server names, subagent cards
 (description, type, model, elapsed time, tokens) and the main loop's todos.
 
 C0 and C1 control characters (escape sequences, newlines, bells) are stripped
 from every displayed string that comes from outside the plugin: session title,
-account, git branch, subagent description and type, todo text and MCP server
-names.
+account, output style, git branch, subagent description and type, todo text
+and MCP server names.
 
 ## What it does not do
 
@@ -60,7 +66,8 @@ names.
 ## Privacy mode (`/hud-private`)
 
 Masks the account, session title, session id, git branch and working
-directory. It does **not** mask MCP server names, subagent descriptions or todo
+directory. The output style and the working-tree line counts stay visible. It
+does **not** mask MCP server names, subagent descriptions or todo
 text, which can contain project or client names, nor Claude Code's own welcome
 header and status line, which a plugin cannot draw.
 
