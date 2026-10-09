@@ -45,6 +45,16 @@ export const gridFor = (labels: readonly string[], values: readonly string[], co
 // setting has now. Its length is the button's width in the row count.
 export const buttonText = (label: string, selected = false): string => (selected ? `[● ${label}]` : `[${label}]`)
 
+// The sticky header's title: `text` centered in `width` cells (the extra
+// space, if odd, on the right), or cut to fit with a trailing `…`. A terminal
+// has one font size, so a full-width inverse band is what makes it stand out.
+export const centerBand = (text: string, width: number): string => {
+  if (width <= 1) return '…'
+  if (text.length > width) return `${text.slice(0, width - 1)}…`
+  const left = Math.floor((width - text.length) / 2)
+  return `${' '.repeat(left)}${text}${' '.repeat(width - text.length - left)}`
+}
+
 // A section title as drawn: an inverse band, one space either side.
 export const sectionTitle = (text: string): string => ` ${text} `
 
@@ -107,9 +117,32 @@ export const flowRows = (widths: readonly number[], columns: number, gap = 1): n
   return lines
 }
 
-// Subagent cards that fit the rows the other sections leave; at least one.
-export const cardsFor = (bodyRows: number, usedRows: number): number =>
-  Math.max(1, Math.floor((bodyRows - usedRows) / CARD_ROWS))
+// ── Sticky header and footer ─────────────────────────────────────────────
+// The Pane is drawn at exactly its body's height: the header (project name
+// and the hide button) on top, the footer (Claude Code version) at the
+// bottom, and between them a clipped viewport whose content the plugin moves
+// itself by an offset, so the header and footer never scroll away.
+
+export const HEADER_ROWS = 2 // the band (name + hide button) and a blank row under it
+// The hide button inside the header band: a solid arrow padded to a cell
+// either side, so it reads as the band's end cap.
+export const HIDE_BUTTON = ' ► '
+export const FOOTER_ROWS = 2 // a blank separator row and the version line
+// Blank rows left under the last content line at the end of the scroll.
+export const SCROLL_BOTTOM_MARGIN = 1
+
+// Rows the scrolling viewport gets once the header and footer are placed.
+export const viewportRowsFor = (bodyRows: number, footer: boolean): number =>
+  Math.max(1, bodyRows - HEADER_ROWS - (footer ? FOOTER_ROWS : 0))
+
+// The last offset: none while the content fits, else its overflow plus the
+// bottom margin, so the last line never sits flush against the footer.
+export const maxScrollOffset = (contentRows: number, viewportRows: number): number =>
+  contentRows <= viewportRows ? 0 : contentRows - viewportRows + SCROLL_BOTTOM_MARGIN
+
+// An offset in whole rows within [0, max]; a non-number is the top.
+export const clampOffset = (offset: number, max: number): number =>
+  Number.isFinite(offset) ? clamp(Math.round(offset), 0, Math.max(0, max)) : 0
 
 // The branch line's icon: ⑂ (U+2442) is standard Unicode, so it renders
 // without a Nerd Font; one column wide in most monospace fonts.

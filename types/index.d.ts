@@ -33,6 +33,8 @@ declare module 'claude-code' {
       todos: TodoItem[]
       /** Privacy mode (`/hud-private`): identity fields masked. */
       private: boolean
+      /** The Pane's own scroll offset, in rows, under the sticky header. */
+      scroll: number
     }
   }
 }

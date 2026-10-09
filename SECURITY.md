@@ -91,7 +91,9 @@ when there is no organization; the email domain is never kept.
 
 ## What it shows
 
-The sidebar and the band above the prompt show the session title or short id,
+The sidebar's fixed header shows the project's folder name (the repository
+root's, else the working directory's; `…` in privacy mode). The sidebar and the
+band above the prompt show the session title or short id,
 the account label, model and effort, output style, git branch with added and
 removed line counts, a shortened working
 directory, context and rate-limit meters, MCP server names, subagent cards

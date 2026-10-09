@@ -4,19 +4,24 @@ import type { Engine } from 'claude-code/testing'
 
 import {
   BRANCH_ICON,
-  CARD_ROWS,
-  cardsFor,
+  centerBand,
+  clampOffset,
   columnWidth,
   flowRows,
   gridFor,
   HEADING_INDENT,
   ITEM_INDENT,
+  HEADER_ROWS,
   layoutFor,
   MAX_BAR,
+  maxScrollOffset,
   MIN_BAR,
   PANE_PADDING_X,
   ruleWidth,
+  SCROLL_BOTTOM_MARGIN,
   textRows,
+  viewportRowsFor,
+  FOOTER_ROWS,
 } from './layout'
 
 // ── Pure helpers ─────────────────────────────────────────────────────────
@@ -79,10 +84,35 @@ test('flowRows: greedy flex-wrap line count with gaps', () => {
   expect(flowRows([7, 7, 7], 7)).toBe(3)
 })
 
-test('cardsFor: cards fill the rows left, at least one', () => {
-  expect(cardsFor(24, 40)).toBe(1)
-  expect(cardsFor(60, 40)).toBe(Math.floor(20 / CARD_ROWS))
-  expect(cardsFor(80, 40)).toBeGreaterThan(cardsFor(60, 40))
+test('maxScrollOffset: none while the content fits, else the overflow plus a bottom margin', () => {
+  expect(SCROLL_BOTTOM_MARGIN).toBeGreaterThanOrEqual(1)
+  expect(maxScrollOffset(10, 20)).toBe(0)
+  expect(maxScrollOffset(20, 20)).toBe(0)
+  expect(maxScrollOffset(50, 20)).toBe(50 - 20 + SCROLL_BOTTOM_MARGIN)
+  expect(maxScrollOffset(0, 0)).toBe(0)
+})
+
+test('clampOffset: within [0, max], whole rows', () => {
+  expect(clampOffset(-3, 10)).toBe(0)
+  expect(clampOffset(4, 10)).toBe(4)
+  expect(clampOffset(40, 10)).toBe(10)
+  expect(clampOffset(5, 0)).toBe(0)
+  expect(clampOffset(2.6, 10)).toBe(3)
+  expect(clampOffset(Number.NaN, 10)).toBe(0)
+})
+
+test('centerBand: centered in the width, truncated with … when it does not fit', () => {
+  expect(centerBand('abc', 9)).toBe('   abc   ')
+  expect(centerBand('abcd', 9)).toBe('  abcd   ')
+  expect(centerBand('abcdef', 6)).toBe('abcdef')
+  expect(centerBand('abcdefgh', 6)).toBe('abcde…')
+  expect(centerBand('abc', 1)).toBe('…')
+})
+
+test('viewportRowsFor: the body less the sticky header and footer, at least one', () => {
+  expect(viewportRowsFor(30, true)).toBe(30 - HEADER_ROWS - FOOTER_ROWS)
+  expect(viewportRowsFor(30, false)).toBe(30 - HEADER_ROWS)
+  expect(viewportRowsFor(2, true)).toBe(1)
 })
 
 test('BRANCH_ICON is the standard Unicode ⑂, one code unit', () => {
@@ -189,7 +219,9 @@ const checkRules = (tree: unknown, columns: number) => {
         expect({ item: textOf(item), ok }).toEqual({ item: textOf(item), ok: true })
       }
     }
-    if (box.props?.flexShrink === 0) {
+    // A column Box with flexShrink 0 is a container (the scrolled content,
+    // the sticky header and footer), not a width-keeping label.
+    if (box.props?.flexShrink === 0 && box.props?.flexDirection !== 'column') {
       const width = textOf(box).length
       expect({ fixed: textOf(box), fits: width <= columns }).toEqual({ fixed: textOf(box), fits: true })
     }
@@ -283,15 +315,17 @@ test('subagent counts collapse to a compact form when narrow', async ($, on) => 
   })
 })
 
-test('the number of subagent cards follows the rows, at least one', async ($, on) => {
+// The content scrolls behind the sticky footer, so every card is drawn
+// whatever the height; the person scrolls to the ones below.
+test('every subagent card is drawn, short pane or tall', async ($, on) => {
   const cards = async (pane: { drawn: () => Promise<unknown> }) =>
     all(await pane.drawn(), 'Text').filter(t => /subagent\)$/.test(textOf(t))).length
   await inDemo($, on, 60, 24, async pane => {
     const short = await cards(pane)
     await pane.redraw(paneProps(60, 80))
     const tall = await cards(pane)
-    expect(short).toBe(1)
-    expect(tall).toBeGreaterThan(short)
+    expect(short).toBe(4)
+    expect(tall).toBe(short)
   })
 })
 

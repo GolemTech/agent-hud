@@ -32,16 +32,21 @@ import type { GentleAction, GentleButton, GentleInfo, GentleRow, GentleView, Rdd
 import {
   BRANCH_ICON,
   buttonText,
-  cardsFor,
+  CARD_ROWS,
+  centerBand,
+  clampOffset,
   flowRows,
   gridFor,
   HEADING_INDENT,
+  HIDE_BUTTON,
   ITEM_INDENT,
   layoutFor,
+  maxScrollOffset,
   PANE_PADDING_X,
   ruleWidth,
   sectionTitle,
   textRows,
+  viewportRowsFor,
 } from './layout'
 import { clean } from './text'
 
@@ -149,6 +154,8 @@ let gitBranchCache: string | null = null
 // when clean, outside a repository or with no HEAD yet. Untracked files are
 // not counted by `git diff`.
 let gitChangesCache: Changes | null = null
+// The repository root the branch poll last saw; null outside a repository.
+let repoRootCache: string | null = null
 
 export type Changes = { added: number; removed: number }
 
@@ -283,6 +290,9 @@ export const shortPath = (
   return { parent: '', leaf: cutName(leaf, max) }
 }
 
+// The project's name for the sticky header: a path's last segment.
+export const projectName = (path: string): string => path.split('/').filter(Boolean).pop() ?? '/'
+
 // Claude Code's project folder name: the root path, non-alphanumerics as `-`.
 export const projectDir = (root: string): string => root.replace(/[^a-zA-Z0-9]/g, '-')
 
@@ -311,6 +321,11 @@ export const isSidebarShown = (panes: readonly { id: string; isPlaced: boolean }
 const todos = atom({ plugin: 'agent-hud', key: 'todos' } as const, [])
 // `/hud-private`: in `$.state`, so a plugin reload never unmasks.
 const privateMode = atom({ plugin: 'agent-hud', key: 'private' } as const, false)
+// The Pane's own scroll offset under the sticky header (`ui.scroll` moves it).
+const scrollOffset = atom({ plugin: 'agent-hud', key: 'scroll' } as const, 0)
+// The last offset the latest sticky render allowed; null while the Pane is
+// drawn in the plain flow (inline, or no body height), where the engine scrolls.
+let scrollMax: number | null = null
 
 // Module-scoped timing. AgentInfo carries no timestamp, so we stamp each
 // agent when we first see it and freeze it once its status is terminal.
@@ -629,6 +644,8 @@ export type HudView = {
   outputStyle: string | null
   cwd: string
   home: string | null
+  /** The sticky header's project name; the cwd's last segment when absent. */
+  project?: string
   contextPercent: number | undefined
   meters: Meter[]
   footer: string
@@ -890,6 +907,7 @@ const demoView = (elapsedMs: number): HudView => {
     outputStyle: d.session.outputStyle,
     cwd: d.session.cwd,
     home: d.session.home,
+    project: projectName(d.session.cwd),
     contextPercent: d.contextPercent,
     meters: d.meters,
     footer: d.footer,
@@ -913,6 +931,7 @@ export const maskView = (view: HudView): HudView => ({
   branch: '••••',
   cwd: '~/…',
   home: null,
+  project: '…',
 })
 
 // The live view: the real session's sources. `list` is the `rows` atom the
@@ -942,6 +961,7 @@ const liveView = async ($: EngineInterface, list: AgentRow[]): Promise<HudView> 
     outputStyle: composedStyle === undefined ? settingsStyle : composedStyle,
     cwd,
     home: homeCache,
+    project: projectName(repoRootCache ?? clean(cwd)),
     contextPercent: usage.context?.percent,
     meters: meters(usage, now, utcOffsetMin),
     footer: contextFooter(usage),
@@ -964,6 +984,12 @@ export const register: Register = on => {
       versionCache = versionLabel(await $.session.version())
     } catch {
       versionCache = null // the footer is left out
+    }
+    // A new session starts at the top of the sidebar.
+    try {
+      await update($, scrollOffset, () => 0)
+    } catch {
+      // keep the last offset; the render clamps it anyway
     }
     await $.command.register({
       name: 'hud',
@@ -1050,6 +1076,7 @@ export const register: Register = on => {
       if (ticks % 5 === 1) {
         try {
           const repo = await $.session.repo()
+          repoRootCache = repo ? clean(repo.root) : null
           if (!repo) {
             gitBranchCache = null
             gitChangesCache = null
@@ -1243,6 +1270,19 @@ export const register: Register = on => {
     )
   })
 
+  // The Pane's own scroll: in the sticky layout the tree is exactly the body's
+  // height, so the engine has nothing to move; its wheel and scroll-key moves
+  // (raised at its edges too) shift the content box by `e.by` instead. An
+  // observer: the engine's move is forwarded untouched.
+  on('ui.scroll', { component: 'Pane', requestId: PANE }, async ($, e, next) => {
+    const max = scrollMax
+    if (max !== null) {
+      const by = e.by
+      await update($, scrollOffset, prev => clampOffset(Math.min(prev, max) + by, max))
+    }
+    return next(e)
+  }).catch((_$, e, next) => next(e))
+
   on('ui.render', { component: 'Pane', requestId: PANE }, async ($, e) => {
     const { Box, Text, Button } = $.ui.resolve(e)
     const c = await read($, collapsed)
@@ -1435,13 +1475,13 @@ export const register: Register = on => {
     const todosHeader = todoList.length > 0 ? `Todo ${todoDone}/${todoList.length}` : 'Todo'
     const CLEAR = '✕ clear done'.length
 
-    // Rows every section but the subagent cards takes at this width: the
-    // same rows the tree below draws, measured with the wrapping helpers.
-    // Ink wraps words, so a long text can take a row more than estimated;
-    // the pane then scrolls instead of dropping a card.
+    // Rows the scrolled sections take at this width: the same rows the tree
+    // below draws, measured with the wrapping helpers. Ink wraps words, so a
+    // long text can take a row more than estimated; the bottom margin of the
+    // scroll absorbs one.
     const section = (id: SectionId, headerRows: number, bodyRows: number) => 1 + headerRows + (c[id] ? 0 : bodyRows)
-    const usedRows =
-      1 + // the hide arrow
+    const cardList = displayRows(list)
+    const contentRows =
       flowRows([headerText('session', 'Session').length, ...(view.private ? [10] : [])], W) +
       (c.session
         ? 0
@@ -1471,25 +1511,56 @@ export const register: Register = on => {
         todoList.length === 0 ? 1 : todoList.reduce((n, t) => n + textRows(4 + t.content.length, W), 0),
       ) +
       section('gentle', flowRows([headerText('gentle', 'Gentle AI').length, 1], W), gentleRows(view.gentle ?? null)) +
-      (versionCache ? 2 : 0)
-    const cards = cardsFor(L.rows, usedRows)
+      // Every card is drawn (the content scrolls); one without a model line is a row shorter.
+      (c.subagents ? 0 : cardList.reduce((n, r) => n + (view.models.get(r.id) ? CARD_ROWS : CARD_ROWS - 1), 0))
 
-    return (
-      <Box flexDirection="column" paddingX={PANE_PADDING_X}>
-        {/* Top row: → hides the sidebar, right under the pane's ✕ (the frame
-            row itself is the engine's). The dock cannot be forced narrower
-            (a width the person set wins over `columns`), so hiding goes to
-            the band above the prompt, which reopens it. */}
-        <Box justifyContent="flex-end">
-          <Button
-            key="hide-sidebar"
-            plain
-            onPress={() => void $.ui.close({ id: PANE })}
-          >
-            <Text color="subtle">→</Text>
-          </Button>
+    // Sticky header: the project's name, and → which hides the sidebar,
+    // right under the pane's ✕ (the frame row itself is the engine's). The
+    // dock cannot be forced narrower (a width the person set wins over
+    // `columns`), so hiding goes to the band above the prompt, which reopens
+    // it. The name's Box takes the line less the button and its gap, so the
+    // row never wraps and a long name truncates.
+    // One band: the centered name and, at its right end, a solid ► that hides
+    // the sidebar, drawn inverse too and with no gap so both read as one bar.
+    // (The pane's ✕ is the engine's frame and cannot move into it.) A blank
+    // row below keeps the band apart from the first section.
+    const bandWidth = Math.max(1, W - HIDE_BUTTON.length)
+    const headerRow = (
+      <Box flexDirection="column" flexShrink={0} marginBottom={1}>
+        <Box flexWrap="wrap">
+          <Box width={bandWidth} flexShrink={0}>
+            <Text bold inverse color="claude" wrap="truncate-end">
+              {centerBand(`📂 ${view.project ?? projectName(view.cwd)}`, bandWidth)}
+            </Text>
+          </Box>
+          <Box flexShrink={0}>
+            <Button
+              key="hide-sidebar"
+              plain
+              onPress={() => void $.ui.close({ id: PANE })}
+            >
+              <Text bold inverse color="claude">
+                {HIDE_BUTTON}
+              </Text>
+            </Button>
+          </Box>
         </Box>
+      </Box>
+    )
 
+    // Sticky footer: the Claude Code version the session runs on.
+    const footerRow = versionCache ? (
+      <Box flexDirection="column" flexShrink={0} marginTop={1}>
+        <Text wrap="truncate-end">
+          <Text color="success">● </Text>
+          <Text color="subtle">Claude</Text>
+          <Text bold>Code</Text>
+          <Text color="subtle">{` ${versionCache}`}</Text>
+        </Text>
+      </Box>
+    ) : null
+
+    const sections = [
         <Box flexDirection="column">
           <Box gap={1} flexWrap="wrap">
             {header('session', 'Session')}
@@ -1553,7 +1624,7 @@ export const register: Register = on => {
                 </Text>
               )
             })()}
-        </Box>
+        </Box>,
 
         <Box marginTop={1} flexDirection="column">
           <Box gap={1} flexWrap="wrap">
@@ -1587,7 +1658,7 @@ export const register: Register = on => {
               )
             })}
           {!c.context && footer ? <Text color="subtle">{footer}</Text> : null}
-        </Box>
+        </Box>,
 
         <Box marginTop={1} flexDirection="column">
           <Box gap={1} flexWrap="wrap">
@@ -1603,7 +1674,7 @@ export const register: Register = on => {
                 {!s.connected && <Text color="subtle"> · auth</Text>}
               </Text>
             ))}
-        </Box>
+        </Box>,
 
         <Box marginTop={1} flexDirection="column">
           <Box gap={1} flexWrap="wrap">
@@ -1641,9 +1712,7 @@ export const register: Register = on => {
             </Text>
           )}
           {!c.subagents &&
-            displayRows(list)
-              .slice(0, cards)
-              .map(r => (
+            cardList.map(r => (
               <Box flexDirection="column">
                 <Text wrap="truncate-end">
                   <Text color={color(r.status)}>{icon(r.status)}</Text> <Text bold>{r.description}</Text>
@@ -1658,7 +1727,7 @@ export const register: Register = on => {
                 </Text>
               </Box>
             ))}
-        </Box>
+        </Box>,
 
         <Box marginTop={1} flexDirection="column">
           <Box gap={1} flexWrap="wrap">
@@ -1695,7 +1764,7 @@ export const register: Register = on => {
                 <Text wrap="wrap">[ ] {t.content}</Text>
               ),
             )}
-        </Box>
+        </Box>,
 
         <Box marginTop={1} flexDirection="column">
           <Box gap={1} flexWrap="wrap">
@@ -1717,19 +1786,40 @@ export const register: Register = on => {
               : rule(headerWidth('gentle', 'Gentle AI'))}
           </Box>
           {!c.gentle && gentleSection(view.gentle ?? null)}
-        </Box>
+        </Box>,
+    ]
 
-        {/* Footer: the Claude Code version the session runs on. */}
-        {versionCache && (
-          <Box marginTop={1}>
-            <Text wrap="truncate-end">
-              <Text color="success">● </Text>
-              <Text color="subtle">Claude</Text>
-              <Text bold>Code</Text>
-              <Text color="subtle">{` ${versionCache}`}</Text>
-            </Text>
+    // Inline frames fit the tree, and without the body's height there is no
+    // window to fill: the plain flow, scrolled by the engine.
+    const bodyRows = e.props.scroll?.bodyRows
+    if (e.props.placement === 'inline' || typeof bodyRows !== 'number') {
+      scrollMax = null
+      return (
+        <Box flexDirection="column" paddingX={PANE_PADDING_X}>
+          {headerRow}
+          <Box flexDirection="column">{sections}</Box>
+          {footerRow}
+        </Box>
+      )
+    }
+
+    // Sticky layout: exactly the body's height, so the engine has nothing to
+    // scroll; the sections move inside the clipped viewport by our offset,
+    // clamped here too, so a shrunk content (a collapsed section, a taller
+    // pane) never leaves the window past its end.
+    const viewportRows = viewportRowsFor(bodyRows, footerRow !== null)
+    const max = maxScrollOffset(contentRows, viewportRows)
+    scrollMax = max
+    const offset = clampOffset(await read($, scrollOffset), max)
+    return (
+      <Box flexDirection="column" paddingX={PANE_PADDING_X} height={bodyRows}>
+        {headerRow}
+        <Box flexDirection="column" flexShrink={0} height={viewportRows} overflow="hidden">
+          <Box flexDirection="column" flexShrink={0} marginTop={0 - offset}>
+            {sections}
           </Box>
-        )}
+        </Box>
+        {footerRow}
       </Box>
     )
   })
