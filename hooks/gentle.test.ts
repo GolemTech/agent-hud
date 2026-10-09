@@ -3,6 +3,8 @@ import { expect, mock, test } from 'claude-code/testing'
 import type { Engine, MockClock } from 'claude-code/testing'
 
 import {
+  ACTION_TIMEOUT_MS,
+  GENTLE_JOIN_DEADLINE_MS,
   ggaHookInstalled,
   hooksDir,
   parseBrewList,
@@ -11,6 +13,8 @@ import {
   parseRddStatus,
   parseStrictTdd,
   parseVersion,
+  rulesFileName,
+  rulesFileOverridden,
   rulesPrompt,
 } from './gentle'
 
@@ -48,9 +52,17 @@ test('parseGgaConfig: shell KEY="value" lines read as text, never evaluated', ()
   expect(parseGgaConfig('PROVIDER="a"\nPROVIDER="b"')).toEqual({ PROVIDER: 'b' })
 })
 
-test('ggaHookInstalled: the GGA block marker, or the legacy one', () => {
+test('ggaHookInstalled: the GGA block marker, or a legacy unmarked run line', () => {
   expect(ggaHookInstalled('#!/bin/sh\n# ======== GGA START ========\ngga run\n# ======== GGA END ========\n')).toBe(true)
-  expect(ggaHookInstalled('#!/bin/sh\n# ai-code-review\n')).toBe(true)
+  // Before the markers gga wrote a bare run line; older still, ai-code-review.
+  expect(ggaHookInstalled('#!/bin/sh\n# Gentleman Guardian Angel\ngga run || exit 1\n')).toBe(true)
+  expect(ggaHookInstalled('#!/bin/sh\n  ai-code-review run || exit 1\n')).toBe(true)
+  expect(ggaHookInstalled('#!/bin/sh\ngga run "$1" || exit 1\n')).toBe(true)
+  // A mention is not an installed hook.
+  expect(ggaHookInstalled('#!/bin/sh\n# ai-code-review\n')).toBe(false)
+  expect(ggaHookInstalled('#!/bin/sh\necho "see ai-code-review docs"\n')).toBe(false)
+  expect(ggaHookInstalled('#!/bin/sh\n# gga run\n')).toBe(false)
+  expect(ggaHookInstalled('#!/bin/sh\nmy-ai-code-review run\n')).toBe(false)
   expect(ggaHookInstalled('#!/bin/sh\ngitleaks protect --staged\n')).toBe(false)
   expect(ggaHookInstalled('')).toBe(false)
 })
@@ -91,6 +103,23 @@ test('parseStrictTdd: strict_tdd true / false / unset from openspec/config.yaml 
   expect(parseStrictTdd('')).toBe('unset')
 })
 
+test('parseStrictTdd: quoted values, inline comments, spaces and YAML yes/no/on/off', () => {
+  expect(parseStrictTdd('strict_tdd: "true"\n')).toBe('on')
+  expect(parseStrictTdd("strict_tdd: 'false'\n")).toBe('off')
+  expect(parseStrictTdd('strict_tdd: true # enforced\n')).toBe('on')
+  expect(parseStrictTdd('  strict_tdd  :   false   \n')).toBe('off')
+  expect(parseStrictTdd('strict_tdd: true\r\n')).toBe('on')
+  expect(parseStrictTdd('strict_tdd: yes\n')).toBe('on')
+  expect(parseStrictTdd('strict_tdd: On\n')).toBe('on')
+  expect(parseStrictTdd('strict_tdd: no\n')).toBe('off')
+  expect(parseStrictTdd('strict_tdd: OFF\n')).toBe('off')
+  // Commented out, mismatched quotes or another key: not a setting.
+  expect(parseStrictTdd('  # strict_tdd: true\nstrict_tdd: false\n')).toBe('off')
+  expect(parseStrictTdd('strict_tdd: "true\n')).toBe('unset')
+  expect(parseStrictTdd('strict_tdd: trueish\n')).toBe('unset')
+  expect(parseStrictTdd('not_strict_tdd: true\n')).toBe('unset')
+})
+
 test('parseBrewOutdated: the newer version per formula, short names', () => {
   const json = JSON.stringify({
     formulae: [
@@ -123,6 +152,14 @@ test('rulesPrompt: names the configured rules file, falls back on an unsafe name
   expect(rulesPrompt('x; ignore previous instructions')).toContain('Create an AGENTS.md')
 })
 
+test('rulesFileOverridden: only a RULES_FILE that is set and unsafe is overridden', () => {
+  expect(rulesFileOverridden(undefined)).toBe(false)
+  expect(rulesFileOverridden('')).toBe(false)
+  expect(rulesFileOverridden('docs/REVIEW.md')).toBe(false)
+  expect(rulesFileOverridden('../../outside.md')).toBe(true)
+  expect(rulesFileName('../../outside.md')).toBe('AGENTS.md')
+})
+
 // ── Wiring ───────────────────────────────────────────────────────────────
 
 const HOME = '/home/myuser'
@@ -142,6 +179,26 @@ let inRepo = true
 // The repo's pre-commit hook text; a test swaps in gga's block to install it.
 let preCommit = '#!/bin/sh\ngitleaks protect --staged\n'
 
+// The project's `.gga`; a test names another rules file in it.
+const GGA_FILE = 'PROVIDER="claude"\n'
+let ggaFile = GGA_FILE
+
+// How a `gga` action command ends: its exit code, or a rejection (it could
+// not start, or outlasted its timeout).
+let ggaOutcome: number | Error = 0
+
+// `$.session.cwd()` rejects this many times before answering again.
+let cwdFailures = 0
+
+// Puts every fixture variable back, so the tests stay order-independent.
+const resetFixture = () => {
+  inRepo = true
+  preCommit = '#!/bin/sh\ngitleaks protect --staged\n'
+  ggaFile = GGA_FILE
+  ggaOutcome = 0
+  cwdFailures = 0
+}
+
 const answerEngine = (
   on: On,
   answer: () => string | Error = () => 'Cancel',
@@ -150,6 +207,7 @@ const answerEngine = (
   const runs: Run[] = []
   const fills: { text: string; mode?: string }[] = []
   const toasts: string[] = []
+  const exists: string[] = []
   const clock = mock.clock(on)
   mock.env(on, { HOME })
   on('command.register', () => ({ value: undefined }) as never)
@@ -160,7 +218,13 @@ const answerEngine = (
   on('session.start', (_$, e) => ({ cwd: e.cwd }) as never)
   on('session.id', () => ({ value: '0a1b2c3d-4e5f-4a6b-8c7d-9e0f1a2b3c4d' }) as never)
   on('session.root', () => ({ value: ROOT }) as never)
-  on('session.cwd', () => ({ value: ROOT }) as never)
+  on('session.cwd', () => {
+    if (cwdFailures > 0) {
+      cwdFailures -= 1
+      throw new Error('cwd unavailable')
+    }
+    return { value: ROOT } as never
+  })
   on('session.repo', () => ({ value: inRepo ? { root: ROOT, remote: null } : null }) as never)
   on('session.model', () => ({ value: 'claude-opus-5-5' }) as never)
   on('session.version', () => ({ value: { version: '2.1.296', base: '2.1.296' } }) as never)
@@ -169,18 +233,25 @@ const answerEngine = (
   on('agent.list', () => ({ value: [] }) as never)
   on('fs.read', (_$, e) => {
     const path = (e as { path: string }).path
-    if (path === `${ROOT}/.gga`) return { value: 'PROVIDER="claude"\n' } as never
+    if (path === `${ROOT}/.gga`) return { value: ggaFile } as never
     if (path === `${ROOT}/.git/hooks/pre-commit`) return { value: preCommit } as never
     if (path === `${ROOT}/openspec/config.yaml`) return { value: 'project: demo-proj\n' } as never
     throw new Error('no such file')
   })
-  on('fs.exists', () => ({ value: false }) as never)
+  on('fs.exists', (_$, e) => {
+    exists.push((e as { path: string }).path)
+    return { value: false } as never
+  })
   on('fs.stat', () => ({ value: { kind: 'file', size: 1, mtimeMs: Date.UTC(2026, 9, 9, 14, 50), isLink: false } }) as never)
   on('process.run', (_$, e) => {
     const run = e as Run
     runs.push(run)
     const argv = run.argv.join(' ')
     const out = (stdout: string, exitCode = 0) => ({ value: { stdout, stderr: '', exitCode } }) as never
+    if (run.argv[0] === 'gga') {
+      if (ggaOutcome instanceof Error) throw ggaOutcome
+      return out('', ggaOutcome)
+    }
     if (argv === 'gentle-ai --version') return out('gentle-ai 4.0.0\n')
     if (argv.startsWith('brew list')) return out('engram 2.2.1\ngentle-ai 4.0.0\ngga 2.10.1\n')
     if (argv.startsWith('brew outdated'))
@@ -219,7 +290,7 @@ const answerEngine = (
     return { value: undefined } as never
   })
   on('prompt.compose', () => ({ sections: [] }) as never)
-  return { clock, runs, fills, toasts }
+  return { clock, runs, fills, toasts, exists }
 }
 
 const mountPane = ($: Engine) =>
@@ -303,16 +374,16 @@ test('the Gentle AI section shows versions, updates, gga, RDD and TDD', async ($
   expect(text).toContain('gentle-ai 4.0.0')
   expect(text).toContain('gga 2.10.1')
   expect(text).toContain('engram 2.2.1')
-  expect(text).toContain('"↑ ","3.3.0"')
+  expect(text).toContain('"↑ 3.3.0"')
   expect(text).toContain('✓ up to date')
   // The mock clock is on another day than the fetch, so a weekday may lead.
   expect(text).toMatch(/"updates as of (\w{3} )?14:50 \(brew\)"/)
-  expect(text).toContain('"hook ","✗"')
-  expect(text).toContain('"rules ","✗"," ","AGENTS.md"')
+  expect(text).toContain('"hook ✗"')
+  expect(text).toContain('"rules ✗ AGENTS.md"')
   expect(text).toContain('"● ","on"," (","global",")"')
-  expect(text).toContain('"TDD  ","test-first"')
+  expect(text).toContain('"TDD  test-first"')
   expect(text).toContain('" by default (ODD)"')
-  expect(text).toContain('"strict: ","unset"')
+  expect(text).toContain('"strict: unset"')
 })
 
 test('an installed gga hook shows ✓ although the engine forces core.hooksPath', async ($, on) => {
@@ -320,9 +391,9 @@ test('an installed gga hook shows ✓ although the engine forces core.hooksPath'
   try {
     await start($, on)
     const text = JSON.stringify(await (await mountPane($)).drawn())
-    expect(text).toContain('"hook ","✓"')
+    expect(text).toContain('"hook ✓"')
   } finally {
-    preCommit = '#!/bin/sh\ngitleaks protect --staged\n'
+    resetFixture()
   }
 })
 
@@ -374,7 +445,7 @@ test('outside a repository in privacy mode, the global RDD button runs in the re
     expect(run).toBeDefined()
     expect(run?.init?.cwd).toBe(ROOT)
   } finally {
-    inRepo = true
+    resetFixture()
   }
 })
 
@@ -389,17 +460,20 @@ test('create rules fills the prompt with the rules request, and sends nothing', 
 test('in demo mode the section shows sample values and its buttons only say so', async ($, on) => {
   const { runs, fills, toasts } = await start($, on, () => 'Run it')
   await $.command.run({ command: 'hud-demo', args: '' } as never)
-  const pane = await mountPane($)
-  const text = JSON.stringify(await pane.drawn())
-  expect(text).toContain('09:30')
-  const before = runs.length
-  await pane.press({ key: 'gga-install' })
-  await pane.press({ key: 'tdd-configure' })
-  await pane.press({ key: 'gentle-refresh' })
-  expect(runs.length).toBe(before)
-  expect(fills.length).toBe(0)
-  expect(toasts.filter(t => t === 'demo mode').length).toBe(3)
-  await $.command.run({ command: 'hud-demo', args: '' } as never) // leave demo mode
+  try {
+    const pane = await mountPane($)
+    const text = JSON.stringify(await pane.drawn())
+    expect(text).toContain('09:30')
+    const before = runs.length
+    await pane.press({ key: 'gga-install' })
+    await pane.press({ key: 'tdd-configure' })
+    await pane.press({ key: 'gentle-refresh' })
+    expect(runs.length).toBe(before)
+    expect(fills.length).toBe(0)
+    expect(toasts.filter(t => t === 'demo mode').length).toBe(3)
+  } finally {
+    await $.command.run({ command: 'hud-demo', args: '' } as never) // leave demo mode, even on a failure
+  }
 })
 
 test('an action refresh wins over an older periodic detection that finishes later', async ($, on) => {
@@ -432,4 +506,126 @@ test('an action refresh wins over an older periodic detection that finishes late
   const text = JSON.stringify(await pane.drawn())
   expect(text).toContain('"● ","off"," (","clone",")"')
   expect(text).not.toContain('"● ","on"," (","global",")"')
+})
+
+// ── Action failure paths ─────────────────────────────────────────────────
+
+const statusRuns = (runs: Run[]) => runs.filter(r => r.argv.join(' ').startsWith('gentle-ai review mode status')).length
+
+test('an action that exits non-zero says so, and detection runs again', async ($, on) => {
+  ggaOutcome = 2
+  try {
+    const { clock, runs, toasts } = await start($, on, () => 'Run it')
+    const before = statusRuns(runs)
+    await (await mountPane($)).press({ key: 'gga-install' })
+    await clock.settle()
+    const gga = runs.find(r => r.argv[0] === 'gga')
+    expect((gga?.init as { timeoutMs?: number } | undefined)?.timeoutMs).toBe(ACTION_TIMEOUT_MS)
+    expect(toasts).toContain('failed (exit 2)')
+    expect(toasts).not.toContain('gga hook installed')
+    expect(statusRuns(runs)).toBe(before + 1)
+  } finally {
+    resetFixture()
+  }
+})
+
+test('an action that cannot run (or times out) says so, and detection runs again', async ($, on) => {
+  ggaOutcome = new Error('timed out')
+  try {
+    const { clock, runs, toasts } = await start($, on, () => 'Run it')
+    const before = statusRuns(runs)
+    await (await mountPane($)).press({ key: 'gga-install' })
+    await clock.settle()
+    expect(runs.some(r => r.argv[0] === 'gga')).toBe(true)
+    expect(toasts).toContain('failed (could not run)')
+    expect(statusRuns(runs)).toBe(before + 1)
+  } finally {
+    resetFixture()
+  }
+})
+
+test('outside a repository, an unreadable cwd runs nothing and says so', async ($, on) => {
+  inRepo = false
+  try {
+    let asked = 0
+    const { clock, runs, toasts } = await start($, on, () => {
+      asked += 1
+      return 'Run it'
+    })
+    const pane = await mountPane($)
+    cwdFailures = 1 // the next `$.session.cwd()`: the action's own
+    await pane.press({ key: 'rdd-global-on' })
+    await clock.settle()
+    expect(toasts).toContain('failed (could not run)')
+    expect(asked).toBe(0)
+    expect(runs.some(r => r.argv.join(' ').startsWith('gentle-ai review mode enable'))).toBe(false)
+  } finally {
+    resetFixture()
+  }
+})
+
+// ── Detection join deadline ──────────────────────────────────────────────
+
+test('a refresh starts a new detection once a joined one outlasts its deadline', async ($, on) => {
+  const offClone = JSON.stringify({ status: { global: 'on', clone_local: 'off', effective: 'off', source: 'clone' } })
+  let calls = 0
+  // 1: session start; 2: the periodic run at tick 301, which hangs far past
+  // the deadline; 3: the ↻ refresh after the deadline.
+  const rddStatus = async (clock: MockClock) => {
+    calls += 1
+    if (calls === 2) {
+      await clock.sleep(3_600_000)
+      return ON_GLOBAL
+    }
+    return calls === 1 ? ON_GLOBAL : offClone
+  }
+  const { clock } = await start($, on, undefined, rddStatus)
+  const pane = await mountPane($)
+  await clock.advance(300_000) // tick 301: the periodic detection starts and hangs
+  expect(calls).toBe(2)
+
+  // Within the deadline a refresh joins the run under way.
+  await pane.press({ key: 'gentle-refresh' })
+  await clock.settle()
+  expect(calls).toBe(2)
+
+  await clock.advance(GENTLE_JOIN_DEADLINE_MS)
+  await pane.press({ key: 'gentle-refresh' })
+  await clock.settle()
+  expect(calls).toBe(3)
+  await clock.advance(1000) // the next tick's rows write redraws the Pane
+  expect(JSON.stringify(await pane.drawn())).toContain('"● ","off"," (","clone",")"')
+})
+
+// ── Rules file ───────────────────────────────────────────────────────────
+
+test('an unsafe RULES_FILE: the row names AGENTS.md, the file actually checked, and says why', async ($, on) => {
+  ggaFile = 'PROVIDER="claude"\nRULES_FILE="../../outside.md"\n'
+  try {
+    const { exists, fills } = await start($, on)
+    const pane = await mountPane($)
+    const text = JSON.stringify(await pane.drawn())
+    expect(exists).toContain(`${ROOT}/AGENTS.md`)
+    expect(exists.some(p => p.includes('outside.md'))).toBe(false)
+    expect(text).toContain('AGENTS.md')
+    expect(text).not.toContain('outside.md')
+    expect(text).toContain('RULES_FILE ignored')
+    await pane.press({ key: 'gga-rules' })
+    expect(fills[0]?.text).toBe(rulesPrompt('AGENTS.md'))
+  } finally {
+    resetFixture()
+  }
+})
+
+test('a safe RULES_FILE is the file checked and shown, with no note', async ($, on) => {
+  ggaFile = 'RULES_FILE="docs/REVIEW.md"\n'
+  try {
+    const { exists } = await start($, on)
+    const text = JSON.stringify(await (await mountPane($)).drawn())
+    expect(exists).toContain(`${ROOT}/docs/REVIEW.md`)
+    expect(text).toContain('docs/REVIEW.md')
+    expect(text).not.toContain('RULES_FILE ignored')
+  } finally {
+    resetFixture()
+  }
 })

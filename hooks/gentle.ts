@@ -26,9 +26,14 @@ export const parseGgaConfig = (text: string): Record<string, string> => {
   return out
 }
 
-// gga marks its block in a hook file; older versions used `ai-code-review`.
-export const ggaHookInstalled = (text: string): boolean =>
-  text.includes('# ======== GGA START ========') || text.includes('ai-code-review')
+// gga marks its block in a hook file. Before the markers it wrote a bare
+// `gga run` line (what its own uninstall still looks for), and older still,
+// as `ai-code-review`, an `ai-code-review run` line (which `gga install`
+// migrates). Only such a run command counts: a comment or any other text
+// that mentions either name does not.
+const GGA_MARKER = '# ======== GGA START ========'
+const LEGACY_RUN = /^[ \t]*(?:gga|ai-code-review)[ \t]+run\b/m
+export const ggaHookInstalled = (text: string): boolean => text.includes(GGA_MARKER) || LEGACY_RUN.test(text)
 
 // The repo's hooks folder. Claude Code runs git with `core.hooksPath` forced to
 // /dev/null, so `git rev-parse --git-path hooks` cannot be asked; the repo's
@@ -74,10 +79,15 @@ export const parseRddStatus = (json: string): RddStatus | null => {
 export type StrictTdd = 'on' | 'off' | 'unset'
 
 // `strict_tdd: true` in `openspec/config.yaml`, written by the sdd-init flow.
-// A text match, not a YAML parser: a commented-out line does not count.
+// A line match, not a YAML parser: the value may be quoted, in any case, a
+// YAML 1.1 yes/no/on/off, and followed by spaces and a `# comment`; a
+// commented-out line or any other value does not count.
+const STRICT_TDD_LINE = /^[ \t]*strict_tdd[ \t]*:[ \t]*(["']?)([A-Za-z]+)\1[ \t]*(?:#.*)?\r?$/m
+const YAML_TRUE = new Set(['true', 'yes', 'on'])
+const YAML_FALSE = new Set(['false', 'no', 'off'])
 export const parseStrictTdd = (yaml: string): StrictTdd => {
-  const m = /^[ \t]*strict_tdd[ \t]*:[ \t]*(true|false)\b/m.exec(yaml)
-  return m?.[1] === 'true' ? 'on' : m?.[1] === 'false' ? 'off' : 'unset'
+  const value = STRICT_TDD_LINE.exec(yaml)?.[2]?.toLowerCase() ?? ''
+  return YAML_TRUE.has(value) ? 'on' : YAML_FALSE.has(value) ? 'off' : 'unset'
 }
 
 // `brew outdated --json=v2` → newer version by short formula name (only
@@ -113,6 +123,10 @@ const SAFE_RULES = /^(?!\/)(?!.*\.\.)[\w./-]{1,80}$/
 export const rulesFileName = (raw: string | undefined): string =>
   raw && SAFE_RULES.test(raw) ? raw : 'AGENTS.md'
 
+// A RULES_FILE that is set but unsafe: `AGENTS.md` is checked instead, and
+// the section says so.
+export const rulesFileOverridden = (raw: string | undefined): boolean => Boolean(raw) && !SAFE_RULES.test(raw ?? '')
+
 export const rulesPrompt = (raw: string): string => {
   const name = rulesFileName(raw)
   const what = name === 'AGENTS.md' ? 'an AGENTS.md' : name
@@ -147,7 +161,10 @@ export type GentleInfo = {
     hook: boolean | null
     /** A project `.gga` exists. */
     projectConfig: boolean
+    /** The rules file checked: RULES_FILE when safe, else `AGENTS.md`. */
     rulesFile: string
+    /** RULES_FILE was set but unsafe, so `AGENTS.md` is checked instead. */
+    rulesOverridden?: boolean
     rules: boolean | null
   }
   rdd: RddStatus | null
@@ -166,6 +183,15 @@ export const TAP = 'gentleman-programming/tap'
 // rejects: git, gentle-ai and date answer at once; brew loads Ruby first.
 export const CMD_TIMEOUT_MS = 5_000
 export const BREW_TIMEOUT_MS = 15_000
+// A confirmed action (`gga install`, `gentle-ai review mode ...`) may write
+// files, so it gets longer than a read-only probe.
+export const ACTION_TIMEOUT_MS = 30_000
+// A refresh joins a detection under way only this long after it started.
+// Detection runs its probes one after another, each with its own timeout
+// (three brew runs at most 15 s, four other commands at most 5 s: 65 s), so a
+// run older than this is stuck (a read that never answers) and a new one
+// starts; the generation number drops the stuck run's result if it ever ends.
+export const GENTLE_JOIN_DEADLINE_MS = 90_000
 
 // What the section draws: detection with the "as of" time already formatted
 // (the demo supplies a fixed one).

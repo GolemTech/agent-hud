@@ -4,8 +4,10 @@ import type { EngineInterface, Register } from 'claude-code'
 import type { AgentRow, TodoItem, TodoStatus } from '../types'
 import { demoSnapshot } from './demo'
 import {
+  ACTION_TIMEOUT_MS,
   actionSpec,
   BREW_ENV,
+  GENTLE_JOIN_DEADLINE_MS,
   ggaHookInstalled,
   hooksDir,
   parseBrewList,
@@ -19,13 +21,14 @@ import {
   RUN_IT,
   CANCEL,
   rulesFileName,
+  rulesFileOverridden,
   rulesPrompt,
   STRICT_TDD_PROMPT,
   TAP,
   TOOLS,
 } from './gentle'
 import type { GentleAction, GentleInfo, GentleView, RddStatus, StrictTdd } from './gentle'
-import { BRANCH_ICON, cardsFor, flowRows, layoutFor, PANE_PADDING_X, textRows } from './layout'
+import { BRANCH_ICON, buttonText, cardsFor, flowRows, layoutFor, PANE_PADDING_X, SUB_ROW_INDENT, textRows } from './layout'
 import { clean } from './text'
 
 // Re-exported for the unit tests, which import the helpers from here.
@@ -149,6 +152,8 @@ export const parseShortstat = (stdout: string): Changes | null => {
 // first one, the settings files stand in. `undefined` means not reported yet.
 let composedStyle: string | null | undefined
 let settingsStyle: string | null = null
+// The settings poll's previous answer; `undefined` before the first poll.
+let polledSettingsStyle: string | null | undefined
 
 const styleName = (raw: string): string | null => {
   const name = clean(raw).trim()
@@ -632,18 +637,22 @@ let versionCache: string | null = null
 // every render. gga itself is never run for detection.
 let gentleCache: GentleInfo | null = null
 let gentleRun: Promise<void> | null = null
+// When the detection under way started (`$.clock.now()`).
+let gentleRunStartedAt = 0
 // Numbers each detection as it starts; only the newest may write the cache.
 let gentleGeneration = 0
 
+// A file's text, or null when it is missing or unreadable.
+const readOr = async ($: EngineInterface, path: string): Promise<string | null> => {
+  try {
+    return await $.fs.read(path)
+  } catch {
+    return null
+  }
+}
+
 // Every probe is guarded on its own: one failing leaves its field unknown.
 const detectGentle = async ($: EngineInterface): Promise<GentleInfo> => {
-  const readOr = async (path: string): Promise<string | null> => {
-    try {
-      return await $.fs.read(path)
-    } catch {
-      return null
-    }
-  }
   const versions: Record<string, string> = {}
   let updates: Record<string, string> | null = null
   let updatesAsOf: number | null = null
@@ -700,17 +709,18 @@ const detectGentle = async ($: EngineInterface): Promise<GentleInfo> => {
     const xdg = await $.env.get('XDG_CONFIG_HOME')
     const home = await $.env.get('HOME')
     const dir = xdg ? xdg : typeof home === 'string' ? `${home}/.config` : null
-    const text = dir ? await readOr(`${dir}/gga/config`) : null
+    const text = dir ? await readOr($, `${dir}/gga/config`) : null
     if (text) config = parseGgaConfig(text)
   } catch {
     // no global config
   }
 
   if (root) {
-    const project = await readOr(`${root}/.gga`)
+    const project = await readOr($, `${root}/.gga`)
     gga.projectConfig = project !== null
     if (project) config = { ...config, ...parseGgaConfig(project) }
     gga.rulesFile = rulesFileName(config.RULES_FILE)
+    gga.rulesOverridden = rulesFileOverridden(config.RULES_FILE)
     try {
       gga.rules = await $.fs.exists(`${root}/${gga.rulesFile}`)
     } catch {
@@ -729,13 +739,13 @@ const detectGentle = async ($: EngineInterface): Promise<GentleInfo> => {
           timeoutMs: CMD_TIMEOUT_MS,
         })
         const hooks = hooksDir(root, commonDir, set.exitCode === 0 ? clean(set.stdout) : '', homeCache)
-        const files = [await readOr(`${hooks}/pre-commit`), await readOr(`${hooks}/commit-msg`)]
+        const files = [await readOr($, `${hooks}/pre-commit`), await readOr($, `${hooks}/commit-msg`)]
         gga.hook = files.some(t => t !== null && ggaHookInstalled(t))
       }
     } catch {
       gga.hook = null
     }
-    strictTdd = parseStrictTdd((await readOr(`${root}/openspec/config.yaml`)) ?? '')
+    strictTdd = parseStrictTdd((await readOr($, `${root}/openspec/config.yaml`)) ?? '')
   }
   try {
     const argv = root
@@ -765,9 +775,16 @@ const detectGentle = async ($: EngineInterface): Promise<GentleInfo> => {
 // Asks first; runs only on the exact "Run it". A dismissed dialog (or a `-p`
 // run, where `ask` rejects) is a cancel. Never echoes the command's output.
 // Outside a repository (`root` null) it runs in the session's real cwd, read
-// now: the drawn cwd may be the privacy mask (`~/…`), never a usable path.
+// now: the drawn cwd may be the privacy mask (`~/…`), never a usable path;
+// when it cannot be read, nothing runs.
 const runAction = async ($: EngineInterface, action: GentleAction, root: string | null): Promise<boolean> => {
-  const cwd = root ?? (await $.session.cwd())
+  let cwd: string
+  try {
+    cwd = root ?? (await $.session.cwd())
+  } catch {
+    $.ui.toast('failed (could not run)')
+    return false
+  }
   const spec = actionSpec(action, cwd)
   let answer: string
   try {
@@ -779,7 +796,7 @@ const runAction = async ($: EngineInterface, action: GentleAction, root: string 
   try {
     const r = await $.process.run(spec.argv, {
       cwd,
-      timeoutMs: 30_000,
+      timeoutMs: ACTION_TIMEOUT_MS,
       ...(spec.env ? { env: spec.env } : {}),
       ...(spec.stdin === undefined ? {} : { stdin: spec.stdin }),
     })
@@ -800,12 +817,20 @@ const fillPrompt = async ($: EngineInterface, text: string): Promise<void> => {
   }
 }
 
-// A periodic or ↻ refresh joins a detection already under way. After an
+// A periodic or ↻ refresh joins a detection already under way, unless that
+// one started `GENTLE_JOIN_DEADLINE_MS` ago or more (it is stuck). After an
 // action, `fresh` starts a new one at once: what an older run read may predate
-// the action, so that run's result is dropped when it finishes later.
-const refreshGentle = ($: EngineInterface, fresh = false): Promise<void> => {
-  if (gentleRun && !fresh) return gentleRun
+// the action. Either way an older run's result is dropped when it ends later.
+const refreshGentle = async ($: EngineInterface, fresh = false): Promise<void> => {
+  let now: number
+  try {
+    now = await $.clock.now()
+  } catch {
+    now = gentleRunStartedAt // no clock: join as before
+  }
+  if (gentleRun && !fresh && now - gentleRunStartedAt < GENTLE_JOIN_DEADLINE_MS) return gentleRun
   const generation = ++gentleGeneration
+  gentleRunStartedAt = now
   const run = (async () => {
     try {
       const info = await detectGentle($)
@@ -819,6 +844,16 @@ const refreshGentle = ($: EngineInterface, fresh = false): Promise<void> => {
   gentleRun = run
   return run
 }
+
+// Fixed texts of the Gentle AI section; rows are measured from these.
+const GGA_LABEL = 'gga'
+const GGA_NO_REPO = 'gga  no repository'
+const SCOPE_LABEL = { project: '   project', global: '   global ' } as const // aligned under "RDD"
+const TDD_HEAD = 'TDD  test-first'
+const TDD_NOTE = ' by default (ODD)'
+const RULES_OVERRIDDEN_NOTE = ' (unsafe RULES_FILE ignored)'
+const mark = (v: boolean | null): string => (v ? '✓' : v === false ? '✗' : '?')
+const tone = (v: boolean | null): 'success' | 'error' | 'subtle' => (v ? 'success' : v === false ? 'error' : 'subtle')
 
 export const gentleView = (info: GentleInfo, now: number, offsetMin: number | null): GentleView => {
   const { updatesAsOf, ...rest } = info
@@ -973,26 +1008,25 @@ export const register: Register = on => {
           // keep the last known account
         }
       }
-      // Output style from the settings files until `prompt.compose` reports
-      // one: now, then every ~30s. Each file is optional.
-      if (composedStyle === undefined && ticks % 30 === 1) {
+      // Output style from the settings files: now, then every ~30s. Each
+      // file is optional. It stands in until `prompt.compose` reports a
+      // style, and a change in it (the person switched styles) wins over the
+      // last composed one: that is how a switch back to the default shows,
+      // since a compose with no style cannot be told from a subagent's.
+      if (ticks % 30 === 1) {
         try {
           const home = await $.env.get('HOME')
           const configDir = await $.env.get('CLAUDE_CONFIG_DIR')
           const root = await $.session.root()
-          const readOr = async (path: string): Promise<string | null> => {
-            try {
-              return await $.fs.read(path)
-            } catch {
-              return null // no such file
-            }
-          }
           const user = typeof home === 'string' ? claudePaths(home, configDir ?? undefined).settings : null
-          settingsStyle = outputStyleFrom(
-            await readOr(`${root}/.claude/settings.local.json`),
-            await readOr(`${root}/.claude/settings.json`),
-            user === null ? null : await readOr(user),
+          const style = outputStyleFrom(
+            await readOr($, `${root}/.claude/settings.local.json`),
+            await readOr($, `${root}/.claude/settings.json`),
+            user === null ? null : await readOr($, user),
           )
+          if (polledSettingsStyle !== undefined && style !== polledSettingsStyle) composedStyle = undefined
+          polledSettingsStyle = style
+          settingsStyle = style
         } catch {
           // keep the last known style
         }
@@ -1083,10 +1117,10 @@ export const register: Register = on => {
 
   // Output style of each system prompt the engine renders. A pure observer:
   // it notes one field and forwards the composition untouched. The input
-  // names no loop; the style is the session's, whichever loop composes.
+  // names no loop and a subagent's request carries no style, so only a named
+  // style updates the line; a style-less compose leaves it (the settings poll
+  // catches a switch back to the default).
   on('prompt.compose', (_$, e, next) => {
-    // The input names no loop, and a subagent's request carries no style, so
-    // only a named style updates the line; a style-less compose leaves it.
     if (e.outputStyle) composedStyle = styleName(e.outputStyle.name)
     return next(e)
   }).catch((_$, e, next) => next(e))
@@ -1250,7 +1284,13 @@ export const register: Register = on => {
           void act()
         }}
       >
-        {selected ? <Text bold color="success">{`[● ${label}]`}</Text> : <Text color="claude">{`[${label}]`}</Text>}
+        {selected ? (
+          <Text bold color="success">
+            {buttonText(label, true)}
+          </Text>
+        ) : (
+          <Text color="claude">{buttonText(label)}</Text>
+        )}
       </Button>
     )
     // Command buttons confirm first (`runAction`), then detection runs again.
@@ -1267,11 +1307,14 @@ export const register: Register = on => {
     const toolLabel = (t: GentleView['tools'][number]) => `${t.name} ${t.version ?? 'not installed'}`.padEnd(L.toolPad)
     const toolStatus = (g: GentleView, t: GentleView['tools'][number]) =>
       !t.version ? null : t.update ? `↑ ${t.update}` : g.updatesKnown ? '✓ up to date' : null
-    const asOfText = (g: GentleView) => (g.updatesKnown && g.asOf ? `updates as of ${g.asOf} (brew)` : null)
-    const rulesText = (g: GentleView) =>
-      `rules ${g.gga.rules ? '✓' : g.gga.rules === false ? '✗' : '?'} ${g.gga.rulesFile}`
-    const TDD_TEXT = 'TDD  test-first by default (ODD)'
-    const INDENT = 3 // sub-rows of gga, RDD and TDD
+    // The section's variable texts, built once for both the tree and its row
+    // count (`gentleRows`), so the two cannot drift apart.
+    const gentleTexts = (g: GentleView) => ({
+      asOf: g.updatesKnown && g.asOf ? `updates as of ${g.asOf} (brew)` : null,
+      hook: `hook ${mark(g.gga.hook)}`,
+      rules: `rules ${mark(g.gga.rules)} ${g.gga.rulesFile}${g.gga.rulesOverridden ? RULES_OVERRIDDEN_NOTE : ''}`,
+      strict: g.strictTdd ? `strict: ${g.strictTdd}` : null,
+    })
 
     const gentleSection = (g: GentleView | null) => {
       if (!g) return <Text color="subtle">checking…</Text>
@@ -1279,7 +1322,7 @@ export const register: Register = on => {
       if (!byName.get('gentle-ai')?.version) return <Text color="subtle">gentle-ai not installed</Text>
       const ggaInstalled = Boolean(byName.get('gga')?.version)
       const { root } = g
-      const asOf = asOfText(g)
+      const texts = gentleTexts(g)
       return (
         <Box flexDirection="column">
           {g.tools.map(t => {
@@ -1291,36 +1334,30 @@ export const register: Register = on => {
                 </Box>
                 {status && (
                   <Box flexShrink={0}>
-                    {t.update ? (
-                      <Text color="warning">↑ {t.update}</Text>
-                    ) : (
-                      <Text color="success">✓ up to date</Text>
-                    )}
+                    <Text color={t.update ? 'warning' : 'success'}>{status}</Text>
                   </Box>
                 )}
               </Box>
             )
           })}
-          {asOf && <Text color="subtle">{asOf}</Text>}
-          {ggaInstalled && !root && <Text color="subtle">gga  no repository</Text>}
+          {texts.asOf && <Text color="subtle">{texts.asOf}</Text>}
+          {ggaInstalled && !root && <Text color="subtle">{GGA_NO_REPO}</Text>}
           {ggaInstalled && root && (
             <Box gap={1} flexWrap="wrap">
               <Box flexShrink={0}>
-                <Text>gga</Text>
+                <Text>{GGA_LABEL}</Text>
               </Box>
               <Box flexShrink={0}>
-                <Text color={g.gga.hook ? 'success' : g.gga.hook === false ? 'error' : 'subtle'}>
-                  hook {g.gga.hook ? '✓' : g.gga.hook === false ? '✗' : '?'}
-                </Text>
+                <Text color={tone(g.gga.hook)}>{texts.hook}</Text>
               </Box>
               {g.gga.hook === false && command('gga-install', 'install', root)}
               {!g.gga.projectConfig && command('gga-init', 'init', root)}
             </Box>
           )}
           {ggaInstalled && root && (
-            <Box gap={1} flexWrap="wrap" paddingLeft={INDENT}>
-              <Text wrap="truncate-end" color={g.gga.rules ? 'success' : g.gga.rules === false ? 'error' : 'subtle'}>
-                rules {g.gga.rules ? '✓' : g.gga.rules === false ? '✗' : '?'} {g.gga.rulesFile}
+            <Box gap={1} flexWrap="wrap" paddingLeft={SUB_ROW_INDENT}>
+              <Text wrap="truncate-end" color={tone(g.gga.rules)}>
+                {texts.rules}
               </Text>
               {g.gga.rules === false &&
                 action('gga-rules', 'create rules', () => fillPrompt($, rulesPrompt(g.gga.rulesFile)))}
@@ -1340,7 +1377,7 @@ export const register: Register = on => {
           {root && (
             <Box gap={1} flexWrap="wrap">
               <Box flexShrink={0}>
-                <Text color="subtle">{'   project'}</Text>
+                <Text color="subtle">{SCOPE_LABEL.project}</Text>
               </Box>
               {command('rdd-project-on', 'on', root, g.rdd?.project === 'on')}
               {command('rdd-project-off', 'off', root, g.rdd?.project === 'off')}
@@ -1353,19 +1390,19 @@ export const register: Register = on => {
           )}
           <Box gap={1} flexWrap="wrap">
             <Box flexShrink={0}>
-              <Text color="subtle">{'   global '}</Text>
+              <Text color="subtle">{SCOPE_LABEL.global}</Text>
             </Box>
             {command('rdd-global-on', 'on', root, g.rdd?.global === 'on')}
             {command('rdd-global-off', 'off', root, g.rdd?.global === 'off')}
           </Box>
           <Text wrap="wrap">
-            {'TDD  '}test-first
-            <Text color="subtle"> by default (ODD)</Text>
+            {TDD_HEAD}
+            <Text color="subtle">{TDD_NOTE}</Text>
           </Text>
-          {g.strictTdd && (
-            <Box gap={1} flexWrap="wrap" paddingLeft={INDENT}>
+          {texts.strict && (
+            <Box gap={1} flexWrap="wrap" paddingLeft={SUB_ROW_INDENT}>
               <Box flexShrink={0}>
-                <Text color={g.strictTdd === 'on' ? 'success' : 'subtle'}>strict: {g.strictTdd}</Text>
+                <Text color={g.strictTdd === 'on' ? 'success' : 'subtle'}>{texts.strict}</Text>
               </Box>
               {g.strictTdd !== 'on' && action('tdd-configure', 'configure', () => fillPrompt($, STRICT_TDD_PROMPT))}
             </Box>
@@ -1379,30 +1416,41 @@ export const register: Register = on => {
       if (!g || !g.tools.find(t => t.name === 'gentle-ai')?.version) return 1
       const ggaInstalled = Boolean(g.tools.find(t => t.name === 'gga')?.version)
       const { root } = g
-      const asOf = asOfText(g)
-      const BUTTON = (label: string) => label.length + 2
+      const texts = gentleTexts(g)
+      const button = (label: string, selected = false) => buttonText(label, selected).length
+      const sub = W - SUB_ROW_INDENT
       let n = 0
       for (const t of g.tools) {
         const status = toolStatus(g, t)
         n += flowRows(status ? [toolLabel(t).length, status.length] : [toolLabel(t).length], W)
       }
-      if (asOf) n += textRows(asOf.length, W)
-      if (ggaInstalled && !root) n += 1
+      if (texts.asOf) n += textRows(texts.asOf.length, W)
+      if (ggaInstalled && !root) n += textRows(GGA_NO_REPO.length, W)
       if (ggaInstalled && root) {
         n += flowRows(
-          [3, 6, ...(g.gga.hook === false ? [BUTTON('install')] : []), ...(g.gga.projectConfig ? [] : [BUTTON('init')])],
+          [
+            GGA_LABEL.length,
+            texts.hook.length,
+            ...(g.gga.hook === false ? [button('install')] : []),
+            ...(g.gga.projectConfig ? [] : [button('init')]),
+          ],
           W,
         )
-        n += flowRows([rulesText(g).length, ...(g.gga.rules === false ? [BUTTON('create rules')] : [])], W - INDENT)
+        n += flowRows([texts.rules.length, ...(g.gga.rules === false ? [button('create rules')] : [])], sub)
       }
-      n += 1 // RDD
-      const scope = [10, BUTTON('on'), BUTTON('off')]
-      if (root) n += flowRows(scope, W)
-      n += flowRows(scope, W)
-      n += textRows(TDD_TEXT.length, W)
-      if (g.strictTdd) {
-        n += flowRows([`strict: ${g.strictTdd}`.length, ...(g.strictTdd === 'on' ? [] : [BUTTON('configure')])], W - INDENT)
+      n += 1 // RDD: one truncated line
+      if (root) {
+        n += flowRows(
+          [SCOPE_LABEL.project.length, button('on', g.rdd?.project === 'on'), button('off', g.rdd?.project === 'off')],
+          W,
+        )
       }
+      n += flowRows(
+        [SCOPE_LABEL.global.length, button('on', g.rdd?.global === 'on'), button('off', g.rdd?.global === 'off')],
+        W,
+      )
+      n += textRows((TDD_HEAD + TDD_NOTE).length, W)
+      if (texts.strict) n += flowRows([texts.strict.length, ...(g.strictTdd === 'on' ? [] : [button('configure')])], sub)
       return n
     }
 

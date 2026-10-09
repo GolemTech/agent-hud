@@ -98,10 +98,13 @@ const answerEngine = (on: On) => {
       : JSON.stringify({ oauthAccount: { emailAddress: 'alice@mail.test', organizationName: 'Example' } })
     return { value: text } as never
   })
+  on('fs.exists', () => ({ value: false }) as never)
+  on('fs.stat', () => ({ value: { kind: 'file', size: 1, mtimeMs: 0, isLink: false } }) as never)
   on('process.run', (_$, e) => {
     const argv = (e as { argv: readonly string[] }).argv
     return { value: { stdout: argv[0] === 'git' ? `${BRANCH}\n` : '+0000\n', stderr: '', exitCode: 0 } } as never
   })
+  on('ui.toast', () => ({ value: undefined }) as never)
   return clock
 }
 

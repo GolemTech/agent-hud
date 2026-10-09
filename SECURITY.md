@@ -19,14 +19,16 @@ issue for a security problem.
     `customTitle` is kept.
   - `~/.claude/settings.json`, and `.claude/settings.json` and
     `.claude/settings.local.json` in the session's repository root: only the
-    `outputStyle` setting is kept, and only until the first request reports
-    the style.
+    `outputStyle` setting is kept (read about every 30 seconds; a change in
+    it shows a style switch, a switch back to the default included).
   - The `~/.claude` files move under `CLAUDE_CONFIG_DIR` when it is set.
   - For the Gentle AI section, in the session's repository root: `.gga` (only
     `RULES_FILE` is used), `openspec/config.yaml` (only `strict_tdd`), and the
-    `pre-commit` and `commit-msg` hook files (only whether gga's marker is
-    there); the global gga config `$XDG_CONFIG_HOME/gga/config` or
-    `~/.config/gga/config` (only `RULES_FILE`); whether the rules file exists;
+    `pre-commit` and `commit-msg` hook files (only whether gga's block
+    marker, or a legacy `gga run` / `ai-code-review run` line, is there); the global gga config `$XDG_CONFIG_HOME/gga/config` or
+    `~/.config/gga/config` (only `RULES_FILE`); whether the rules file exists
+    (`AGENTS.md` instead of a `RULES_FILE` that is not a plain relative file
+    name, and the section says so);
     and the modification time of the gentle-ai brew tap's `.git/FETCH_HEAD`.
     The gga config files are shell files: they are parsed as plain text with
     a pattern and never executed or sourced.
@@ -63,6 +65,9 @@ issue for a security problem.
     only when there is none).
   - `gentle-ai review mode enable|disable --scope clone --cwd <root> --json`
     and `gentle-ai review mode enable|disable --scope global --json`.
+  - Each has a 30 s timeout. Nothing runs when the working directory cannot
+    be read; a failure shows only "failed (exit N)" or "failed (could not
+    run)".
 - **Plugin API**: session id, model, working directory, repository root,
   usage and the Claude Code version (`$.session.version()`, shown in the
   footer); the tool list (MCP server names are derived from tool names); the
@@ -141,3 +146,11 @@ CI (`.github/workflows/ci.yml`) runs on pushes to `main` and on pull requests:
 - gitleaks over the full git history
 - semgrep over `hooks/` with `p/typescript`, `p/javascript`, `p/secrets`,
   `p/security-audit` and `p/owasp-top-ten`
+
+Every action is pinned to a commit SHA, `actions/checkout` keeps no
+credentials, and the workflow token is read-only. Known residual supply-chain
+risk, accepted because these jobs hold no secrets and cannot write to the
+repository: `pip install semgrep==1.180.0` pins semgrep but resolves its
+dependencies without hashes, semgrep fetches the `p/` rulesets from its
+registry at run time, and `npm install -g @anthropic-ai/claude-code@2.1.296`
+installs outside a lockfile. gitleaks is downloaded with a checked SHA-256.

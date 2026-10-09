@@ -107,21 +107,32 @@ const paneProps = (bodyColumns: number, bodyRows: number) =>
   }) as never
 
 // Demo mode with four subagents, six todos, MCP and Gentle AI sample values.
-const demoPane = async ($: Engine, on: On, bodyColumns: number, bodyRows: number) => {
+// Demo mode is module state (`demoStartedAt`): `body` runs inside it and demo
+// mode is left afterwards even when an assertion fails, so no test inherits it.
+const inDemo = async (
+  $: Engine,
+  on: On,
+  bodyColumns: number,
+  bodyRows: number,
+  body: (pane: { drawn: () => Promise<unknown>; redraw: (props: never) => Promise<void> }) => Promise<void>,
+) => {
   const clock = answerEngine(on)
   await $.session.start({ cwd: CWD, surface: 'terminal', isInteractive: true } as never)
   await clock.settle()
   await $.command.run({ command: 'hud-demo', args: '' } as never)
-  await clock.advance(6000)
-  const pane = await $.ui.mount({
-    plugin: 'agent-hud',
-    surface: 'terminal',
-    component: 'Pane',
-    requestId: 'hud',
-    props: paneProps(bodyColumns, bodyRows),
-  })
-  const leave = () => $.command.run({ command: 'hud-demo', args: '' } as never)
-  return { pane, clock, leave }
+  try {
+    await clock.advance(6000)
+    const pane = await $.ui.mount({
+      plugin: 'agent-hud',
+      surface: 'terminal',
+      component: 'Pane',
+      requestId: 'hud',
+      props: paneProps(bodyColumns, bodyRows),
+    })
+    await body(pane)
+  } finally {
+    await $.command.run({ command: 'hud-demo', args: '' } as never)
+  }
 }
 
 type Node = { type?: string; props?: Record<string, unknown>; children?: unknown[] }
@@ -163,10 +174,9 @@ const checkRules = (tree: unknown, columns: number) => {
 
 for (const cols of [20, 28, 40, 60, 100]) {
   test(`at ${cols} columns, labels keep their width and rows wrap`, async ($, on) => {
-    const { pane, leave } = await demoPane($, on, cols, 60)
-    const tree = await pane.drawn()
-    checkRules(tree, layoutFor(cols, 60).columns)
-    await leave()
+    await inDemo($, on, cols, 60, async pane => {
+      checkRules(await pane.drawn(), layoutFor(cols, 60).columns)
+    })
   })
 }
 
@@ -176,44 +186,43 @@ const meterBar = (tree: unknown, label: string): number => {
 }
 
 test('meter bars are wider in a wide dock than in a narrow one', async ($, on) => {
-  const { pane, leave } = await demoPane($, on, 28, 60)
-  const narrow = meterBar(await pane.drawn(), 'ctx')
-  await pane.redraw(paneProps(100, 60))
-  const wide = meterBar(await pane.drawn(), 'ctx')
-  expect(narrow).toBe(layoutFor(28, 60).barWidth)
-  expect(wide).toBe(layoutFor(100, 60).barWidth)
-  expect(wide).toBeGreaterThan(narrow)
-  await leave()
+  await inDemo($, on, 28, 60, async pane => {
+    const narrow = meterBar(await pane.drawn(), 'ctx')
+    await pane.redraw(paneProps(100, 60))
+    const wide = meterBar(await pane.drawn(), 'ctx')
+    expect(narrow).toBe(layoutFor(28, 60).barWidth)
+    expect(wide).toBe(layoutFor(100, 60).barWidth)
+    expect(wide).toBeGreaterThan(narrow)
+  })
 })
 
 test('subagent counts collapse to a compact form when narrow', async ($, on) => {
-  const { pane, leave } = await demoPane($, on, 28, 60)
-  const narrow = textOf(await pane.drawn())
-  expect(narrow).toMatch(/●\d+ ✓\d+ ✕\d+/)
-  expect(narrow).not.toContain('running')
-  await pane.redraw(paneProps(60, 60))
-  const wide = textOf(await pane.drawn())
-  expect(wide).toMatch(/● \d+ running · ✓ \d+ done · ✕ \d+ error/)
-  await leave()
+  await inDemo($, on, 28, 60, async pane => {
+    const narrow = textOf(await pane.drawn())
+    expect(narrow).toMatch(/●\d+ ✓\d+ ✕\d+/)
+    expect(narrow).not.toContain('running')
+    await pane.redraw(paneProps(60, 60))
+    const wide = textOf(await pane.drawn())
+    expect(wide).toMatch(/● \d+ running · ✓ \d+ done · ✕ \d+ error/)
+  })
 })
 
 test('the number of subagent cards follows the rows, at least one', async ($, on) => {
   const cards = async (pane: { drawn: () => Promise<unknown> }) =>
     all(await pane.drawn(), 'Text').filter(t => /subagent\)$/.test(textOf(t))).length
-  const { pane, leave } = await demoPane($, on, 60, 24)
-  const short = await cards(pane)
-  await pane.redraw(paneProps(60, 80))
-  const tall = await cards(pane)
-  expect(short).toBe(1)
-  expect(tall).toBeGreaterThan(short)
-  await leave()
+  await inDemo($, on, 60, 24, async pane => {
+    const short = await cards(pane)
+    await pane.redraw(paneProps(60, 80))
+    const tall = await cards(pane)
+    expect(short).toBe(1)
+    expect(tall).toBeGreaterThan(short)
+  })
 })
 
 test('the path is shortened to the drawable width', async ($, on) => {
-  const { pane, leave } = await demoPane($, on, 20, 60)
-  const tree = await pane.drawn()
-  const path = all(tree, 'Text').find(t => textOf(t).startsWith('📁'))
-  // The glyph takes two cells and a space; the rest fits the width.
-  expect(textOf(path).length - 2).toBeLessThanOrEqual(layoutFor(20, 60).columns - 1)
-  await leave()
+  await inDemo($, on, 20, 60, async pane => {
+    const path = all(await pane.drawn(), 'Text').find(t => textOf(t).startsWith('📁'))
+    // The glyph takes two cells and a space; the rest fits the width.
+    expect(textOf(path).length - 2).toBeLessThanOrEqual(layoutFor(20, 60).columns - 1)
+  })
 })

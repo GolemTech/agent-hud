@@ -19,6 +19,13 @@ const TOOL_STATUS = 12
 
 export const CARD_ROWS = 4 // a subagent card: description, type, model, elapsed time
 
+// Gentle AI sub-rows (gga rules, strict TDD) sit this far in, under their row.
+export const SUB_ROW_INDENT = 3
+
+// A text button's label as drawn: `[label]`, or `[● label]` for the value a
+// setting has now. Its length is the button's width in the row count.
+export const buttonText = (label: string, selected = false): string => (selected ? `[● ${label}]` : `[${label}]`)
+
 export type Layout = {
   /** Cells a line may take inside the Pane's padding. */
   columns: number
