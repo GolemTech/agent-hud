@@ -63,3 +63,17 @@ test('demoSnapshot at 20000 ms: A1-A3 completed, A4 failed, all todos completed'
   expect(statuses(20_000).every(s => s === 'completed')).toBe(true)
   expect(statuses(15_000).every(s => s === 'completed')).toBe(true)
 })
+
+test('demoSnapshot: Gentle AI section with fictional static values', () => {
+  const g = demoSnapshot(0).gentle
+  expect(g.tools.map(t => `${t.name} ${t.version} ${t.update ?? '-'}`)).toEqual([
+    'gentle-ai 4.0.0 -',
+    'gga 2.10.1 -',
+    'engram 2.2.1 3.3.0',
+  ])
+  expect(g.asOf).toBe('09:30')
+  expect(g.root).toBe(demoSnapshot(0).session.cwd)
+  expect(g.gga).toEqual({ hook: false, projectConfig: true, rulesFile: 'AGENTS.md', rules: true })
+  expect(g.rdd?.effective).toBe('on')
+  expect(g.strictTdd).toBe('unset')
+})

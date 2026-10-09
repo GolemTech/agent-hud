@@ -2,7 +2,7 @@
 
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
-Agent HUD is a Claude Code plugin ("mod"): a hooks module that draws a live sidebar (Session, Context, MCP, Subagents, Todo) and a band above the prompt. User-facing behavior and data sources are documented in `README.md`; keep both in sync when behavior changes.
+Agent HUD is a Claude Code plugin ("mod"): a hooks module that draws a live sidebar (Session, Context, MCP, Subagents, Todo, Gentle AI) and a band above the prompt. User-facing behavior and data sources are documented in `README.md`; keep both in sync when behavior changes.
 
 ## Commands
 
@@ -27,6 +27,7 @@ Everything runs from `hooks/register.tsx`. The top of the file is pure, exported
 - **State lives in two places.** `$.state` atoms (`rows`, `collapsed`, `todos`, `private`, declared in `types/index.d.ts` under `PluginState['agent-hud']`) survive reloads. Module-level variables (`seen` timing map, `loopModel`, the caches, the `cleared*` sets) reset on every reload; that is accepted.
 - **Event-sourced data.** `agent.spawn` stamps a subagent's real start time and model; `turn.step` records model and effort per loop (`agentId`, or `'main'`); `prompt.compose` records the output style's name (a pure observer, forwards `next(e)` untouched; its input names no loop, so only a named style updates it and a style-less compose, like a subagent's, is ignored); `turn.complete` gives per-subagent tokens; `tool.call` on `TodoWrite` / `TaskCreate` / `TaskUpdate` mirrors the main loop's todos (`!e.agentId`). `$.agent.list()` gives live status only, and finished agents drop out of it, so `mergeRows` keeps them as history until "clear done".
 - **Two surfaces.** The `Pane` (id `hud`) and the `AbovePrompt` band. The band shows only when `isSidebarShown($.ui.panes())` is false; it asks the engine instead of tracking opens and closes (see gotchas).
+- **Gentle AI section.** `hooks/gentle.ts` holds its pure parsers, the action table (`actionSpec`: confirmation text, constant argv, env, result toast) and types, unit-tested in `hooks/gentle.test.ts` with the section's wiring tests. Everything that calls `$` (`detectGentle`, `runAction`, `fillPrompt`, `refreshGentle`) lives in `register.tsx`. Detection runs at session start, every 300 ticks, on `↻` and after an action, one run at a time, not awaited by the tick; each probe is guarded on its own and leaves its field unknown when it fails. Command buttons go through `$.ui.ask` ('Run it' / 'Cancel', a rejection is a cancel) before `$.process.run`; prompt buttons only `$.prompt.fill` (`replace`), never submit.
 - **Demo mode.** `hooks/demo.ts` provides the sample session behind `/hud-demo`, used for README recordings; both surfaces render from one view object, live or demo, and demo data never reaches `$.state`.
 - **Privacy mode.** `/hud-private` flips the `private` atom; `liveView` applies the pure `maskView` (identity fields only) when it is set, so both surfaces read masked data from one place. Demo mode wins over it.
 - **Fragile inputs** are read from Claude Code internals with a fallback, never trusted: `~/.claude/projects/<projectDir(root)>/<sessionId>/custom-title.json` (session title), `~/.claude.json` `oauthAccount` (account; only email user and organization are kept, never the email domain), and the `outputStyle` setting from `<root>/.claude/settings.local.json` > `<root>/.claude/settings.json` > `~/.claude/settings.json` (`outputStyleFrom`). The `~/.claude` files move under `CLAUDE_CONFIG_DIR` when it is set (`claudePaths`). External strings pass through `clean` (control characters stripped) where they enter.
@@ -35,6 +36,9 @@ Everything runs from `hooks/register.tsx`. The top of the file is pure, exported
 
 - Every `<Button>` needs `onPress`; without it the render hook throws and the whole Pane draws blank. State changes from a button go through `update($, atom, fn)` inside `onPress`.
 - Call `$` at the call site: `$.process.run(...)` works, passing `$.process.run` as a value is refused by `validate`.
+- `$` is followed only into functions declared in the same file, never across an import: a helper in `gentle.ts` that takes `$` makes the whole module fail to load ("$ is passed to ..., imported from ..."). Keep `$`-calling code in `register.tsx` and only pure code in other modules.
+- Never run gga for detection: every gga command except `run` checks GitHub for updates (curl; `CURL_CMD=false` turns it off), and `gga config` / `gga version` source the repository's `.gga`, which executes it. Read the hook files and `.gga` as text instead (`parseGgaConfig`).
+- `brew outdated --json=v2` exits 1 when something is outdated: parse stdout, do not gate on `exitCode`. Run brew with `HOMEBREW_NO_AUTO_UPDATE=1` so it reads only the local tap.
 - A plugin's own `$.ui.open` / `$.ui.close` is not seen by its own `ui.open` / `ui.close` hooks (origin `plugin`), and a state write from a closing pane's button can be lost when the pane unmounts. Derive visibility from `$.ui.panes()` instead of tracking it.
 - "plugin panel hidden · ctrl+x ctrl+a or click to show" is the engine collapsing the AbovePrompt band, not a missing band. A plugin cannot expand it.
 - `$.ui.open({ columns })` is a request: a dock width the person set wins, so a narrow "rail" is not reliable.
@@ -51,5 +55,6 @@ Everything runs from `hooks/register.tsx`. The top of the file is pure, exported
 - Anything the code under test calls needs a bottom answer, or the hook is skipped with "no implementation".
 - A test cannot read another plugin's `$.state` (host rule); assert through rendered output instead. The test `$` has no `$.ui.close`; reach it by pressing the plugin's own button.
 - An engine event a test raises from its own `$` (e.g. `$.prompt.compose(input)`) runs every plugin's hook; its bottom answers raw (`on('prompt.compose', () => ({ sections: [] }))`). `hooks/session.test.ts` does this.
+- The test `$` has no `$.ui.ask`; the plugin's own call runs the `AskUserQuestion` tool, so a test answers it with `on('tool.call', { tool: 'AskUserQuestion' }, ...)` returning `{ result: { answers: { [question]: label } } }`, and throws to simulate a dismissed dialog. `prompt.fill` and `ui.toast` need bottom answers too. `hooks/gentle.test.ts` does this.
 - `mock.clock(on)` controls `$.clock.now()` / `every`; advance it instead of sleeping.
 - Fixtures use reserved names only (`example.com`, `.test`, `/home/myuser`): a local identity guard blocks commits with real-looking data.

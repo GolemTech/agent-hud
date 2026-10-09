@@ -28,6 +28,7 @@ declare module 'claude-code' {
         mcp: boolean
         subagents: boolean
         todos: boolean
+        gentle: boolean
       }
       todos: TodoItem[]
       /** Privacy mode (`/hud-private`): identity fields masked. */
