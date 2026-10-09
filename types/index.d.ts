@@ -30,6 +30,8 @@ declare module 'claude-code' {
         todos: boolean
       }
       todos: TodoItem[]
+      /** Privacy mode (`/hud-private`): identity fields masked. */
+      private: boolean
     }
   }
 }

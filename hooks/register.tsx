@@ -192,6 +192,8 @@ const collapsed = atom({ plugin: 'agent-hud', key: 'collapsed' } as const, {
 export const isSidebarShown = (panes: readonly { id: string; isPlaced: boolean }[]): boolean =>
   panes.some(p => p.id === PANE && p.isPlaced)
 const todos = atom({ plugin: 'agent-hud', key: 'todos' } as const, [])
+// `/hud-private`: in `$.state`, so a plugin reload never unmasks.
+const privateMode = atom({ plugin: 'agent-hud', key: 'private' } as const, false)
 
 // Module-scoped timing. AgentInfo carries no timestamp, so we stamp each
 // agent when we first see it and freeze it once its status is terminal.
@@ -495,8 +497,10 @@ export const summaryLine = (
 
 type ModelInfo = { model: string; effort?: string | number }
 
-type HudView = {
+export type HudView = {
   demo: boolean
+  /** Identity fields are masked (`/hud-private`). */
+  private: boolean
   title: string | null
   sessionId: string
   account: string | null
@@ -521,6 +525,7 @@ const demoView = (elapsedMs: number): HudView => {
   const d = demoSnapshot(elapsedMs)
   return {
     demo: true,
+    private: false,
     title: d.session.title,
     sessionId: d.session.id,
     account: d.session.account,
@@ -538,10 +543,25 @@ const demoView = (elapsedMs: number): HudView => {
   }
 }
 
+// Privacy mode for screen sharing: the same live view with every identity
+// field replaced by a placeholder. No real path segment survives (`~/…`, no
+// home), and the empty session id hides the short id. Everything else stays.
+export const maskView = (view: HudView): HudView => ({
+  ...view,
+  private: true,
+  account: 'you@example',
+  title: 'private session',
+  sessionId: '',
+  branch: '••••',
+  cwd: '~/…',
+  home: null,
+})
+
 // The live view: the real session's sources. `list` is the `rows` atom the
-// caller read first (its refresh signal).
+// caller read first (its refresh signal). Masking happens here and only here,
+// so the Pane and the band can never show an unmasked identity field.
 const liveView = async ($: EngineInterface, list: AgentRow[]): Promise<HudView> => {
-  const [usage, tools, now, session, model, cwd, todoList] = await Promise.all([
+  const [usage, tools, now, session, model, cwd, todoList, masked] = await Promise.all([
     $.session.usage(),
     $.tool.list(),
     $.clock.now(),
@@ -549,9 +569,11 @@ const liveView = async ($: EngineInterface, list: AgentRow[]): Promise<HudView> 
     $.session.model(),
     $.session.cwd(),
     read($, todos),
+    read($, privateMode),
   ])
-  return {
+  const view: HudView = {
     demo: false,
+    private: false,
     title: sessionTitle,
     sessionId: session,
     account: accountCache,
@@ -568,6 +590,7 @@ const liveView = async ($: EngineInterface, list: AgentRow[]): Promise<HudView> 
     models: loopModel,
     todos: todoList,
   }
+  return masked ? maskView(view) : view
 }
 
 // Demo view while `/hud-demo` is on, the live one otherwise.
@@ -583,6 +606,10 @@ export const register: Register = on => {
     await $.command.register({
       name: 'hud-demo',
       description: 'Toggle a sample session in Agent HUD for demos and screenshots',
+    })
+    await $.command.register({
+      name: 'hud-private',
+      description: 'Toggle privacy mode: live data with account, title, branch and path masked',
     })
 
     void $.ui.open({ id: PANE, title: 'Agent HUD' })
@@ -729,6 +756,19 @@ export const register: Register = on => {
     return { text: 'Demo mode on: sample data only, no tokens spent. Run /hud-demo again to exit.' }
   })
 
+  // Privacy mode: live data, identity fields masked by `maskView` in
+  // `liveView`. Written to `$.state` so a reload keeps it on; writing the atom
+  // redraws both surfaces.
+  on('command.run', { command: 'hud-private' }, async $ => {
+    const enabled = !(await read($, privateMode))
+    await update($, privateMode, () => enabled)
+    return {
+      text: enabled
+        ? 'Privacy mode on: account, session title and id, branch and path are masked. Run /hud-private again to exit.'
+        : 'Privacy mode off.',
+    }
+  })
+
   // Hidden-sidebar band: shown above the prompt whenever the pane is not on
   // screen (closed by → or its ✕, or open but unplaced on a narrow terminal),
   // with a button that reopens it. It asks the engine itself through
@@ -815,12 +855,15 @@ export const register: Register = on => {
         </Box>
 
         <Box flexDirection="column">
-          {header('session', 'Session')}
+          <Box gap={1}>
+            {header('session', 'Session')}
+            {view.private && <Text color="warning">🔒 private</Text>}
+          </Box>
           {!c.session && (
             <Text wrap="truncate-end">
               {view.title && <Text bold>{view.title}</Text>}
               <Text color="subtle">
-                {view.title && ' · '}
+                {view.title && view.sessionId && ' · '}
                 {view.sessionId.slice(0, 8)}
               </Text>
             </Text>
