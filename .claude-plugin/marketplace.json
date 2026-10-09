@@ -1,0 +1,6 @@
+{
+  "name": "agent-hud",
+  "owner": { "name": "GolemTech" },
+  "description": "Agent HUD, a live sidebar plugin for Claude Code.",
+  "plugins": [{ "name": "agent-hud", "source": "./" }]
+}
