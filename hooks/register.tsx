@@ -596,6 +596,14 @@ export type HudView = {
   todos: TodoItem[]
 }
 
+// The Claude Code version for the footer, read once per session start.
+let versionCache: string | null = null
+
+// The release (`2.1.296`, `2.1.296-dev`) over a development build's long
+// version string; the full version when it is not spelled as a release.
+export const versionLabel = (v: { version: string; base?: string }): string =>
+  clean(v.base ?? v.version)
+
 // When `/hud-demo` switched demo mode on (`$.clock.now()`), or null.
 // Module-level: a reload leaves demo mode, which is fine for a recording aid.
 let demoStartedAt: number | null = null
@@ -682,6 +690,11 @@ const hudView = async ($: EngineInterface, list: AgentRow[]): Promise<HudView> =
 
 export const register: Register = on => {
   on('session.start', async ($, e, next) => {
+    try {
+      versionCache = versionLabel(await $.session.version())
+    } catch {
+      versionCache = null // the footer is left out
+    }
     await $.command.register({
       name: 'hud',
       description: 'Open the Agent HUD sidebar',
@@ -1153,6 +1166,18 @@ export const register: Register = on => {
               ),
             )}
         </Box>
+
+        {/* Footer: the Claude Code version the session runs on. */}
+        {versionCache && (
+          <Box marginTop={1}>
+            <Text wrap="truncate-end">
+              <Text color="success">● </Text>
+              <Text color="subtle">Claude</Text>
+              <Text bold>Code</Text>
+              <Text color="subtle">{` ${versionCache}`}</Text>
+            </Text>
+          </Box>
+        )}
       </Box>
     )
   })

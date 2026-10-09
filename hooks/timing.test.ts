@@ -4,6 +4,7 @@ import {
   accountLabel,
   claudePaths,
   clean,
+  versionLabel,
   addTask,
   agentCounts,
   buildRows,
@@ -319,6 +320,15 @@ test('mergeRows takes the fresh row for agents still listed', () => {
 test('displayRows: running first, then finished newest first', () => {
   const list = [row('A', 'completed', true), row('B', 'running', false), row('C', 'failed', true)]
   expect(displayRows(list).map(r => r.id)).toEqual(['B', 'C', 'A'])
+})
+
+test('versionLabel prefers the release base over a long development version', () => {
+  expect(versionLabel({ version: '2.1.296', base: '2.1.296' })).toBe('2.1.296')
+  expect(
+    versionLabel({ version: '2.1.296-dev.20260920.t101500.sha1a2b3c4', base: '2.1.296-dev' }),
+  ).toBe('2.1.296-dev')
+  expect(versionLabel({ version: 'local' })).toBe('local')
+  expect(versionLabel({ version: '2.1\u001b[31m.296' })).toBe('2.1[31m.296')
 })
 
 test('claudePaths follows CLAUDE_CONFIG_DIR, else the home defaults', () => {

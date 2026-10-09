@@ -23,6 +23,7 @@ const answerEngine = (on: On, diff: string) => {
   on('session.cwd', () => ({ value: CWD }) as never)
   on('session.repo', () => ({ value: { root: CWD, remote: null } }) as never)
   on('session.model', () => ({ value: 'claude-opus-5-5' }) as never)
+  on('session.version', () => ({ value: { version: '2.1.296', base: '2.1.296' } }) as never)
   on('session.usage', () => ({ value: { startedAt: 0 } }) as never)
   on('tool.list', () => ({ value: [] }) as never)
   on('agent.list', () => ({ value: [] }) as never)
@@ -91,4 +92,14 @@ test('a clean working tree shows the branch without change counts', async ($, on
   expect(text).toContain(BRANCH)
   expect(text).toContain('🌿')
   expect(text).not.toContain('+0')
+})
+
+test('the footer shows the Claude Code version', async ($, on) => {
+  const clock = answerEngine(on, '')
+  await $.session.start({ cwd: CWD, surface: 'terminal', isInteractive: true } as never)
+  await clock.settle()
+  const text = JSON.stringify(await (await mountPane($)).drawn())
+  expect(text).toContain('Claude')
+  expect(text).toContain('Code')
+  expect(text).toContain('2.1.296')
 })
