@@ -8,6 +8,10 @@ const HOME = '/home/myuser'
 const CWD = `${HOME}/code/demo-proj`
 const BRANCH = 'feat/session-line'
 
+// The project's local settings file; a test switches the style in it.
+const LEARNING = JSON.stringify({ outputStyle: 'Learning' })
+let localSettings = LEARNING
+
 // The engine's bottom for the poller and the Pane. `git diff --shortstat HEAD`
 // reports changes, the project's local settings name an output style, and
 // `prompt.compose` answers an empty section list.
@@ -31,7 +35,7 @@ const answerEngine = (on: On, diff: string) => {
   on('agent.list', () => ({ value: [] }) as never)
   on('fs.read', (_$, e) => {
     const path = (e as { path: string }).path
-    if (path === `${CWD}/.claude/settings.local.json`) return { value: JSON.stringify({ outputStyle: 'Learning' }) } as never
+    if (path === `${CWD}/.claude/settings.local.json`) return { value: localSettings } as never
     throw new Error('no such file')
   })
   on('process.run', (_$, e) => {
@@ -113,4 +117,38 @@ test('the footer shows the Claude Code version', async ($, on) => {
   expect(text).toContain('Claude')
   expect(text).toContain('Code')
   expect(text).toContain('2.1.296')
+})
+
+test('a style switch in the settings mid-session shows, back to the default included', async ($, on) => {
+  const clock = answerEngine(on, '')
+  try {
+    await $.session.start({ cwd: CWD, surface: 'terminal', isInteractive: true } as never)
+    await clock.settle()
+    const pane = await mountPane($)
+    const text = async () => JSON.stringify(await pane.drawn())
+
+    await $.prompt.compose(compose({ name: 'Explanatory', isKeepingCodingInstructions: true }))
+    await clock.advance(1000)
+    expect(await text()).toContain('Explanatory')
+
+    // The settings unchanged: a style-less compose still keeps the line.
+    await clock.advance(30_000)
+    await $.prompt.compose(compose(null))
+    await clock.advance(1000)
+    expect(await text()).toContain('Explanatory')
+
+    // The person picks the default style: the setting changes, the line goes.
+    localSettings = JSON.stringify({ outputStyle: 'default' })
+    await clock.advance(30_000)
+    const cleared = await text()
+    expect(cleared).not.toContain('Explanatory')
+    expect(cleared).not.toContain('🎭')
+
+    // A named style composed later shows again.
+    await $.prompt.compose(compose({ name: 'Learning', isKeepingCodingInstructions: true }))
+    await clock.advance(1000)
+    expect(await text()).toContain('Learning')
+  } finally {
+    localSettings = LEARNING
+  }
 })

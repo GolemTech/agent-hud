@@ -4,8 +4,10 @@ import type { EngineInterface, Register } from 'claude-code'
 import type { AgentRow, TodoItem, TodoStatus } from '../types'
 import { demoSnapshot } from './demo'
 import {
+  ACTION_TIMEOUT_MS,
   actionSpec,
   BREW_ENV,
+  GENTLE_JOIN_DEADLINE_MS,
   ggaHookInstalled,
   hooksDir,
   parseBrewList,
@@ -19,13 +21,14 @@ import {
   RUN_IT,
   CANCEL,
   rulesFileName,
+  rulesFileOverridden,
   rulesPrompt,
   STRICT_TDD_PROMPT,
   TAP,
   TOOLS,
 } from './gentle'
 import type { GentleAction, GentleInfo, GentleView, RddStatus, StrictTdd } from './gentle'
-import { BRANCH_ICON, cardsFor, flowRows, layoutFor, PANE_PADDING_X, textRows } from './layout'
+import { BRANCH_ICON, buttonText, cardsFor, flowRows, layoutFor, PANE_PADDING_X, ruleWidth, sectionTitle, SUB_ROW_INDENT, textRows } from './layout'
 import { clean } from './text'
 
 // Re-exported for the unit tests, which import the helpers from here.
@@ -149,6 +152,8 @@ export const parseShortstat = (stdout: string): Changes | null => {
 // first one, the settings files stand in. `undefined` means not reported yet.
 let composedStyle: string | null | undefined
 let settingsStyle: string | null = null
+// The settings poll's previous answer; `undefined` before the first poll.
+let polledSettingsStyle: string | null | undefined
 
 const styleName = (raw: string): string | null => {
   const name = clean(raw).trim()
@@ -632,18 +637,22 @@ let versionCache: string | null = null
 // every render. gga itself is never run for detection.
 let gentleCache: GentleInfo | null = null
 let gentleRun: Promise<void> | null = null
+// When the detection under way started (`$.clock.now()`).
+let gentleRunStartedAt = 0
 // Numbers each detection as it starts; only the newest may write the cache.
 let gentleGeneration = 0
 
+// A file's text, or null when it is missing or unreadable.
+const readOr = async ($: EngineInterface, path: string): Promise<string | null> => {
+  try {
+    return await $.fs.read(path)
+  } catch {
+    return null
+  }
+}
+
 // Every probe is guarded on its own: one failing leaves its field unknown.
 const detectGentle = async ($: EngineInterface): Promise<GentleInfo> => {
-  const readOr = async (path: string): Promise<string | null> => {
-    try {
-      return await $.fs.read(path)
-    } catch {
-      return null
-    }
-  }
   const versions: Record<string, string> = {}
   let updates: Record<string, string> | null = null
   let updatesAsOf: number | null = null
@@ -700,17 +709,18 @@ const detectGentle = async ($: EngineInterface): Promise<GentleInfo> => {
     const xdg = await $.env.get('XDG_CONFIG_HOME')
     const home = await $.env.get('HOME')
     const dir = xdg ? xdg : typeof home === 'string' ? `${home}/.config` : null
-    const text = dir ? await readOr(`${dir}/gga/config`) : null
+    const text = dir ? await readOr($, `${dir}/gga/config`) : null
     if (text) config = parseGgaConfig(text)
   } catch {
     // no global config
   }
 
   if (root) {
-    const project = await readOr(`${root}/.gga`)
+    const project = await readOr($, `${root}/.gga`)
     gga.projectConfig = project !== null
     if (project) config = { ...config, ...parseGgaConfig(project) }
     gga.rulesFile = rulesFileName(config.RULES_FILE)
+    gga.rulesOverridden = rulesFileOverridden(config.RULES_FILE)
     try {
       gga.rules = await $.fs.exists(`${root}/${gga.rulesFile}`)
     } catch {
@@ -729,13 +739,13 @@ const detectGentle = async ($: EngineInterface): Promise<GentleInfo> => {
           timeoutMs: CMD_TIMEOUT_MS,
         })
         const hooks = hooksDir(root, commonDir, set.exitCode === 0 ? clean(set.stdout) : '', homeCache)
-        const files = [await readOr(`${hooks}/pre-commit`), await readOr(`${hooks}/commit-msg`)]
+        const files = [await readOr($, `${hooks}/pre-commit`), await readOr($, `${hooks}/commit-msg`)]
         gga.hook = files.some(t => t !== null && ggaHookInstalled(t))
       }
     } catch {
       gga.hook = null
     }
-    strictTdd = parseStrictTdd((await readOr(`${root}/openspec/config.yaml`)) ?? '')
+    strictTdd = parseStrictTdd((await readOr($, `${root}/openspec/config.yaml`)) ?? '')
   }
   try {
     const argv = root
@@ -765,9 +775,16 @@ const detectGentle = async ($: EngineInterface): Promise<GentleInfo> => {
 // Asks first; runs only on the exact "Run it". A dismissed dialog (or a `-p`
 // run, where `ask` rejects) is a cancel. Never echoes the command's output.
 // Outside a repository (`root` null) it runs in the session's real cwd, read
-// now: the drawn cwd may be the privacy mask (`~/…`), never a usable path.
+// now: the drawn cwd may be the privacy mask (`~/…`), never a usable path;
+// when it cannot be read, nothing runs.
 const runAction = async ($: EngineInterface, action: GentleAction, root: string | null): Promise<boolean> => {
-  const cwd = root ?? (await $.session.cwd())
+  let cwd: string
+  try {
+    cwd = root ?? (await $.session.cwd())
+  } catch {
+    $.ui.toast('failed (could not run)')
+    return false
+  }
   const spec = actionSpec(action, cwd)
   let answer: string
   try {
@@ -779,7 +796,7 @@ const runAction = async ($: EngineInterface, action: GentleAction, root: string 
   try {
     const r = await $.process.run(spec.argv, {
       cwd,
-      timeoutMs: 30_000,
+      timeoutMs: ACTION_TIMEOUT_MS,
       ...(spec.env ? { env: spec.env } : {}),
       ...(spec.stdin === undefined ? {} : { stdin: spec.stdin }),
     })
@@ -800,12 +817,20 @@ const fillPrompt = async ($: EngineInterface, text: string): Promise<void> => {
   }
 }
 
-// A periodic or ↻ refresh joins a detection already under way. After an
+// A periodic or ↻ refresh joins a detection already under way, unless that
+// one started `GENTLE_JOIN_DEADLINE_MS` ago or more (it is stuck). After an
 // action, `fresh` starts a new one at once: what an older run read may predate
-// the action, so that run's result is dropped when it finishes later.
-const refreshGentle = ($: EngineInterface, fresh = false): Promise<void> => {
-  if (gentleRun && !fresh) return gentleRun
+// the action. Either way an older run's result is dropped when it ends later.
+const refreshGentle = async ($: EngineInterface, fresh = false): Promise<void> => {
+  let now: number
+  try {
+    now = await $.clock.now()
+  } catch {
+    now = gentleRunStartedAt // no clock: join as before
+  }
+  if (gentleRun && !fresh && now - gentleRunStartedAt < GENTLE_JOIN_DEADLINE_MS) return gentleRun
   const generation = ++gentleGeneration
+  gentleRunStartedAt = now
   const run = (async () => {
     try {
       const info = await detectGentle($)
@@ -819,6 +844,16 @@ const refreshGentle = ($: EngineInterface, fresh = false): Promise<void> => {
   gentleRun = run
   return run
 }
+
+// Fixed texts of the Gentle AI section; rows are measured from these.
+const GGA_LABEL = 'gga'
+const GGA_NO_REPO = 'gga  no repository'
+const SCOPE_LABEL = { project: '   project', global: '   global ' } as const // aligned under "RDD"
+const TDD_HEAD = 'TDD  test-first'
+const TDD_NOTE = ' by default (ODD)'
+const RULES_OVERRIDDEN_NOTE = ' (unsafe RULES_FILE ignored)'
+const mark = (v: boolean | null): string => (v ? '✓' : v === false ? '✗' : '?')
+const tone = (v: boolean | null): 'success' | 'error' | 'subtle' => (v ? 'success' : v === false ? 'error' : 'subtle')
 
 export const gentleView = (info: GentleInfo, now: number, offsetMin: number | null): GentleView => {
   const { updatesAsOf, ...rest } = info
@@ -973,26 +1008,25 @@ export const register: Register = on => {
           // keep the last known account
         }
       }
-      // Output style from the settings files until `prompt.compose` reports
-      // one: now, then every ~30s. Each file is optional.
-      if (composedStyle === undefined && ticks % 30 === 1) {
+      // Output style from the settings files: now, then every ~30s. Each
+      // file is optional. It stands in until `prompt.compose` reports a
+      // style, and a change in it (the person switched styles) wins over the
+      // last composed one: that is how a switch back to the default shows,
+      // since a compose with no style cannot be told from a subagent's.
+      if (ticks % 30 === 1) {
         try {
           const home = await $.env.get('HOME')
           const configDir = await $.env.get('CLAUDE_CONFIG_DIR')
           const root = await $.session.root()
-          const readOr = async (path: string): Promise<string | null> => {
-            try {
-              return await $.fs.read(path)
-            } catch {
-              return null // no such file
-            }
-          }
           const user = typeof home === 'string' ? claudePaths(home, configDir ?? undefined).settings : null
-          settingsStyle = outputStyleFrom(
-            await readOr(`${root}/.claude/settings.local.json`),
-            await readOr(`${root}/.claude/settings.json`),
-            user === null ? null : await readOr(user),
+          const style = outputStyleFrom(
+            await readOr($, `${root}/.claude/settings.local.json`),
+            await readOr($, `${root}/.claude/settings.json`),
+            user === null ? null : await readOr($, user),
           )
+          if (polledSettingsStyle !== undefined && style !== polledSettingsStyle) composedStyle = undefined
+          polledSettingsStyle = style
+          settingsStyle = style
         } catch {
           // keep the last known style
         }
@@ -1074,32 +1108,30 @@ export const register: Register = on => {
     return res
   }).catch((_$, e, next) => next(e)) // observer: never block a spawn
 
-  // Model + effort of every request, per loop. A pure pass-through: it notes
-  // two fields synchronously and forwards the stream untouched.
-  on('turn.step', async function* (_$, e, next) {
+  // Model + effort of every request, per loop, and a subagent's context size.
+  // A pass-through: it notes fields and forwards the stream untouched, reading
+  // the request's own usage only from the result, once the stream has ended.
+  // That usage is one request's, so it is the context the request read; a
+  // turn's usage (turn.complete) sums every request and runs into millions.
+  on('turn.step', async function* ($, e, next) {
     loopModel.set(e.agentId ?? MAIN, { model: e.model, effort: e.effort })
-    return yield* next(e)
-  })
-
-  // Output style of each system prompt the engine renders. A pure observer:
-  // it notes one field and forwards the composition untouched. The input
-  // names no loop; the style is the session's, whichever loop composes.
-  on('prompt.compose', (_$, e, next) => {
-    // The input names no loop, and a subagent's request carries no style, so
-    // only a named style updates the line; a style-less compose leaves it.
-    if (e.outputStyle) composedStyle = styleName(e.outputStyle.name)
-    return next(e)
-  }).catch((_$, e, next) => next(e))
-
-  // Per-subagent tokens: AgentInfo has none, but each finished turn of a
-  // subagent's loop reports its usage with its agentId.
-  on('turn.complete', async ($, e, next) => {
-    if (e.agentId && e.usage) {
-      const tokens = ctxTokens(e.usage)
+    const r = yield* next(e)
+    if (e.agentId && r.usage) {
+      const tokens = ctxTokens(r.usage)
       const rec = seen.get(e.agentId)
       if (rec) rec.tokens = tokens
       else seen.set(e.agentId, { start: await $.clock.now(), tokens })
     }
+    return r
+  })
+
+  // Output style of each system prompt the engine renders. A pure observer:
+  // it notes one field and forwards the composition untouched. The input
+  // names no loop and a subagent's request carries no style, so only a named
+  // style updates the line; a style-less compose leaves it (the settings poll
+  // catches a switch back to the default).
+  on('prompt.compose', (_$, e, next) => {
+    if (e.outputStyle) composedStyle = styleName(e.outputStyle.name)
     return next(e)
   }).catch((_$, e, next) => next(e))
 
@@ -1225,32 +1257,57 @@ export const register: Register = on => {
     const headerText = (id: SectionId, label: string) => `${c[id] ? '▸' : '▾'} ${label}`
     // Each section header is a Button that collapses just that module.
     // `update` from a handler is the documented pattern; it redraws the pane.
+    // The title is an inverse band so sections stand apart at a glance.
     const header = (id: SectionId, label: string) => (
       <Box flexShrink={0}>
         <Button
           key={`toggle-${id}`}
+          plain
           onPress={() => void update($, collapsed, prev => ({ ...prev, [id]: !prev[id] }))}
         >
-          <Text bold color="claude">
-            {headerText(id, label)}
+          <Text bold inverse color="claude">
+            {sectionTitle(headerText(id, label))}
           </Text>
         </Button>
       </Box>
     )
+    const headerWidth = (id: SectionId, label: string) => sectionTitle(headerText(id, label)).length
+    // Header extras, measured for the rule: `🔒` is two cells and two code units.
+    const PRIVATE_BADGE = '🔒 private'
+    const CLEAR_DONE = '✕ clear done'
+    const REFRESH = '↻'
+    // The `───` that closes a header row, sized to what its items leave.
+    const rule = (...itemWidths: number[]) => {
+      const w = ruleWidth(L.columns, itemWidths)
+      return w > 0 ? (
+        <Box flexShrink={0}>
+          <Text color="subtle">{'─'.repeat(w)}</Text>
+        </Box>
+      ) : null
+    }
 
     // A small text button of the Gentle AI section. In demo mode no button
     // acts: it only says so.
     // `selected` marks the value a setting has now (`[● on]`), so a row of
     // choices reads as its current state.
+    // `plain`: the label already reads `[on]`, and a non-plain Button would
+    // wrap it in its own `[ … ]` chrome, which the row widths do not count.
     const action = (key: string, label: string, act: () => Promise<unknown>, selected = false) => (
       <Button
         key={key}
+        plain
         onPress={() => {
           if (view.demo) return $.ui.toast('demo mode')
           void act()
         }}
       >
-        {selected ? <Text bold color="success">{`[● ${label}]`}</Text> : <Text color="claude">{`[${label}]`}</Text>}
+        {selected ? (
+          <Text bold color="success">
+            {buttonText(label, true)}
+          </Text>
+        ) : (
+          <Text color="claude">{buttonText(label)}</Text>
+        )}
       </Button>
     )
     // Command buttons confirm first (`runAction`), then detection runs again.
@@ -1267,11 +1324,14 @@ export const register: Register = on => {
     const toolLabel = (t: GentleView['tools'][number]) => `${t.name} ${t.version ?? 'not installed'}`.padEnd(L.toolPad)
     const toolStatus = (g: GentleView, t: GentleView['tools'][number]) =>
       !t.version ? null : t.update ? `↑ ${t.update}` : g.updatesKnown ? '✓ up to date' : null
-    const asOfText = (g: GentleView) => (g.updatesKnown && g.asOf ? `updates as of ${g.asOf} (brew)` : null)
-    const rulesText = (g: GentleView) =>
-      `rules ${g.gga.rules ? '✓' : g.gga.rules === false ? '✗' : '?'} ${g.gga.rulesFile}`
-    const TDD_TEXT = 'TDD  test-first by default (ODD)'
-    const INDENT = 3 // sub-rows of gga, RDD and TDD
+    // The section's variable texts, built once for both the tree and its row
+    // count (`gentleRows`), so the two cannot drift apart.
+    const gentleTexts = (g: GentleView) => ({
+      asOf: g.updatesKnown && g.asOf ? `updates as of ${g.asOf} (brew)` : null,
+      hook: `hook ${mark(g.gga.hook)}`,
+      rules: `rules ${mark(g.gga.rules)} ${g.gga.rulesFile}${g.gga.rulesOverridden ? RULES_OVERRIDDEN_NOTE : ''}`,
+      strict: g.strictTdd ? `strict: ${g.strictTdd}` : null,
+    })
 
     const gentleSection = (g: GentleView | null) => {
       if (!g) return <Text color="subtle">checking…</Text>
@@ -1279,7 +1339,7 @@ export const register: Register = on => {
       if (!byName.get('gentle-ai')?.version) return <Text color="subtle">gentle-ai not installed</Text>
       const ggaInstalled = Boolean(byName.get('gga')?.version)
       const { root } = g
-      const asOf = asOfText(g)
+      const texts = gentleTexts(g)
       return (
         <Box flexDirection="column">
           {g.tools.map(t => {
@@ -1291,36 +1351,30 @@ export const register: Register = on => {
                 </Box>
                 {status && (
                   <Box flexShrink={0}>
-                    {t.update ? (
-                      <Text color="warning">↑ {t.update}</Text>
-                    ) : (
-                      <Text color="success">✓ up to date</Text>
-                    )}
+                    <Text color={t.update ? 'warning' : 'success'}>{status}</Text>
                   </Box>
                 )}
               </Box>
             )
           })}
-          {asOf && <Text color="subtle">{asOf}</Text>}
-          {ggaInstalled && !root && <Text color="subtle">gga  no repository</Text>}
+          {texts.asOf && <Text color="subtle">{texts.asOf}</Text>}
+          {ggaInstalled && !root && <Text color="subtle">{GGA_NO_REPO}</Text>}
           {ggaInstalled && root && (
             <Box gap={1} flexWrap="wrap">
               <Box flexShrink={0}>
-                <Text>gga</Text>
+                <Text>{GGA_LABEL}</Text>
               </Box>
               <Box flexShrink={0}>
-                <Text color={g.gga.hook ? 'success' : g.gga.hook === false ? 'error' : 'subtle'}>
-                  hook {g.gga.hook ? '✓' : g.gga.hook === false ? '✗' : '?'}
-                </Text>
+                <Text color={tone(g.gga.hook)}>{texts.hook}</Text>
               </Box>
               {g.gga.hook === false && command('gga-install', 'install', root)}
               {!g.gga.projectConfig && command('gga-init', 'init', root)}
             </Box>
           )}
           {ggaInstalled && root && (
-            <Box gap={1} flexWrap="wrap" paddingLeft={INDENT}>
-              <Text wrap="truncate-end" color={g.gga.rules ? 'success' : g.gga.rules === false ? 'error' : 'subtle'}>
-                rules {g.gga.rules ? '✓' : g.gga.rules === false ? '✗' : '?'} {g.gga.rulesFile}
+            <Box gap={1} flexWrap="wrap" paddingLeft={SUB_ROW_INDENT}>
+              <Text wrap="truncate-end" color={tone(g.gga.rules)}>
+                {texts.rules}
               </Text>
               {g.gga.rules === false &&
                 action('gga-rules', 'create rules', () => fillPrompt($, rulesPrompt(g.gga.rulesFile)))}
@@ -1340,7 +1394,7 @@ export const register: Register = on => {
           {root && (
             <Box gap={1} flexWrap="wrap">
               <Box flexShrink={0}>
-                <Text color="subtle">{'   project'}</Text>
+                <Text color="subtle">{SCOPE_LABEL.project}</Text>
               </Box>
               {command('rdd-project-on', 'on', root, g.rdd?.project === 'on')}
               {command('rdd-project-off', 'off', root, g.rdd?.project === 'off')}
@@ -1353,19 +1407,19 @@ export const register: Register = on => {
           )}
           <Box gap={1} flexWrap="wrap">
             <Box flexShrink={0}>
-              <Text color="subtle">{'   global '}</Text>
+              <Text color="subtle">{SCOPE_LABEL.global}</Text>
             </Box>
             {command('rdd-global-on', 'on', root, g.rdd?.global === 'on')}
             {command('rdd-global-off', 'off', root, g.rdd?.global === 'off')}
           </Box>
           <Text wrap="wrap">
-            {'TDD  '}test-first
-            <Text color="subtle"> by default (ODD)</Text>
+            {TDD_HEAD}
+            <Text color="subtle">{TDD_NOTE}</Text>
           </Text>
-          {g.strictTdd && (
-            <Box gap={1} flexWrap="wrap" paddingLeft={INDENT}>
+          {texts.strict && (
+            <Box gap={1} flexWrap="wrap" paddingLeft={SUB_ROW_INDENT}>
               <Box flexShrink={0}>
-                <Text color={g.strictTdd === 'on' ? 'success' : 'subtle'}>strict: {g.strictTdd}</Text>
+                <Text color={g.strictTdd === 'on' ? 'success' : 'subtle'}>{texts.strict}</Text>
               </Box>
               {g.strictTdd !== 'on' && action('tdd-configure', 'configure', () => fillPrompt($, STRICT_TDD_PROMPT))}
             </Box>
@@ -1379,30 +1433,41 @@ export const register: Register = on => {
       if (!g || !g.tools.find(t => t.name === 'gentle-ai')?.version) return 1
       const ggaInstalled = Boolean(g.tools.find(t => t.name === 'gga')?.version)
       const { root } = g
-      const asOf = asOfText(g)
-      const BUTTON = (label: string) => label.length + 2
+      const texts = gentleTexts(g)
+      const button = (label: string, selected = false) => buttonText(label, selected).length
+      const sub = W - SUB_ROW_INDENT
       let n = 0
       for (const t of g.tools) {
         const status = toolStatus(g, t)
         n += flowRows(status ? [toolLabel(t).length, status.length] : [toolLabel(t).length], W)
       }
-      if (asOf) n += textRows(asOf.length, W)
-      if (ggaInstalled && !root) n += 1
+      if (texts.asOf) n += textRows(texts.asOf.length, W)
+      if (ggaInstalled && !root) n += textRows(GGA_NO_REPO.length, W)
       if (ggaInstalled && root) {
         n += flowRows(
-          [3, 6, ...(g.gga.hook === false ? [BUTTON('install')] : []), ...(g.gga.projectConfig ? [] : [BUTTON('init')])],
+          [
+            GGA_LABEL.length,
+            texts.hook.length,
+            ...(g.gga.hook === false ? [button('install')] : []),
+            ...(g.gga.projectConfig ? [] : [button('init')]),
+          ],
           W,
         )
-        n += flowRows([rulesText(g).length, ...(g.gga.rules === false ? [BUTTON('create rules')] : [])], W - INDENT)
+        n += flowRows([texts.rules.length, ...(g.gga.rules === false ? [button('create rules')] : [])], sub)
       }
-      n += 1 // RDD
-      const scope = [10, BUTTON('on'), BUTTON('off')]
-      if (root) n += flowRows(scope, W)
-      n += flowRows(scope, W)
-      n += textRows(TDD_TEXT.length, W)
-      if (g.strictTdd) {
-        n += flowRows([`strict: ${g.strictTdd}`.length, ...(g.strictTdd === 'on' ? [] : [BUTTON('configure')])], W - INDENT)
+      n += 1 // RDD: one truncated line
+      if (root) {
+        n += flowRows(
+          [SCOPE_LABEL.project.length, button('on', g.rdd?.project === 'on'), button('off', g.rdd?.project === 'off')],
+          W,
+        )
       }
+      n += flowRows(
+        [SCOPE_LABEL.global.length, button('on', g.rdd?.global === 'on'), button('off', g.rdd?.global === 'off')],
+        W,
+      )
+      n += textRows((TDD_HEAD + TDD_NOTE).length, W)
+      if (texts.strict) n += flowRows([texts.strict.length, ...(g.strictTdd === 'on' ? [] : [button('configure')])], sub)
       return n
     }
 
@@ -1475,9 +1540,12 @@ export const register: Register = on => {
             {header('session', 'Session')}
             {view.private && (
               <Box flexShrink={0}>
-                <Text color="warning">🔒 private</Text>
+                <Text color="warning">{PRIVATE_BADGE}</Text>
               </Box>
             )}
+            {view.private
+              ? rule(headerWidth('session', 'Session'), PRIVATE_BADGE.length)
+              : rule(headerWidth('session', 'Session'))}
           </Box>
           {!c.session && (
             <Text wrap="truncate-end">
@@ -1533,7 +1601,10 @@ export const register: Register = on => {
         </Box>
 
         <Box marginTop={1} flexDirection="column">
-          {header('context', 'Context')}
+          <Box gap={1} flexWrap="wrap">
+            {header('context', 'Context')}
+            {rule(headerWidth('context', 'Context'))}
+          </Box>
           {!c.context && ms.length === 0 && !footer && <Text color="subtle">no usage yet</Text>}
           {!c.context &&
             ms.map(m => {
@@ -1564,7 +1635,10 @@ export const register: Register = on => {
         </Box>
 
         <Box marginTop={1} flexDirection="column">
-          {header('mcp', 'MCP')}
+          <Box gap={1} flexWrap="wrap">
+            {header('mcp', 'MCP')}
+            {rule(headerWidth('mcp', 'MCP'))}
+          </Box>
           {!c.mcp && servers.length === 0 && <Text color="subtle">none connected</Text>}
           {!c.mcp &&
             servers.map(s => (
@@ -1582,15 +1656,19 @@ export const register: Register = on => {
             {!c.subagents && counts.done + counts.err > 0 && (
               <Button
                 key="clear-subagents"
+                plain
                 onPress={() => {
                   if (view.demo) return // sample data: nothing real to clear
                   for (const r of list) if (r.done) clearedAgents.add(r.id)
                   void update($, rows, prev => prev.filter(r => !r.done))
                 }}
               >
-                <Text color="subtle">✕ clear done</Text>
+                <Text color="subtle">{CLEAR_DONE}</Text>
               </Button>
             )}
+            {!c.subagents && counts.done + counts.err > 0
+              ? rule(headerWidth('subagents', 'Subagents'), CLEAR_DONE.length)
+              : rule(headerWidth('subagents', 'Subagents'))}
           </Box>
           {!c.subagents && L.compact && (
             <Text wrap="truncate-end">
@@ -1633,15 +1711,19 @@ export const register: Register = on => {
             {!c.todos && todoDone > 0 && (
               <Button
                 key="clear-todos"
+                plain
                 onPress={() => {
                   if (view.demo) return // sample data: nothing real to clear
                   for (const t of todoList) if (t.status === 'completed') clearedTodos.add(t.content)
                   void update($, todos, prev => prev.filter(t => t.status !== 'completed'))
                 }}
               >
-                <Text color="subtle">✕ clear done</Text>
+                <Text color="subtle">{CLEAR_DONE}</Text>
               </Button>
             )}
+            {!c.todos && todoDone > 0
+              ? rule(headerWidth('todos', todosHeader), CLEAR_DONE.length)
+              : rule(headerWidth('todos', todosHeader))}
           </Box>
           {!c.todos && todoList.length === 0 && <Text color="subtle">no todos</Text>}
           {!c.todos &&
@@ -1666,14 +1748,18 @@ export const register: Register = on => {
             {!c.gentle && (
               <Button
                 key="gentle-refresh"
+                plain
                 onPress={() => {
                   if (view.demo) return $.ui.toast('demo mode')
                   void refreshGentle($)
                 }}
               >
-                <Text color="subtle">↻</Text>
+                <Text color="subtle">{REFRESH}</Text>
               </Button>
             )}
+            {!c.gentle
+              ? rule(headerWidth('gentle', 'Gentle AI'), REFRESH.length)
+              : rule(headerWidth('gentle', 'Gentle AI'))}
           </Box>
           {!c.gentle && gentleSection(view.gentle ?? null)}
         </Box>

@@ -25,6 +25,7 @@ const answerEngine = (on: On) => {
     throw new Error('repo lookup failed')
   })
   on('session.model', () => ({ value: 'claude-opus-5-5' }) as never)
+  on('session.version', () => ({ value: { version: '2.1.296', base: '2.1.296' } }) as never)
   on('session.usage', () => ({ value: { startedAt: 0 } }) as never)
   on('tool.list', () => ({ value: [] }) as never)
   on('agent.list', () =>
@@ -33,6 +34,8 @@ const answerEngine = (on: On) => {
   on('fs.read', () => {
     throw new Error('no such file')
   })
+  on('fs.exists', () => ({ value: false }) as never)
+  on('fs.stat', () => ({ value: { kind: 'file', size: 1, mtimeMs: 0, isLink: false } }) as never)
   on('process.run', () => ({ value: { stdout: '+0000\n', stderr: '', exitCode: 0 } }) as never)
   return clock
 }
@@ -86,6 +89,7 @@ const answerRepoEngine = (on: On) => {
     throw new Error('no such file')
   })
   on('fs.exists', () => ({ value: false }) as never)
+  on('fs.stat', () => ({ value: { kind: 'file', size: 1, mtimeMs: 0, isLink: false } }) as never)
   on('process.run', (_$, e) => {
     const run = e as Run
     runs.push(run)

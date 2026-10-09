@@ -83,8 +83,10 @@ To add the marketplace first and install separately:
 Most values come from the plugin API (`$.session`, `$.agent`, `$.tool`). The
 rest, and the limits that come with them:
 
-- **Per-subagent tokens** come from `turn.complete`, so they appear when a
-  subagent turn ends and show the context size of that turn.
+- **Per-subagent tokens** are the context size of the subagent's latest
+  request, read from that request's own usage (`turn.step`), so they update
+  after every request. A turn's usage is not used: it sums every request's
+  counts, each of which re-reads the cached context, and runs into millions.
 - **Todos** mirror the main loop's `TodoWrite`, `TaskCreate` and `TaskUpdate`
   calls only, and only those made after the plugin loads. Subagents' own lists
   are ignored.
@@ -108,7 +110,12 @@ rest, and the limits that come with them:
   (`.claude/settings.local.json`, then `.claude/settings.json` in the
   repository root, then the user `settings.json`, which also follows
   `CLAUDE_CONFIG_DIR`), about every 30 seconds; nothing else in those files is
-  used. The default style shows no line. Privacy mode leaves the style and the
+  used. The default style shows no line. A request composed with no style
+  cannot be told from a subagent's (whose requests carry none), so it does not
+  clear the line; switching back to the default shows instead when the setting
+  changes (within about 30 seconds). A default style chosen some other way
+  than the settings files (for example a launch flag) is not seen until a
+  named style replaces it. Privacy mode leaves the style and the
   change counts visible: they are not identity.
 - **Reset times** use the system UTC offset from `date +%z`.
 - **Dock width** cannot be forced by a plugin; a width you set wins.
@@ -126,11 +133,17 @@ rest, and the limits that come with them:
   forced to `/dev/null`, so git cannot be asked for it), the configuration from the project `.gga`
   over `~/.config/gga/config` (`XDG_CONFIG_HOME` respected), parsed as plain
   text and never executed, and the rules file (`RULES_FILE`, default
-  `AGENTS.md`) by checking that it exists.
+  `AGENTS.md`) by checking that it exists. A `RULES_FILE` that is not a plain
+  relative file name is ignored: `AGENTS.md` is checked and shown instead,
+  with the note "unsafe RULES_FILE ignored". The hook counts as installed when
+  a hook file holds gga's block marker, or a legacy unmarked `gga run` /
+  `ai-code-review run` line; a mere mention of either name does not count.
 - **RDD** comes from `gentle-ai review mode status --json` (read only).
 - **TDD**: "test-first by default (ODD)": test-first is the default of
   gentle-ai's Organic Driven Development workflow; strict TDD is `strict_tdd` in
-  the project's `openspec/config.yaml`, matched as text.
+  the project's `openspec/config.yaml`, matched as text (quoted or not,
+  `true`/`false` or YAML `yes`/`no`/`on`/`off`, an inline `# comment`
+  allowed; a commented-out line does not count).
 - **No network calls** are made by the plugin itself.
 - **Control characters** (escape sequences, newlines, bells) are stripped from
   every displayed string that comes from outside the plugin.
