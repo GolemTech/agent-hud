@@ -278,7 +278,18 @@ test('narrow sidebar: RDD scope labels never shrink and sit on their own rows', 
     expect(labelBox).toBeDefined()
   }
   const project = JSON.stringify(rowOf(tree, 'project'))
-  expect(project).not.toContain('global')
+  expect(project).not.toContain('rdd-global')
+})
+
+test('each RDD scope row marks its current value; an unset project says it inherits', async ($, on) => {
+  await start($, on) // global on, project unset
+  const tree = await (await mountPane($)).drawn()
+  const global = JSON.stringify(rowOf(tree, 'global'))
+  const project = JSON.stringify(rowOf(tree, 'project'))
+  expect(global).toContain('"[● on]"')
+  expect(global).toContain('"[off]"')
+  expect(project).not.toContain('●')
+  expect(project).toContain('inherits global')
 })
 
 test('the Gentle AI section shows versions, updates, gga, RDD and TDD', async ($, on) => {

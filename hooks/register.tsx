@@ -1237,7 +1237,9 @@ export const register: Register = on => {
 
     // A small text button of the Gentle AI section. In demo mode no button
     // acts: it only says so.
-    const action = (key: string, label: string, act: () => Promise<unknown>) => (
+    // `selected` marks the value a setting has now (`[● on]`), so a row of
+    // choices reads as its current state.
+    const action = (key: string, label: string, act: () => Promise<unknown>, selected = false) => (
       <Button
         key={key}
         onPress={() => {
@@ -1245,14 +1247,19 @@ export const register: Register = on => {
           void act()
         }}
       >
-        <Text color="claude">[{label}]</Text>
+        {selected ? <Text bold color="success">{`[● ${label}]`}</Text> : <Text color="claude">{`[${label}]`}</Text>}
       </Button>
     )
     // Command buttons confirm first (`runAction`), then detection runs again.
-    const command = (key: GentleAction, label: string, root: string) =>
-      action(key, label, async () => {
-        if (await runAction($, key, root)) await refreshGentle($, true)
-      })
+    const command = (key: GentleAction, label: string, root: string, selected = false) =>
+      action(
+        key,
+        label,
+        async () => {
+          if (await runAction($, key, root)) await refreshGentle($, true)
+        },
+        selected,
+      )
 
     const toolLabel = (t: GentleView['tools'][number]) => `${t.name} ${t.version ?? 'not installed'}`.padEnd(L.toolPad)
     const toolStatus = (g: GentleView, t: GentleView['tools'][number]) =>
@@ -1332,16 +1339,21 @@ export const register: Register = on => {
               <Box flexShrink={0}>
                 <Text color="subtle">{'   project'}</Text>
               </Box>
-              {command('rdd-project-on', 'on', root)}
-              {command('rdd-project-off', 'off', root)}
+              {command('rdd-project-on', 'on', root, g.rdd?.project === 'on')}
+              {command('rdd-project-off', 'off', root, g.rdd?.project === 'off')}
+              {g.rdd && g.rdd.project === null && (
+                <Text wrap="truncate-end" color="subtle">
+                  inherits global
+                </Text>
+              )}
             </Box>
           )}
           <Box gap={1} flexWrap="wrap">
             <Box flexShrink={0}>
               <Text color="subtle">{'   global '}</Text>
             </Box>
-            {command('rdd-global-on', 'on', root ?? view.cwd)}
-            {command('rdd-global-off', 'off', root ?? view.cwd)}
+            {command('rdd-global-on', 'on', root ?? view.cwd, g.rdd?.global === 'on')}
+            {command('rdd-global-off', 'off', root ?? view.cwd, g.rdd?.global === 'off')}
           </Box>
           <Text wrap="wrap">
             {'TDD  '}test-first
