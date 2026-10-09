@@ -28,6 +28,14 @@ from the repository root (needs `vhs`, `ffmpeg` and `gifsicle`).
 | Gentle AI | The [gentle-ai](https://github.com/Gentleman-Programming/gentle-ai) toolset: one aligned grid in four groups. **Tools**: `gentle-ai`, `gga` and `engram` versions with `✓` up to date or `↑ <newer>` (as fresh as your local brew tap, "as of" its last fetch); **gga**: the review hook and its rules file; **RDD**: receipt-driven development on or off and which scope decides it, then each scope's own setting; **TDD**: test-first by default under ODD, and strict TDD. One status vocabulary throughout: `✓` ok, `✗` missing, `↑` update, `●` on, `○` off, `—` unset, `?` unknown. Shows "gentle-ai not installed" when it is not. |
 | Footer    | Always at the bottom: the Claude Code version (`● ClaudeCode x.y.z`). |
 
+## How it works
+
+<p align="center">
+  <img src="docs/assets/data-flow.svg" width="760" alt="Data flow in three columns. Sources: Claude Code events (agent.spawn, turn.step, prompt.compose, tool.call for TodoWrite, TaskCreate and TaskUpdate, ui.scroll), the plugin API (session usage, id, model and version, the tool list for MCP servers, the agent list) and local reads with no network (git branch and diff, settings files, custom-title.json, account fields, gentle-ai and the local brew tap, gga files read as text). Agent HUD core: a one-second poller with caches, the $.state atoms, one view built by liveView and turned into maskView in privacy mode or demoView in demo mode, clean() on external text, and actions only after a Run it confirmation. Surfaces: the sidebar pane and the band above the prompt.">
+</p>
+
+Details and limits are in [How it gets its data](#how-it-gets-its-data).
+
 ## Install
 
 At the prompt of a Claude Code terminal session:
@@ -55,6 +63,8 @@ To add the marketplace first and install separately:
 - Claude Code can collapse that band itself, showing
   `plugin panel hidden · ctrl+x ctrl+a or click to show`. Click it or press
   `ctrl+x ctrl+a` to expand it.
+
+  <img src="docs/assets/hide-reopen.svg" width="760" alt="Hide and reopen loop: one, the sidebar is docked beside the transcript with the hide button at the right end of its header band; two, pressing the hide button closes the sidebar and a one-line band appears above the prompt reading Agent HUD 42% · MCP 3/4 · 2 agents; three, clicking the band or running /hud opens the sidebar again. If Claude Code collapses the band, press ctrl+x ctrl+a.">
 - `▾` / `▸` on each section header collapses or expands that section.
 - The sidebar adapts to the dock's width and height on every resize: labels
   keep their width and buttons wrap below them, meter bars scale, the

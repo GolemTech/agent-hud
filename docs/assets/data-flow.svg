@@ -1,0 +1,129 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" version="1.1" width="1000" height="640" viewBox="0 0 1000 640" role="img" aria-labelledby="df-title df-desc">
+  <title id="df-title">How Agent HUD gets its data</title>
+  <desc id="df-desc">Three columns. Sources: Claude Code events (agent.spawn, turn.step, prompt.compose, tool.call for TodoWrite, TaskCreate and TaskUpdate, ui.scroll); the plugin API (session usage, id, model and version, the tool list for MCP servers, the agent list); and local reads with no network (git branch and diff shortstat, settings files, custom-title.json, account fields of .claude.json, gentle-ai and the local brew tap, gga files read as text). Agent HUD core: a one-second poller with caches, the $.state atoms, one view builder liveView that becomes maskView in privacy mode or demoView in demo mode, clean() on external text, and actions only after a Run it confirmation. Surfaces: the sidebar pane with a sticky header, sections and a sticky footer, and the band above the prompt. No network calls and nothing written to disk by the plugin.</desc>
+  <defs>
+    <marker id="df-arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto" markerUnits="userSpaceOnUse">
+      <path d="M 0 0 L 10 5 L 0 10 z" fill="#F095C8"/>
+    </marker>
+    <marker id="df-arrow-dim" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto" markerUnits="userSpaceOnUse">
+      <path d="M 0 0 L 10 5 L 0 10 z" fill="#B86A92"/>
+    </marker>
+  </defs>
+  <style type="text/css"><![CDATA[
+    text { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; fill: #F4E9EF; }
+    .title { font-size: 22px; font-weight: bold; fill: #F095C8; }
+    .col { font-size: 12px; letter-spacing: 2px; fill: #9C8A94; }
+    .h { font-size: 14px; font-weight: bold; fill: #F095C8; }
+    .t { font-size: 12.5px; }
+    .d { font-size: 12px; fill: #9C8A94; }
+    .k { font-size: 12.5px; fill: #F095C8; }
+    .ok { font-size: 12.5px; fill: #7FD39B; }
+    .panel { fill: #26191F; stroke: #B86A92; stroke-width: 1.2; }
+    .box { fill: #1A1218; stroke: #B86A92; stroke-width: 1; }
+    .guard { fill: #1A1218; stroke: #9C8A94; stroke-width: 1; stroke-dasharray: 4 3; }
+    .flow { stroke: #F095C8; stroke-width: 1.6; fill: none; }
+    .inner { stroke: #B86A92; stroke-width: 1.3; fill: none; }
+  ]]></style>
+
+  <rect x="0" y="0" width="1000" height="640" rx="18" fill="#1A1218"/>
+
+  <text class="title" x="32" y="46">How Agent HUD gets its data</text>
+  <text class="col" x="24" y="82">SOURCES</text>
+  <text class="col" x="420" y="82">AGENT HUD CORE</text>
+  <text class="col" x="776" y="82">SURFACES</text>
+
+  <!-- Sources: Claude Code events -->
+  <rect class="panel" x="24" y="96" width="340" height="146" rx="10"/>
+  <text class="h" x="40" y="120">Claude Code events</text>
+  <text class="t" x="40" y="146">agent.spawn · turn.step</text>
+  <text class="t" x="40" y="166">prompt.compose <tspan class="d">(style name)</tspan></text>
+  <text class="t" x="40" y="186">tool.call <tspan class="d">TodoWrite · TaskCreate</tspan></text>
+  <text class="d" x="116" y="206">TaskUpdate</text>
+  <text class="t" x="40" y="226">ui.scroll</text>
+
+  <!-- Sources: Plugin API -->
+  <rect class="panel" x="24" y="258" width="340" height="106" rx="10"/>
+  <text class="h" x="40" y="282">Plugin API</text>
+  <text class="t" x="40" y="308">$.session <tspan class="d">usage · id · model · version</tspan></text>
+  <text class="t" x="40" y="328">$.tool.list <tspan class="d">→ MCP servers</tspan></text>
+  <text class="t" x="40" y="348">$.agent.list <tspan class="d">→ subagents</tspan></text>
+
+  <!-- Sources: Local reads -->
+  <rect class="panel" x="24" y="380" width="340" height="170" rx="10"/>
+  <text class="h" x="40" y="404">Local reads <tspan class="ok">· no network</tspan></text>
+  <text class="t" x="40" y="430">git branch · git diff --shortstat</text>
+  <text class="t" x="40" y="450">settings files <tspan class="d">(output style)</tspan></text>
+  <text class="t" x="40" y="470">custom-title.json <tspan class="d">(title)</tspan></text>
+  <text class="t" x="40" y="490">.claude.json <tspan class="d">account fields</tspan></text>
+  <text class="t" x="40" y="510">gentle-ai · brew <tspan class="d">local tap</tspan></text>
+  <text class="t" x="40" y="530">gga files <tspan class="d">read as text</tspan></text>
+
+  <!-- Sources -> core -->
+  <path class="flow" d="M 364 169 L 418 169" marker-end="url(#df-arrow)"/>
+  <path class="flow" d="M 364 311 L 418 311" marker-end="url(#df-arrow)"/>
+  <path class="flow" d="M 364 465 L 418 465" marker-end="url(#df-arrow)"/>
+
+  <!-- Core -->
+  <rect class="panel" x="420" y="96" width="300" height="454" rx="12" stroke="#F095C8"/>
+  <text class="h" x="440" y="120">Agent HUD</text>
+  <text class="d" x="700" y="120" text-anchor="end">hooks/</text>
+
+  <rect class="box" x="440" y="136" width="260" height="58" rx="8"/>
+  <text class="t" x="456" y="160">1 s poller + caches</text>
+  <text class="d" x="456" y="180">title · branch · diff · account</text>
+  <path class="inner" d="M 570 194 L 570 214" marker-end="url(#df-arrow-dim)"/>
+
+  <rect class="box" x="440" y="216" width="260" height="74" rx="8"/>
+  <text class="t" x="456" y="240">$.state atoms</text>
+  <text class="d" x="456" y="260">rows · todos · collapsed</text>
+  <text class="d" x="456" y="278">private · scroll</text>
+  <path class="inner" d="M 570 290 L 570 310" marker-end="url(#df-arrow-dim)"/>
+
+  <rect class="box" x="440" y="312" width="260" height="98" rx="8"/>
+  <text class="k" x="456" y="336">liveView</text>
+  <text class="d" x="532" y="336">one view object</text>
+  <text class="t" x="456" y="360">→ maskView <tspan class="d">(privacy)</tspan></text>
+  <text class="t" x="456" y="382">→ demoView <tspan class="d">(demo)</tspan></text>
+  <text class="d" x="456" y="400">both surfaces read it</text>
+
+  <rect class="guard" x="440" y="432" width="260" height="98" rx="8"/>
+  <text class="t" x="456" y="456">clean() <tspan class="d">on external text</tspan></text>
+  <text class="t" x="456" y="482">actions only after</text>
+  <text class="t" x="456" y="502">"Run it" <tspan class="d">confirmation</tspan></text>
+  <text class="d" x="456" y="520">(gga, RDD buttons)</text>
+
+  <!-- Core -> surfaces -->
+  <path class="flow" d="M 700 350 C 740 350, 736 246, 774 246" marker-end="url(#df-arrow)"/>
+  <path class="flow" d="M 700 370 C 740 370, 736 484, 774 484" marker-end="url(#df-arrow)"/>
+
+  <!-- Surface: sidebar pane -->
+  <text class="h" x="776" y="120">Sidebar pane</text>
+  <rect class="panel" x="776" y="134" width="200" height="236" rx="10"/>
+  <rect x="784" y="142" width="184" height="26" rx="5" fill="#F095C8"/>
+  <text class="t" x="794" y="160" style="fill:#1A1218; font-weight:bold;">project</text>
+  <text class="t" x="958" y="160" text-anchor="end" style="fill:#1A1218; font-weight:bold;">►</text>
+  <text class="t" x="792" y="192">▾ Session</text>
+  <text class="t" x="792" y="214">▾ Context</text>
+  <rect x="884" y="205" width="80" height="8" rx="3" fill="#3A2830"/>
+  <rect x="884" y="205" width="34" height="8" rx="3" fill="#F095C8"/>
+  <text class="t" x="792" y="236">▾ MCP</text>
+  <text class="t" x="792" y="258">▾ Subagents</text>
+  <text class="t" x="792" y="280">▾ Todo</text>
+  <text class="t" x="792" y="302">▾ Gentle AI</text>
+  <line x1="784" y1="330" x2="968" y2="330" stroke="#3A2830" stroke-width="1"/>
+  <text class="d" x="792" y="354"><tspan class="ok">●</tspan> ClaudeCode x.y.z</text>
+  <text class="d" x="776" y="390">sticky header · sections</text>
+  <text class="d" x="776" y="408">· sticky footer</text>
+
+  <!-- Surface: band above the prompt -->
+  <text class="h" x="776" y="450">Band above prompt</text>
+  <rect class="panel" x="776" y="464" width="200" height="40" rx="8"/>
+  <text x="788" y="489" style="font-size:11.5px;"><tspan fill="#F095C8">▸ Agent HUD</tspan> 42% · MCP 3/4</text>
+  <text class="d" x="780" y="528">&gt; prompt</text>
+
+  <!-- Footer note -->
+  <line x1="24" y1="578" x2="976" y2="578" stroke="#3A2830" stroke-width="1"/>
+  <circle cx="300" cy="606" r="5" fill="#7FD39B"/>
+  <text class="t" x="316" y="611">No network calls · nothing written to disk by the plugin</text>
+</svg>
