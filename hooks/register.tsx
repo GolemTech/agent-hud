@@ -1108,11 +1108,21 @@ export const register: Register = on => {
     return res
   }).catch((_$, e, next) => next(e)) // observer: never block a spawn
 
-  // Model + effort of every request, per loop. A pure pass-through: it notes
-  // two fields synchronously and forwards the stream untouched.
-  on('turn.step', async function* (_$, e, next) {
+  // Model + effort of every request, per loop, and a subagent's context size.
+  // A pass-through: it notes fields and forwards the stream untouched, reading
+  // the request's own usage only from the result, once the stream has ended.
+  // That usage is one request's, so it is the context the request read; a
+  // turn's usage (turn.complete) sums every request and runs into millions.
+  on('turn.step', async function* ($, e, next) {
     loopModel.set(e.agentId ?? MAIN, { model: e.model, effort: e.effort })
-    return yield* next(e)
+    const r = yield* next(e)
+    if (e.agentId && r.usage) {
+      const tokens = ctxTokens(r.usage)
+      const rec = seen.get(e.agentId)
+      if (rec) rec.tokens = tokens
+      else seen.set(e.agentId, { start: await $.clock.now(), tokens })
+    }
+    return r
   })
 
   // Output style of each system prompt the engine renders. A pure observer:
@@ -1122,18 +1132,6 @@ export const register: Register = on => {
   // catches a switch back to the default).
   on('prompt.compose', (_$, e, next) => {
     if (e.outputStyle) composedStyle = styleName(e.outputStyle.name)
-    return next(e)
-  }).catch((_$, e, next) => next(e))
-
-  // Per-subagent tokens: AgentInfo has none, but each finished turn of a
-  // subagent's loop reports its usage with its agentId.
-  on('turn.complete', async ($, e, next) => {
-    if (e.agentId && e.usage) {
-      const tokens = ctxTokens(e.usage)
-      const rec = seen.get(e.agentId)
-      if (rec) rec.tokens = tokens
-      else seen.set(e.agentId, { start: await $.clock.now(), tokens })
-    }
     return next(e)
   }).catch((_$, e, next) => next(e))
 

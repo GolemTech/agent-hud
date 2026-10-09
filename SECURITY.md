@@ -72,7 +72,7 @@ issue for a security problem.
   usage and the Claude Code version (`$.session.version()`, shown in the
   footer); the tool list (MCP server names are derived from tool names); the
   subagent list; and the `agent.spawn`, `turn.step`, `prompt.compose` (only
-  the output style's name), `turn.complete` and `tool.call` (`TodoWrite`,
+  the output style's name) and `tool.call` (`TodoWrite`,
   `TaskCreate`, `TaskUpdate`) events, observed without changing them.
 
 ## What it keeps

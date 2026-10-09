@@ -83,8 +83,10 @@ To add the marketplace first and install separately:
 Most values come from the plugin API (`$.session`, `$.agent`, `$.tool`). The
 rest, and the limits that come with them:
 
-- **Per-subagent tokens** come from `turn.complete`, so they appear when a
-  subagent turn ends and show the context size of that turn.
+- **Per-subagent tokens** are the context size of the subagent's latest
+  request, read from that request's own usage (`turn.step`), so they update
+  after every request. A turn's usage is not used: it sums every request's
+  counts, each of which re-reads the cached context, and runs into millions.
 - **Todos** mirror the main loop's `TodoWrite`, `TaskCreate` and `TaskUpdate`
   calls only, and only those made after the plugin loads. Subagents' own lists
   are ignored.
