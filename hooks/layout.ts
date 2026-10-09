@@ -107,9 +107,29 @@ export const flowRows = (widths: readonly number[], columns: number, gap = 1): n
   return lines
 }
 
-// Subagent cards that fit the rows the other sections leave; at least one.
-export const cardsFor = (bodyRows: number, usedRows: number): number =>
-  Math.max(1, Math.floor((bodyRows - usedRows) / CARD_ROWS))
+// ── Sticky header and footer ─────────────────────────────────────────────
+// The Pane is drawn at exactly its body's height: the header (project name
+// and the hide button) on top, the footer (Claude Code version) at the
+// bottom, and between them a clipped viewport whose content the plugin moves
+// itself by an offset, so the header and footer never scroll away.
+
+export const HEADER_ROWS = 1 // the project name beside the hide button
+export const FOOTER_ROWS = 2 // a blank separator row and the version line
+// Blank rows left under the last content line at the end of the scroll.
+export const SCROLL_BOTTOM_MARGIN = 1
+
+// Rows the scrolling viewport gets once the header and footer are placed.
+export const viewportRowsFor = (bodyRows: number, footer: boolean): number =>
+  Math.max(1, bodyRows - HEADER_ROWS - (footer ? FOOTER_ROWS : 0))
+
+// The last offset: none while the content fits, else its overflow plus the
+// bottom margin, so the last line never sits flush against the footer.
+export const maxScrollOffset = (contentRows: number, viewportRows: number): number =>
+  contentRows <= viewportRows ? 0 : contentRows - viewportRows + SCROLL_BOTTOM_MARGIN
+
+// An offset in whole rows within [0, max]; a non-number is the top.
+export const clampOffset = (offset: number, max: number): number =>
+  Number.isFinite(offset) ? clamp(Math.round(offset), 0, Math.max(0, max)) : 0
 
 // The branch line's icon: ⑂ (U+2442) is standard Unicode, so it renders
 // without a Nerd Font; one column wide in most monospace fonts.

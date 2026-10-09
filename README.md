@@ -11,12 +11,14 @@ doing, and the main loop's todo list.
 
 | Section   | Contents |
 | --------- | -------- |
+| Header    | Always at the top: the project's name (`📂`, the repository root's folder, else the working directory's), beside the `→` hide button. |
 | Session   | Session title (or short id), signed-in account, model and effort, output style (when not the default), git branch (`⑂`) with working-tree changes (`+N` added, `-M` removed lines, shown only when there are any), working directory shortened to fit. |
 | Context   | Meters for the context window and each rate-limit window, with time to reset and the local reset time; a footer with total tokens and cost. |
 | MCP       | MCP servers, connected first; servers waiting for authentication are dimmed. |
 | Subagents | Running / done / error counts, then one card per subagent: description, type, model, elapsed time and context tokens. |
 | Todo      | The main loop's task list: done first, then in progress, then pending. |
 | Gentle AI | The [gentle-ai](https://github.com/Gentleman-Programming/gentle-ai) toolset: one aligned grid in four groups. **Tools**: `gentle-ai`, `gga` and `engram` versions with `✓` up to date or `↑ <newer>` (as fresh as your local brew tap, "as of" its last fetch); **gga**: the review hook and its rules file; **RDD**: receipt-driven development on or off and which scope decides it, then each scope's own setting; **TDD**: test-first by default under ODD, and strict TDD. One status vocabulary throughout: `✓` ok, `✗` missing, `↑` update, `●` on, `○` off, `—` unset, `?` unknown. Shows "gentle-ai not installed" when it is not. |
+| Footer    | Always at the bottom: the Claude Code version (`● ClaudeCode x.y.z`). |
 
 ## Install
 
@@ -48,8 +50,13 @@ To add the marketplace first and install separately:
 - `▾` / `▸` on each section header collapses or expands that section.
 - The sidebar adapts to the dock's width and height on every resize: labels
   keep their width and buttons wrap below them, meter bars scale, the
-  subagent tally turns compact (`●2 ✓5 ✕0`) in a narrow dock, and the number
-  of subagent cards follows the rows left.
+  subagent tally turns compact (`●2 ✓5 ✕0`) in a narrow dock, and every
+  subagent card is drawn.
+- In the dock, the header and footer stay put like a web page's: the sections
+  scroll between them with the mouse wheel or the scroll keys, and at the end
+  a blank row is left under the last line. A narrower or collapsed content
+  pulls the scroll back so it never points past the end. In an inline frame
+  the sidebar is drawn as one plain flow.
 - `✕ clear done` on Subagents and Todo removes finished entries.
 - `/hud-demo` toggles a sample session (fixed data, progressing subagents
   and todos) for demos and screenshots. It spends no tokens and shows no
@@ -58,7 +65,7 @@ To add the marketplace first and install separately:
   sidebar stays live (model, context, rate limits, cost, MCP, subagents,
   todos), but the account shows as `you@example`, the session title as
   `private session`, the session id is hidden, the branch shows as `••••` and
-  the path as `~/…`; `🔒 private` next to the Session header shows it is on.
+  the path and the header's project name as `~/…` and `…`; `🔒 private` next to the Session header shows it is on.
   It persists across plugin reloads until you run it again. MCP server names,
   subagent descriptions and todo text are **not** masked, and can contain
   project or client names. Claude Code's own welcome header and status line are
