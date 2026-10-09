@@ -4,7 +4,9 @@ import type { Engine, MockClock } from 'claude-code/testing'
 
 import {
   ACTION_TIMEOUT_MS,
+  checkMark,
   GENTLE_JOIN_DEADLINE_MS,
+  gentleGrid,
   ggaHookInstalled,
   hooksDir,
   parseBrewList,
@@ -13,10 +15,15 @@ import {
   parseRddStatus,
   parseStrictTdd,
   parseVersion,
+  rddSummary,
   rulesFileName,
   rulesFileOverridden,
   rulesPrompt,
+  scopeMark,
+  strictMark,
+  toolMark,
 } from './gentle'
+import type { GentleView } from './gentle'
 
 // ── Pure helpers ─────────────────────────────────────────────────────────
 
@@ -158,6 +165,134 @@ test('rulesFileOverridden: only a RULES_FILE that is set and unsafe is overridde
   expect(rulesFileOverridden('docs/REVIEW.md')).toBe(false)
   expect(rulesFileOverridden('../../outside.md')).toBe(true)
   expect(rulesFileName('../../outside.md')).toBe('AGENTS.md')
+})
+
+// ── Status vocabulary and the section grid ───────────────────────────────
+
+test('checkMark: ✓ ok, ✗ missing, ? unknown', () => {
+  expect(checkMark(true)).toEqual({ text: '✓', tone: 'success' })
+  expect(checkMark(false)).toEqual({ text: '✗', tone: 'error' })
+  expect(checkMark(null)).toEqual({ text: '?', tone: 'subtle' })
+})
+
+test('toolMark: ↑ newer, ✓ up to date, ? when brew did not answer, ✗ not installed', () => {
+  expect(toolMark({ name: 'engram', version: '3.3.0', update: '3.4.0' }, true)).toEqual({ text: '↑ 3.4.0', tone: 'warning' })
+  expect(toolMark({ name: 'gga', version: '2.10.1', update: null }, true)).toEqual({ text: '✓', tone: 'success' })
+  expect(toolMark({ name: 'gga', version: '2.10.1', update: null }, false)).toEqual({ text: '?', tone: 'subtle' })
+  expect(toolMark({ name: 'gga', version: null, update: null }, true)).toEqual({ text: '✗', tone: 'error' })
+})
+
+test('scopeMark: ● on, ○ off, — unset, ? when RDD is unknown', () => {
+  expect(scopeMark('on', true)).toEqual({ text: '●', tone: 'success' })
+  expect(scopeMark('off', true)).toEqual({ text: '○', tone: 'subtle' })
+  expect(scopeMark(null, true)).toEqual({ text: '—', tone: 'subtle' })
+  expect(scopeMark(null, false)).toEqual({ text: '?', tone: 'subtle' })
+})
+
+test('strictMark: ● on, ○ off, — unset', () => {
+  expect(strictMark('on')).toEqual({ text: '●', tone: 'success' })
+  expect(strictMark('off')).toEqual({ text: '○', tone: 'subtle' })
+  expect(strictMark('unset')).toEqual({ text: '—', tone: 'subtle' })
+})
+
+test('rddSummary: the effective value and the scope that decides it', () => {
+  const rdd = (effective: 'on' | 'off', source: string) => ({ effective, source, global: null, project: null })
+  expect(rddSummary(rdd('on', 'global'))).toEqual({ text: '● on · global', tone: 'success' })
+  expect(rddSummary(rdd('off', 'clone'))).toEqual({ text: '○ off · project', tone: 'subtle' })
+  expect(rddSummary(rdd('on', 'default'))).toEqual({ text: '● on · default', tone: 'success' })
+  expect(rddSummary(null)).toEqual({ text: '? unknown', tone: 'subtle' })
+})
+
+const VIEW: GentleView = {
+  tools: [
+    { name: 'gentle-ai', version: '4.0.0', update: null },
+    { name: 'gga', version: '2.10.1', update: null },
+    { name: 'engram', version: '3.3.0', update: '3.4.0' },
+  ],
+  updatesKnown: true,
+  asOf: '16:02',
+  root: '/home/myuser/code/demo-proj',
+  gga: { hook: false, projectConfig: false, rulesFile: 'AGENTS.md', rules: true },
+  rdd: { effective: 'on', source: 'global', global: 'on', project: null },
+  strictTdd: 'unset',
+}
+
+test('gentleGrid: headings Tools, gga, RDD, TDD, each with its item rows', () => {
+  const unset = { text: '—', tone: 'subtle' }
+  expect(gentleGrid(VIEW)).toEqual([
+    { kind: 'heading', label: 'Tools', summary: { text: 'as of 16:02', tone: 'subtle' } },
+    { kind: 'item', label: 'gentle-ai', value: { text: '4.0.0' }, detail: { text: '✓', tone: 'success' }, buttons: [] },
+    { kind: 'item', label: 'gga', value: { text: '2.10.1' }, detail: { text: '✓', tone: 'success' }, buttons: [] },
+    { kind: 'item', label: 'engram', value: { text: '3.3.0' }, detail: { text: '↑ 3.4.0', tone: 'warning' }, buttons: [] },
+    { kind: 'heading', label: 'gga', summary: null },
+    {
+      kind: 'item',
+      label: 'hook',
+      value: { text: '✗', tone: 'error' },
+      detail: null,
+      buttons: [
+        { key: 'gga-install', label: 'install' },
+        { key: 'gga-init', label: 'init' },
+      ],
+    },
+    { kind: 'item', label: 'rules', value: { text: '✓', tone: 'success' }, detail: { text: 'AGENTS.md' }, buttons: [] },
+    { kind: 'heading', label: 'RDD', summary: { text: '● on · global', tone: 'success' } },
+    {
+      kind: 'item',
+      label: 'project',
+      value: unset,
+      detail: null,
+      buttons: [
+        { key: 'rdd-project-on', label: 'on', selected: false },
+        { key: 'rdd-project-off', label: 'off', selected: false },
+      ],
+    },
+    {
+      kind: 'item',
+      label: 'global',
+      value: { text: '●', tone: 'success' },
+      detail: null,
+      buttons: [
+        { key: 'rdd-global-on', label: 'on', selected: true },
+        { key: 'rdd-global-off', label: 'off', selected: false },
+      ],
+    },
+    { kind: 'heading', label: 'TDD', summary: { text: 'test-first (ODD)' } },
+    { kind: 'item', label: 'strict', value: unset, detail: null, buttons: [{ key: 'tdd-configure', label: 'configure' }] },
+  ])
+})
+
+test('gentleGrid: what each state leaves out or adds', () => {
+  const labels = (v: GentleView) => gentleGrid(v).map(r => `${r.kind === 'heading' ? '#' : ''}${r.label}`)
+  // Outside a repository: no project row, and gga says why it has no rows.
+  const noRepo = gentleGrid({ ...VIEW, root: null })
+  expect(noRepo.find(r => r.label === 'gga' && r.kind === 'heading')).toEqual({
+    kind: 'heading',
+    label: 'gga',
+    summary: { text: 'no repository', tone: 'subtle' },
+  })
+  expect(labels({ ...VIEW, root: null })).toEqual(['#Tools', 'gentle-ai', 'gga', 'engram', '#gga', '#RDD', 'global', '#TDD', 'strict'])
+  // gga not installed: its version is —, its status ✗, and no gga group.
+  const noGga = gentleGrid({ ...VIEW, tools: [VIEW.tools[0]!, { name: 'gga', version: null, update: null }, VIEW.tools[2]!] })
+  expect(noGga[2]).toEqual({ kind: 'item', label: 'gga', value: { text: '—', tone: 'subtle' }, detail: { text: '✗', tone: 'error' }, buttons: [] })
+  expect(noGga.some(r => r.kind === 'heading' && r.label === 'gga')).toBe(false)
+  // No brew answer: no "as of"; strict TDD unknown: no strict row.
+  expect(gentleGrid({ ...VIEW, updatesKnown: false })[0]).toEqual({ kind: 'heading', label: 'Tools', summary: null })
+  expect(labels({ ...VIEW, strictTdd: null }).slice(-1)).toEqual(['#TDD'])
+  // RDD unknown: ? everywhere, no button marked.
+  const unknown = gentleGrid({ ...VIEW, rdd: null })
+  expect(unknown.find(r => r.label === 'RDD')).toEqual({ kind: 'heading', label: 'RDD', summary: { text: '? unknown', tone: 'subtle' } })
+  expect(unknown.find(r => r.label === 'global')).toMatchObject({ value: { text: '?', tone: 'subtle' } })
+  // An unsafe RULES_FILE says so, briefly; missing rules offer [create rules].
+  expect(gentleGrid({ ...VIEW, gga: { ...VIEW.gga, rules: false, rulesOverridden: true } })[6]).toEqual({
+    kind: 'item',
+    label: 'rules',
+    value: { text: '✗', tone: 'error' },
+    detail: { text: 'AGENTS.md (RULES_FILE ignored)' },
+    buttons: [{ key: 'gga-rules', label: 'create rules' }],
+  })
+  // Strict TDD on: ● and nothing to configure.
+  expect(gentleGrid({ ...VIEW, strictTdd: 'on' }).slice(-1)[0]).toMatchObject({ value: { text: '●', tone: 'success' }, buttons: [] })
 })
 
 // ── Wiring ───────────────────────────────────────────────────────────────
@@ -337,6 +472,28 @@ const rowOf = (tree: unknown, label: string): Node | null => {
   }
   return walk(tree)
 }
+const textOf = (n: unknown): string =>
+  typeof n === 'string' || typeof n === 'number'
+    ? String(n)
+    : typeof n === 'object' && n !== null
+      ? ((n as Node).children ?? []).map(textOf).join('')
+      : ''
+// A grid row's cells as drawn, padding trimmed: label, value, then details.
+const cellsOf = (tree: unknown, label: string): string[] =>
+  (rowOf(tree, label)?.children ?? []).map(c => textOf(c).trim())
+const ITEM_LABELS = ['gentle-ai', 'gga', 'engram', 'hook', 'rules', 'project', 'global', 'strict']
+const HEADINGS = ['Tools', 'gga', 'RDD', 'TDD']
+const headingsOf = (tree: unknown): string[] => {
+  const out: string[] = []
+  const walk = (n: unknown) => {
+    if (typeof n !== 'object' || n === null) return
+    const node = n as Node
+    if (node.type === 'Text' && node.props?.bold === true && node.props?.color === 'subtle') out.push(textOf(node).trim())
+    for (const c of node.children ?? []) walk(c)
+  }
+  walk(tree)
+  return out.filter(t => HEADINGS.includes(t))
+}
 
 test('Gentle AI text buttons draw only their own [label], no Button chrome around it', async ($, on) => {
   await start($, on)
@@ -363,43 +520,49 @@ test('narrow sidebar: RDD scope labels never shrink and sit on their own rows', 
   expect(project).not.toContain('rdd-global')
 })
 
-test('each RDD scope row marks its current value; an unset project says it inherits', async ($, on) => {
+test('each RDD scope row shows its own value and marks it on its buttons; unset is —', async ($, on) => {
   await start($, on) // global on, project unset
   const tree = await (await mountPane($)).drawn()
   const global = JSON.stringify(rowOf(tree, 'global'))
   const project = JSON.stringify(rowOf(tree, 'project'))
   expect(global).toContain('"[● on]"')
   expect(global).toContain('"[off]"')
-  expect(project).not.toContain('●')
-  expect(project).toContain('inherits global')
+  expect(project).not.toContain('[●')
+  expect(cellsOf(tree, 'project').slice(0, 2)).toEqual(['project', '—'])
+  expect(cellsOf(tree, 'global').slice(0, 2)).toEqual(['global', '●'])
 })
 
-test('the Gentle AI section shows versions, updates, gga, RDD and TDD', async ($, on) => {
+test('the Gentle AI section is one grid: headings Tools, gga, RDD, TDD and aligned rows', async ($, on) => {
   await start($, on)
-  const text = JSON.stringify(await (await mountPane($)).drawn())
-  expect(text).toContain('Gentle AI')
-  // Each fragment as the tree draws it: one Text's children, JSON-joined.
-  expect(text).toContain('gentle-ai 4.0.0')
-  expect(text).toContain('gga 2.10.1')
-  expect(text).toContain('engram 2.2.1')
-  expect(text).toContain('"↑ 3.3.0"')
-  expect(text).toContain('✓ up to date')
+  const tree = await (await mountPane($)).drawn()
+  expect(JSON.stringify(tree)).toContain('Gentle AI')
+  expect(headingsOf(tree)).toEqual(HEADINGS)
   // The mock clock is on another day than the fetch, so a weekday may lead.
-  expect(text).toMatch(/"updates as of (\w{3} )?14:50 \(brew\)"/)
-  expect(text).toContain('"hook ✗"')
-  expect(text).toContain('"rules ✗ AGENTS.md"')
-  expect(text).toContain('"● ","on"," (","global",")"')
-  expect(text).toContain('"TDD  test-first"')
-  expect(text).toContain('" by default (ODD)"')
-  expect(text).toContain('"strict: unset"')
+  const [tools, asOf] = cellsOf(tree, 'Tools')
+  expect(tools).toBe('Tools')
+  expect(asOf).toMatch(/^as of (\w{3} )?14:50$/)
+  expect(cellsOf(tree, 'gentle-ai')).toEqual(['gentle-ai', '4.0.0', '✓'])
+  expect(cellsOf(tree, 'gga')).toEqual(['gga', '2.10.1', '✓'])
+  expect(cellsOf(tree, 'engram')).toEqual(['engram', '2.2.1', '↑ 3.3.0'])
+  expect(cellsOf(tree, 'hook').slice(0, 3)).toEqual(['hook', '✗', '[install]'])
+  expect(cellsOf(tree, 'rules')).toEqual(['rules', '✗', 'AGENTS.md', '[create rules]'])
+  expect(cellsOf(tree, 'RDD')).toEqual(['RDD', '● on · global'])
+  expect(cellsOf(tree, 'TDD')).toEqual(['TDD', 'test-first (ODD)'])
+  expect(cellsOf(tree, 'strict')).toEqual(['strict', '—', '[configure]'])
+  // Every item's label Box is as wide as the others, and so is every value.
+  const widths = (cell: number) =>
+    new Set(ITEM_LABELS.map(l => textOf((rowOf(tree, l)?.children ?? [])[cell]).length))
+  expect(widths(0).size).toBe(1)
+  expect(widths(1).size).toBe(1)
+  for (const l of ITEM_LABELS) expect((rowOf(tree, l)?.children?.[0] as Node).props?.flexShrink).toBe(0)
 })
 
 test('an installed gga hook shows ✓ although the engine forces core.hooksPath', async ($, on) => {
   preCommit = '#!/bin/sh\n# ======== GGA START ========\ngga run\n# ======== GGA END ========\n'
   try {
     await start($, on)
-    const text = JSON.stringify(await (await mountPane($)).drawn())
-    expect(text).toContain('"hook ✓"')
+    const tree = await (await mountPane($)).drawn()
+    expect(cellsOf(tree, 'hook').slice(0, 2)).toEqual(['hook', '✓'])
   } finally {
     resetFixture()
   }
@@ -512,8 +675,8 @@ test('an action refresh wins over an older periodic detection that finishes late
 
   await clock.advance(3000) // the older detection finishes now
   const text = JSON.stringify(await pane.drawn())
-  expect(text).toContain('"● ","off"," (","clone",")"')
-  expect(text).not.toContain('"● ","on"," (","global",")"')
+  expect(text).toContain('"○ off · project"')
+  expect(text).not.toContain('● on · global')
 })
 
 // ── Action failure paths ─────────────────────────────────────────────────
@@ -602,7 +765,7 @@ test('a refresh starts a new detection once a joined one outlasts its deadline',
   await clock.settle()
   expect(calls).toBe(3)
   await clock.advance(1000) // the next tick's rows write redraws the Pane
-  expect(JSON.stringify(await pane.drawn())).toContain('"● ","off"," (","clone",")"')
+  expect(JSON.stringify(await pane.drawn())).toContain('"○ off · project"')
 })
 
 // ── Rules file ───────────────────────────────────────────────────────────

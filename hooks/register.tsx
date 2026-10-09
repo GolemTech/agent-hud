@@ -8,6 +8,7 @@ import {
   actionSpec,
   BREW_ENV,
   GENTLE_JOIN_DEADLINE_MS,
+  gentleGrid,
   ggaHookInstalled,
   hooksDir,
   parseBrewList,
@@ -27,8 +28,21 @@ import {
   TAP,
   TOOLS,
 } from './gentle'
-import type { GentleAction, GentleInfo, GentleView, RddStatus, StrictTdd } from './gentle'
-import { BRANCH_ICON, buttonText, cardsFor, flowRows, layoutFor, PANE_PADDING_X, ruleWidth, sectionTitle, SUB_ROW_INDENT, textRows } from './layout'
+import type { GentleAction, GentleButton, GentleInfo, GentleRow, GentleView, RddStatus, StrictTdd } from './gentle'
+import {
+  BRANCH_ICON,
+  buttonText,
+  cardsFor,
+  flowRows,
+  gridFor,
+  HEADING_INDENT,
+  ITEM_INDENT,
+  layoutFor,
+  PANE_PADDING_X,
+  ruleWidth,
+  sectionTitle,
+  textRows,
+} from './layout'
 import { clean } from './text'
 
 // Re-exported for the unit tests, which import the helpers from here.
@@ -845,16 +859,6 @@ const refreshGentle = async ($: EngineInterface, fresh = false): Promise<void> =
   return run
 }
 
-// Fixed texts of the Gentle AI section; rows are measured from these.
-const GGA_LABEL = 'gga'
-const GGA_NO_REPO = 'gga  no repository'
-const SCOPE_LABEL = { project: '   project', global: '   global ' } as const // aligned under "RDD"
-const TDD_HEAD = 'TDD  test-first'
-const TDD_NOTE = ' by default (ODD)'
-const RULES_OVERRIDDEN_NOTE = ' (unsafe RULES_FILE ignored)'
-const mark = (v: boolean | null): string => (v ? '✓' : v === false ? '✗' : '?')
-const tone = (v: boolean | null): 'success' | 'error' | 'subtle' => (v ? 'success' : v === false ? 'error' : 'subtle')
-
 export const gentleView = (info: GentleInfo, now: number, offsetMin: number | null): GentleView => {
   const { updatesAsOf, ...rest } = info
   return {
@@ -1113,14 +1117,25 @@ export const register: Register = on => {
   // the request's own usage only from the result, once the stream has ended.
   // That usage is one request's, so it is the context the request read; a
   // turn's usage (turn.complete) sums every request and runs into millions.
+  // Bookkeeping is guarded on both sides of the forward: a failure in it is
+  // dropped (the line just misses a value) and never changes or fails the
+  // request's result, which is always returned.
   on('turn.step', async function* ($, e, next) {
-    loopModel.set(e.agentId ?? MAIN, { model: e.model, effort: e.effort })
+    try {
+      loopModel.set(e.agentId ?? MAIN, { model: e.model, effort: e.effort })
+    } catch {
+      // keep forwarding
+    }
     const r = yield* next(e)
-    if (e.agentId && r.usage) {
-      const tokens = ctxTokens(r.usage)
-      const rec = seen.get(e.agentId)
-      if (rec) rec.tokens = tokens
-      else seen.set(e.agentId, { start: await $.clock.now(), tokens })
+    try {
+      if (e.agentId && r.usage) {
+        const tokens = ctxTokens(r.usage)
+        const rec = seen.get(e.agentId)
+        if (rec) rec.tokens = tokens
+        else seen.set(e.agentId, { start: await $.clock.now(), tokens })
+      }
+    } catch {
+      // the result below stays untouched
     }
     return r
   })
@@ -1321,154 +1336,94 @@ export const register: Register = on => {
         selected,
       )
 
-    const toolLabel = (t: GentleView['tools'][number]) => `${t.name} ${t.version ?? 'not installed'}`.padEnd(L.toolPad)
-    const toolStatus = (g: GentleView, t: GentleView['tools'][number]) =>
-      !t.version ? null : t.update ? `↑ ${t.update}` : g.updatesKnown ? '✓ up to date' : null
-    // The section's variable texts, built once for both the tree and its row
-    // count (`gentleRows`), so the two cannot drift apart.
-    const gentleTexts = (g: GentleView) => ({
-      asOf: g.updatesKnown && g.asOf ? `updates as of ${g.asOf} (brew)` : null,
-      hook: `hook ${mark(g.gga.hook)}`,
-      rules: `rules ${mark(g.gga.rules)} ${g.gga.rulesFile}${g.gga.rulesOverridden ? RULES_OVERRIDDEN_NOTE : ''}`,
-      strict: g.strictTdd ? `strict: ${g.strictTdd}` : null,
-    })
+    // The Gentle AI section is one grid (`gentleGrid`): headings at
+    // HEADING_INDENT with their summary in the detail column, items at
+    // ITEM_INDENT as label · value · detail and buttons. The label and value
+    // columns are padded to the widest in the section, so every row lines up;
+    // details and buttons wrap below when the row is narrow.
+    const gentleButton = (b: GentleButton, g: GentleView) =>
+      b.key === 'gga-rules'
+        ? action(b.key, b.label, () => fillPrompt($, rulesPrompt(g.gga.rulesFile)))
+        : b.key === 'tdd-configure'
+          ? action(b.key, b.label, () => fillPrompt($, STRICT_TDD_PROMPT))
+          : command(b.key, b.label, g.root, b.selected)
+    // The rows and their column widths, built once for both the tree and its
+    // row count (`gentleRows`), so the two cannot drift apart.
+    const gentleLayout = (g: GentleView) => {
+      const rows = gentleGrid(g)
+      const items = rows.filter((r): r is Extract<GentleRow, { kind: 'item' }> => r.kind === 'item')
+      return {
+        rows,
+        grid: gridFor(
+          items.map(r => r.label),
+          items.map(r => r.value.text),
+          W,
+        ),
+      }
+    }
 
     const gentleSection = (g: GentleView | null) => {
       if (!g) return <Text color="subtle">checking…</Text>
-      const byName = new Map(g.tools.map(t => [t.name, t]))
-      if (!byName.get('gentle-ai')?.version) return <Text color="subtle">gentle-ai not installed</Text>
-      const ggaInstalled = Boolean(byName.get('gga')?.version)
-      const { root } = g
-      const texts = gentleTexts(g)
+      if (!g.tools.find(t => t.name === 'gentle-ai')?.version)
+        return <Text color="subtle">gentle-ai not installed</Text>
+      const { rows, grid } = gentleLayout(g)
       return (
         <Box flexDirection="column">
-          {g.tools.map(t => {
-            const status = toolStatus(g, t)
-            return (
-              <Box flexWrap="wrap" gap={L.toolPad ? 0 : 1}>
+          {rows.map(r =>
+            r.kind === 'heading' ? (
+              <Box flexWrap="wrap" gap={1}>
                 <Box flexShrink={0}>
-                  <Text>{toolLabel(t)}</Text>
+                  <Text bold color="subtle">
+                    {`${' '.repeat(HEADING_INDENT)}${r.label}`.padEnd(grid.head)}
+                  </Text>
                 </Box>
-                {status && (
-                  <Box flexShrink={0}>
-                    <Text color={t.update ? 'warning' : 'success'}>{status}</Text>
-                  </Box>
+                {r.summary && (
+                  <Text wrap="truncate-end" color={r.summary.tone}>
+                    {r.summary.text}
+                  </Text>
                 )}
               </Box>
-            )
-          })}
-          {texts.asOf && <Text color="subtle">{texts.asOf}</Text>}
-          {ggaInstalled && !root && <Text color="subtle">{GGA_NO_REPO}</Text>}
-          {ggaInstalled && root && (
-            <Box gap={1} flexWrap="wrap">
-              <Box flexShrink={0}>
-                <Text>{GGA_LABEL}</Text>
-              </Box>
-              <Box flexShrink={0}>
-                <Text color={tone(g.gga.hook)}>{texts.hook}</Text>
-              </Box>
-              {g.gga.hook === false && command('gga-install', 'install', root)}
-              {!g.gga.projectConfig && command('gga-init', 'init', root)}
-            </Box>
-          )}
-          {ggaInstalled && root && (
-            <Box gap={1} flexWrap="wrap" paddingLeft={SUB_ROW_INDENT}>
-              <Text wrap="truncate-end" color={tone(g.gga.rules)}>
-                {texts.rules}
-              </Text>
-              {g.gga.rules === false &&
-                action('gga-rules', 'create rules', () => fillPrompt($, rulesPrompt(g.gga.rulesFile)))}
-            </Box>
-          )}
-          <Text wrap="truncate-end">
-            {'RDD  '}
-            {g.rdd ? (
-              <Text color={g.rdd.effective === 'on' ? 'success' : 'subtle'}>
-                ● {g.rdd.effective} ({g.rdd.source})
-              </Text>
             ) : (
-              <Text color="subtle">unknown</Text>
-            )}
-          </Text>
-          {/* One row per scope, so each label keeps its width. */}
-          {root && (
-            <Box gap={1} flexWrap="wrap">
-              <Box flexShrink={0}>
-                <Text color="subtle">{SCOPE_LABEL.project}</Text>
+              <Box flexWrap="wrap" gap={1}>
+                <Box flexShrink={0}>
+                  <Text color="subtle">{`${' '.repeat(ITEM_INDENT)}${r.label}`.padEnd(grid.label)}</Text>
+                </Box>
+                <Box flexShrink={0}>
+                  <Text color={r.value.tone}>{r.value.text.padEnd(grid.value)}</Text>
+                </Box>
+                {r.detail && (
+                  <Text wrap="truncate-end" color={r.detail.tone}>
+                    {r.detail.text}
+                  </Text>
+                )}
+                {r.buttons.map(b => gentleButton(b, g))}
               </Box>
-              {command('rdd-project-on', 'on', root, g.rdd?.project === 'on')}
-              {command('rdd-project-off', 'off', root, g.rdd?.project === 'off')}
-              {g.rdd && g.rdd.project === null && (
-                <Text wrap="truncate-end" color="subtle">
-                  inherits global
-                </Text>
-              )}
-            </Box>
-          )}
-          <Box gap={1} flexWrap="wrap">
-            <Box flexShrink={0}>
-              <Text color="subtle">{SCOPE_LABEL.global}</Text>
-            </Box>
-            {command('rdd-global-on', 'on', root, g.rdd?.global === 'on')}
-            {command('rdd-global-off', 'off', root, g.rdd?.global === 'off')}
-          </Box>
-          <Text wrap="wrap">
-            {TDD_HEAD}
-            <Text color="subtle">{TDD_NOTE}</Text>
-          </Text>
-          {texts.strict && (
-            <Box gap={1} flexWrap="wrap" paddingLeft={SUB_ROW_INDENT}>
-              <Box flexShrink={0}>
-                <Text color={g.strictTdd === 'on' ? 'success' : 'subtle'}>{texts.strict}</Text>
-              </Box>
-              {g.strictTdd !== 'on' && action('tdd-configure', 'configure', () => fillPrompt($, STRICT_TDD_PROMPT))}
-            </Box>
+            ),
           )}
         </Box>
       )
     }
 
-    // Rows the Gentle AI section draws at this width, mirroring gentleSection.
+    // Rows the Gentle AI section draws at this width, from the same grid.
     const gentleRows = (g: GentleView | null): number => {
       if (!g || !g.tools.find(t => t.name === 'gentle-ai')?.version) return 1
-      const ggaInstalled = Boolean(g.tools.find(t => t.name === 'gga')?.version)
-      const { root } = g
-      const texts = gentleTexts(g)
-      const button = (label: string, selected = false) => buttonText(label, selected).length
-      const sub = W - SUB_ROW_INDENT
-      let n = 0
-      for (const t of g.tools) {
-        const status = toolStatus(g, t)
-        n += flowRows(status ? [toolLabel(t).length, status.length] : [toolLabel(t).length], W)
-      }
-      if (texts.asOf) n += textRows(texts.asOf.length, W)
-      if (ggaInstalled && !root) n += textRows(GGA_NO_REPO.length, W)
-      if (ggaInstalled && root) {
-        n += flowRows(
-          [
-            GGA_LABEL.length,
-            texts.hook.length,
-            ...(g.gga.hook === false ? [button('install')] : []),
-            ...(g.gga.projectConfig ? [] : [button('init')]),
-          ],
-          W,
-        )
-        n += flowRows([texts.rules.length, ...(g.gga.rules === false ? [button('create rules')] : [])], sub)
-      }
-      n += 1 // RDD: one truncated line
-      if (root) {
-        n += flowRows(
-          [SCOPE_LABEL.project.length, button('on', g.rdd?.project === 'on'), button('off', g.rdd?.project === 'off')],
-          W,
-        )
-      }
-      n += flowRows(
-        [SCOPE_LABEL.global.length, button('on', g.rdd?.global === 'on'), button('off', g.rdd?.global === 'off')],
-        W,
+      const { rows, grid } = gentleLayout(g)
+      return rows.reduce(
+        (n, r) =>
+          n +
+          (r.kind === 'heading'
+            ? flowRows([grid.head, ...(r.summary ? [r.summary.text.length] : [])], W)
+            : flowRows(
+                [
+                  grid.label,
+                  grid.value,
+                  ...(r.detail ? [r.detail.text.length] : []),
+                  ...r.buttons.map(b => buttonText(b.label, b.selected).length),
+                ],
+                W,
+              )),
+        0,
       )
-      n += textRows((TDD_HEAD + TDD_NOTE).length, W)
-      if (texts.strict) n += flowRows([texts.strict.length, ...(g.strictTdd === 'on' ? [] : [button('configure')])], sub)
-      return n
     }
 
     const branch = view.branch

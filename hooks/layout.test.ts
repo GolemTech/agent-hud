@@ -2,7 +2,22 @@ import type { On } from 'claude-code'
 import { expect, mock, test } from 'claude-code/testing'
 import type { Engine } from 'claude-code/testing'
 
-import { BRANCH_ICON, CARD_ROWS, cardsFor, flowRows, layoutFor, MAX_BAR, MIN_BAR, PANE_PADDING_X, ruleWidth, textRows } from './layout'
+import {
+  BRANCH_ICON,
+  CARD_ROWS,
+  cardsFor,
+  columnWidth,
+  flowRows,
+  gridFor,
+  HEADING_INDENT,
+  ITEM_INDENT,
+  layoutFor,
+  MAX_BAR,
+  MIN_BAR,
+  PANE_PADDING_X,
+  ruleWidth,
+  textRows,
+} from './layout'
 
 // ── Pure helpers ─────────────────────────────────────────────────────────
 
@@ -35,9 +50,18 @@ test('layoutFor: compact forms below the full counts width only', () => {
   expect(layoutFor(100, 24).compact).toBe(false)
 })
 
-test('layoutFor: the tool-version column is padded only when the status fits beside it', () => {
-  expect(layoutFor(20, 24).toolPad).toBe(0)
-  expect(layoutFor(60, 24).toolPad).toBeGreaterThan(0)
+test('columnWidth: the widest text, 0 for none', () => {
+  expect(columnWidth(['gga', 'gentle-ai', 'project'])).toBe(9)
+  expect(columnWidth(['✓', '2.10.1', '—'])).toBe(6)
+  expect(columnWidth([])).toBe(0)
+})
+
+test('gridFor: label column = item indent + longest label; headings span label and value when that fits', () => {
+  expect(ITEM_INDENT).toBe(2)
+  expect(HEADING_INDENT).toBe(1)
+  expect(gridFor(['gentle-ai', 'hook'], ['4.0.0', '✓', '2.10.1'], 40)).toEqual({ label: 11, value: 6, head: 18 })
+  // Too narrow for the heading to reach the detail column: it keeps the label's.
+  expect(gridFor(['gentle-ai'], ['2.10.1'], 17)).toEqual({ label: 11, value: 6, head: 11 })
 })
 
 test('textRows: wrapped rows of a text, at least one', () => {
@@ -207,6 +231,27 @@ for (const cols of [28, 60, 100]) {
         if (rule) expect(textOf(row).length + items.length - 1).toBe(columns)
         else expect(textOf(row).length).toBeLessThanOrEqual(columns)
       }
+    })
+  })
+}
+
+// The Gentle AI grid in demo mode: headings in order at one indent, item
+// labels at another, every label Box as wide as the others at any width.
+const GRID_LABELS = ['gentle-ai', 'gga', 'engram', 'hook', 'rules', 'project', 'global', 'strict']
+for (const cols of [28, 60, 100]) {
+  test(`at ${cols} columns, the Gentle AI grid keeps its headings and aligned labels`, async ($, on) => {
+    await inDemo($, on, cols, 60, async pane => {
+      const fixed = all(await pane.drawn(), 'Box').filter(b => b.props?.flexShrink === 0)
+      const headings = fixed.filter(b => /^ \S/.test(textOf(b)) && all(b, 'Text').some(t => t.props?.bold === true))
+      expect(headings.map(b => textOf(b).trim()).filter(t => ['Tools', 'gga', 'RDD', 'TDD'].includes(t))).toEqual([
+        'Tools',
+        'gga',
+        'RDD',
+        'TDD',
+      ])
+      const labels = fixed.filter(b => /^ {2}\S/.test(textOf(b)) && GRID_LABELS.includes(textOf(b).trim()))
+      expect(labels.map(b => textOf(b).trim())).toEqual(GRID_LABELS)
+      expect(new Set(labels.map(b => textOf(b).length)).size).toBe(1)
     })
   })
 }

@@ -264,3 +264,99 @@ export const actionSpec = (
 export const RUN_IT = 'Run it'
 export const CANCEL = 'Cancel'
 
+// ── Section grid ─────────────────────────────────────────────────────────
+
+// One status vocabulary for the whole section, colored by meaning with theme
+// keys: ✓ ok, ✗ missing, ↑ x.y.z update, ● on, ○ off, — unset, ? unknown.
+// A Mark without a tone draws in the default text color.
+export type Tone = 'success' | 'error' | 'warning' | 'subtle'
+export type Mark = { text: string; tone?: Tone }
+
+const OK: Mark = { text: '✓', tone: 'success' }
+const MISSING: Mark = { text: '✗', tone: 'error' }
+const ACTIVE: Mark = { text: '●', tone: 'success' }
+const INACTIVE: Mark = { text: '○', tone: 'subtle' }
+const UNSET: Mark = { text: '—', tone: 'subtle' }
+const UNKNOWN: Mark = { text: '?', tone: 'subtle' }
+
+export const checkMark = (v: boolean | null): Mark => (v ? OK : v === false ? MISSING : UNKNOWN)
+
+// A tool's status: a newer version, up to date, or ? when brew did not answer
+// (no up-to-date claim without it); ✗ when it is not installed.
+export const toolMark = (t: ToolStatus, updatesKnown: boolean): Mark =>
+  !t.version ? MISSING : t.update ? { text: `↑ ${t.update}`, tone: 'warning' } : updatesKnown ? OK : UNKNOWN
+
+// One RDD scope's own setting; `known` is false when RDD could not be read.
+export const scopeMark = (v: OnOff | null, known: boolean): Mark =>
+  !known ? UNKNOWN : v === 'on' ? ACTIVE : v === 'off' ? INACTIVE : UNSET
+
+export const strictMark = (v: StrictTdd): Mark => (v === 'on' ? ACTIVE : v === 'off' ? INACTIVE : UNSET)
+
+// The effective RDD value and what decides it; gentle-ai's `clone` scope is
+// the row the section calls `project`.
+export const rddSummary = (rdd: RddStatus | null): Mark => {
+  if (!rdd) return { text: '? unknown', tone: 'subtle' }
+  const source = rdd.source === 'clone' ? 'project' : rdd.source
+  return rdd.effective === 'on'
+    ? { text: `● on · ${source}`, tone: 'success' }
+    : { text: `○ off · ${source}`, tone: 'subtle' }
+}
+
+// Buttons that fill the prompt instead of running a command.
+export type PromptKey = 'gga-rules' | 'tdd-configure'
+export type GentleButton = { key: GentleAction | PromptKey; label: string; selected?: boolean }
+
+export type GentleRow =
+  | { kind: 'heading'; label: string; summary: Mark | null }
+  | { kind: 'item'; label: string; value: Mark; detail: Mark | null; buttons: GentleButton[] }
+
+const RULES_IGNORED = ' (RULES_FILE ignored)'
+const TDD_SUMMARY: Mark = { text: 'test-first (ODD)' }
+
+// The section's rows, in order, as data: the Pane draws them and counts their
+// rows from the same list, so the tree and the estimate cannot drift apart.
+// Called once gentle-ai is known to be installed.
+export const gentleGrid = (g: GentleView): GentleRow[] => {
+  const rows: GentleRow[] = []
+  const item = (label: string, value: Mark, detail: Mark | null = null, buttons: GentleButton[] = []) =>
+    rows.push({ kind: 'item', label, value, detail, buttons })
+  const scope = (v: OnOff | null, scopeName: 'project' | 'global'): GentleButton[] =>
+    (['on', 'off'] as const).map(choice => ({
+      key: `rdd-${scopeName}-${choice}` as GentleAction,
+      label: choice,
+      selected: v === choice,
+    }))
+
+  rows.push({
+    kind: 'heading',
+    label: 'Tools',
+    summary: g.updatesKnown && g.asOf ? { text: `as of ${g.asOf}`, tone: 'subtle' } : null,
+  })
+  for (const t of g.tools) item(t.name, t.version ? { text: t.version } : UNSET, toolMark(t, g.updatesKnown))
+
+  if (g.tools.find(t => t.name === 'gga')?.version) {
+    rows.push({ kind: 'heading', label: 'gga', summary: g.root ? null : { text: 'no repository', tone: 'subtle' } })
+    if (g.root) {
+      item('hook', checkMark(g.gga.hook), null, [
+        ...(g.gga.hook === false ? [{ key: 'gga-install' as const, label: 'install' }] : []),
+        ...(g.gga.projectConfig ? [] : [{ key: 'gga-init' as const, label: 'init' }]),
+      ])
+      item(
+        'rules',
+        checkMark(g.gga.rules),
+        { text: `${g.gga.rulesFile}${g.gga.rulesOverridden ? RULES_IGNORED : ''}` },
+        g.gga.rules === false ? [{ key: 'gga-rules', label: 'create rules' }] : [],
+      )
+    }
+  }
+
+  rows.push({ kind: 'heading', label: 'RDD', summary: rddSummary(g.rdd) })
+  if (g.root) item('project', scopeMark(g.rdd?.project ?? null, Boolean(g.rdd)), null, scope(g.rdd?.project ?? null, 'project'))
+  item('global', scopeMark(g.rdd?.global ?? null, Boolean(g.rdd)), null, scope(g.rdd?.global ?? null, 'global'))
+
+  rows.push({ kind: 'heading', label: 'TDD', summary: TDD_SUMMARY })
+  if (g.strictTdd)
+    item('strict', strictMark(g.strictTdd), null, g.strictTdd === 'on' ? [] : [{ key: 'tdd-configure', label: 'configure' }])
+  return rows
+}
+
