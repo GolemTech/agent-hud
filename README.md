@@ -71,7 +71,8 @@ rest, and the limits that come with them:
   `~/.claude/projects/<project>/<session>/custom-title.json`. If that file
   moves or changes shape, the short session id is shown instead.
 - **Account** (email user and organization) is read from the `oauthAccount`
-  field of `~/.claude.json`; nothing else in that file is used.
+  field of `~/.claude.json`; nothing else in that file is used. When
+  `CLAUDE_CONFIG_DIR` is set, both files are read from that folder instead.
 - **Git branch** comes from `git branch --show-current`, refreshed about every
   5 seconds.
 - **Reset times** use the system UTC offset from `date +%z`.

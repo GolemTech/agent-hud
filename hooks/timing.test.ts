@@ -2,6 +2,7 @@ import { test, expect } from 'claude-code/testing'
 
 import {
   accountLabel,
+  claudePaths,
   addTask,
   agentCounts,
   buildRows,
@@ -315,6 +316,21 @@ test('mergeRows takes the fresh row for agents still listed', () => {
 test('displayRows: running first, then finished newest first', () => {
   const list = [row('A', 'completed', true), row('B', 'running', false), row('C', 'failed', true)]
   expect(displayRows(list).map(r => r.id)).toEqual(['B', 'C', 'A'])
+})
+
+test('claudePaths follows CLAUDE_CONFIG_DIR, else the home defaults', () => {
+  expect(claudePaths('/home/myuser', undefined)).toEqual({
+    config: '/home/myuser/.claude.json',
+    projects: '/home/myuser/.claude/projects',
+  })
+  expect(claudePaths('/home/myuser', '')).toEqual({
+    config: '/home/myuser/.claude.json',
+    projects: '/home/myuser/.claude/projects',
+  })
+  expect(claudePaths('/home/myuser', '/tmp/profile/')).toEqual({
+    config: '/tmp/profile/.claude.json',
+    projects: '/tmp/profile/projects',
+  })
 })
 
 test('accountLabel shows user@Org from the OAuth account only', () => {

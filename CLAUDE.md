@@ -27,7 +27,7 @@ Everything runs from `hooks/register.tsx`. The top of the file is pure, exported
 - **Two surfaces.** The `Pane` (id `hud`) and the `AbovePrompt` band. The band shows only when `isSidebarShown($.ui.panes())` is false; it asks the engine instead of tracking opens and closes (see gotchas).
 - **Demo mode.** `hooks/demo.ts` provides the sample session behind `/hud-demo`, used for README recordings; both surfaces render from one view object, live or demo, and demo data never reaches `$.state`.
 - **Privacy mode.** `/hud-private` flips the `private` atom; `liveView` applies the pure `maskView` (identity fields only) when it is set, so both surfaces read masked data from one place. Demo mode wins over it.
-- **Fragile inputs** are read from Claude Code internals with a fallback, never trusted: `~/.claude/projects/<projectDir(root)>/<sessionId>/custom-title.json` (session title) and `~/.claude.json` `oauthAccount` (account; only email user and organization are kept).
+- **Fragile inputs** are read from Claude Code internals with a fallback, never trusted: `~/.claude/projects/<projectDir(root)>/<sessionId>/custom-title.json` (session title) and `~/.claude.json` `oauthAccount` (account; only email user and organization are kept). Both move under `CLAUDE_CONFIG_DIR` when it is set (`claudePaths`).
 
 ## Mods API gotchas (all hit in practice)
 

@@ -102,6 +102,18 @@ let sessionTitle: string | null = null
 // only these two fields; null when there is no OAuth account.
 let accountCache: string | null = null
 
+// Where Claude Code keeps its own files. `CLAUDE_CONFIG_DIR` moves both, so a
+// session on another profile never shows this machine's default account.
+export const claudePaths = (
+  home: string,
+  configDir: string | undefined,
+): { config: string; projects: string } => {
+  const dir = configDir ? configDir.replace(/\/+$/, '') : null
+  return dir
+    ? { config: `${dir}/.claude.json`, projects: `${dir}/projects` }
+    : { config: `${home}/.claude.json`, projects: `${home}/.claude/projects` }
+}
+
 export const accountLabel = (text: string): string | null => {
   try {
     const account = (JSON.parse(text) as {
@@ -621,10 +633,12 @@ export const register: Register = on => {
       if (ticks % 2 === 1) {
         try {
           const home = await $.env.get('HOME')
+          const configDir = await $.env.get('CLAUDE_CONFIG_DIR')
           const [id, root] = await Promise.all([$.session.id(), $.session.root()])
           if (typeof home === 'string') {
             homeCache = home
-            const path = `${home}/.claude/projects/${projectDir(root)}/${id}/custom-title.json`
+            const { projects } = claudePaths(home, configDir ?? undefined)
+            const path = `${projects}/${projectDir(root)}/${id}/custom-title.json`
             sessionTitle = parseTitle(await $.fs.read(path))
           }
         } catch {
@@ -635,7 +649,11 @@ export const register: Register = on => {
       if (ticks % 60 === 1) {
         try {
           const home = await $.env.get('HOME')
-          if (typeof home === 'string') accountCache = accountLabel(await $.fs.read(`${home}/.claude.json`))
+          const configDir = await $.env.get('CLAUDE_CONFIG_DIR')
+          if (typeof home === 'string') {
+            const { config } = claudePaths(home, configDir ?? undefined)
+            accountCache = accountLabel(await $.fs.read(config))
+          }
         } catch {
           // keep the last known account
         }
