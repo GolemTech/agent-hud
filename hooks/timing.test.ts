@@ -3,6 +3,7 @@ import { test, expect } from 'claude-code/testing'
 import {
   accountLabel,
   claudePaths,
+  clean,
   addTask,
   agentCounts,
   buildRows,
@@ -333,14 +334,53 @@ test('claudePaths follows CLAUDE_CONFIG_DIR, else the home defaults', () => {
   })
 })
 
-test('accountLabel shows user@Org from the OAuth account only', () => {
+test('claudePaths expands a leading ~ in CLAUDE_CONFIG_DIR with home', () => {
+  expect(claudePaths('/home/myuser', '~/profile')).toEqual({
+    config: '/home/myuser/profile/.claude.json',
+    projects: '/home/myuser/profile/projects',
+  })
+  expect(claudePaths('/home/myuser', '~')).toEqual({
+    config: '/home/myuser/.claude.json',
+    projects: '/home/myuser/projects',
+  })
+  // Only a leading `~/` or a bare `~` is a home reference.
+  expect(claudePaths('/home/myuser', '/tmp/~x').config).toBe('/tmp/~x/.claude.json')
+})
+
+test('accountLabel shows user@Org, or only the email user without an organization', () => {
   const file = (account: unknown) => JSON.stringify({ projects: {}, oauthAccount: account })
-  expect(accountLabel(file({ emailAddress: 'ana.ruiz@acme.io', organizationName: 'Acme' }))).toBe(
-    'ana.ruiz@Acme',
+  expect(accountLabel(file({ emailAddress: 'user.one@example.com', organizationName: 'Example Org' }))).toBe(
+    'user.one@Example Org',
   )
-  expect(accountLabel(file({ emailAddress: 'ana.ruiz@acme.io' }))).toBe('ana.ruiz@acme.io')
+  // No organization: the domain is never shown.
+  expect(accountLabel(file({ emailAddress: 'user.one@example.com' }))).toBe('user.one')
+  expect(accountLabel(file({ emailAddress: 'user.one@example.com', organizationName: '  ' }))).toBe('user.one')
   expect(accountLabel(file(undefined))).toBe(null)
   expect(accountLabel('not json')).toBe(null)
+})
+
+test('clean strips C0/C1 control characters and keeps other text', () => {
+  expect(clean('a\u001b[31mred\u001b[0m')).toBe('a[31mred[0m')
+  expect(clean('two\nlines\r')).toBe('twolines')
+  expect(clean('bell\u0007 tab\t del\u007f c1\u009b')).toBe('bell tab del c1')
+  expect(clean('café · 日本 🤖 ✓')).toBe('café · 日本 🤖 ✓')
+})
+
+test('external strings are cleaned where they enter', () => {
+  const esc = '\u001b]0;x\u0007'
+  expect(parseTitle(JSON.stringify({ customTitle: `my${esc}title` }))).toBe('my]0;xtitle')
+  expect(accountLabel(JSON.stringify({ oauthAccount: { emailAddress: 'a\nb@example.com', organizationName: 'Ex\u001bOrg' } }))).toBe(
+    'ab@ExOrg',
+  )
+  const [row] = buildRows([{ id: 'X', type: 'Expl\u001bore', description: 'map\nrepo', status: 'running' }], new Map(), 0)
+  expect([row?.type, row?.description]).toEqual(['Explore', 'maprepo'])
+  const [w] = fromTodoWrite([{ content: 'do\u001bit', activeForm: 'doing\nit', status: 'pending' }])
+  expect([w?.content, w?.activeForm]).toEqual(['doit', 'doingit'])
+  const [t] = addTask([], '1', 'new\u0007task', 'adding\u009b')
+  expect([t?.content, t?.activeForm]).toEqual(['newtask', 'adding'])
+  const [u] = updateTask(addTask([], '1', 'x'), { taskId: '1', subject: 'y\u001bz', activeForm: 'a\nb' })
+  expect([u?.content, u?.activeForm]).toEqual(['yz', 'ab'])
+  expect(mcpServers([{ name: 'mcp__ev\u001bil__tool', mcp: true }])).toEqual([{ name: 'evil', connected: true }])
 })
 
 test('shortPath keeps first and last segments, collapsing the middle to ..', () => {

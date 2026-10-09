@@ -7,6 +7,12 @@ import { demoSnapshot } from './demo'
 const PANE = 'hud'
 type SectionId = 'session' | 'context' | 'mcp' | 'subagents' | 'todos'
 
+// Defence in depth for text from outside the plugin (files, tool inputs, the
+// agent list, MCP tool names): C0 and C1 control characters are removed where
+// that text enters, so no escape sequence, newline or bell reaches the screen.
+const CONTROL = /[\u0000-\u001f\u007f-\u009f]/g
+export const clean = (s: string): string => s.replace(CONTROL, '')
+
 // ── Todos ────────────────────────────────────────────────────────────────
 // No `$` accessor holds the task list, so the pane mirrors it from the
 // main loop's own TodoWrite / TaskCreate / TaskUpdate calls.
@@ -15,14 +21,22 @@ type SectionId = 'session' | 'context' | 'mcp' | 'subagents' | 'todos'
 export const fromTodoWrite = (
   todos: readonly { content: string; status: TodoStatus; activeForm?: string }[],
 ): TodoItem[] =>
-  todos.map((t, i) => ({ id: `w${i}`, content: t.content, activeForm: t.activeForm, status: t.status }))
+  todos.map((t, i) => ({
+    id: `w${i}`,
+    content: clean(t.content),
+    activeForm: t.activeForm === undefined ? undefined : clean(t.activeForm),
+    status: t.status,
+  }))
 
 export const addTask = (
   list: readonly TodoItem[],
   id: string,
   subject: string,
   activeForm?: string,
-): TodoItem[] => [...list.filter(t => t.id !== id), { id, content: subject, activeForm, status: 'pending' }]
+): TodoItem[] => [
+  ...list.filter(t => t.id !== id),
+  { id, content: clean(subject), activeForm: activeForm === undefined ? undefined : clean(activeForm), status: 'pending' },
+]
 
 export const updateTask = (
   list: readonly TodoItem[],
@@ -42,8 +56,8 @@ export const updateTask = (
       : {
           ...t,
           status: status ?? t.status,
-          content: change.subject ?? t.content,
-          activeForm: change.activeForm ?? t.activeForm,
+          content: change.subject === undefined ? t.content : clean(change.subject),
+          activeForm: change.activeForm === undefined ? t.activeForm : clean(change.activeForm),
         },
   )
 }
@@ -97,18 +111,21 @@ let gitBranchCache: string | null = null
 // the pane falls back to the session id.
 let sessionTitle: string | null = null
 
-// The signed-in account as the status line shows it: you@Acme.
-// No `$` accessor carries it, so the poller reads `~/.claude.json` and keeps
-// only these two fields; null when there is no OAuth account.
+// The signed-in account as the status line shows it: you@Acme, or only the
+// email's user part (you) when there is no organization; the email domain is
+// never shown. No `$` accessor carries it, so the poller reads `~/.claude.json`
+// and keeps only these two fields; null when there is no OAuth account.
 let accountCache: string | null = null
 
 // Where Claude Code keeps its own files. `CLAUDE_CONFIG_DIR` moves both, so a
-// session on another profile never shows this machine's default account.
+// session on another profile never shows this machine's default account. A
+// leading `~/` (or a bare `~`) in it means `home`, as a shell would expand it.
 export const claudePaths = (
   home: string,
   configDir: string | undefined,
 ): { config: string; projects: string } => {
-  const dir = configDir ? configDir.replace(/\/+$/, '') : null
+  const expanded = configDir === '~' || configDir?.startsWith('~/') ? `${home}${configDir.slice(1)}` : configDir
+  const dir = expanded ? expanded.replace(/\/+$/, '') : null
   return dir
     ? { config: `${dir}/.claude.json`, projects: `${dir}/projects` }
     : { config: `${home}/.claude.json`, projects: `${home}/.claude/projects` }
@@ -119,11 +136,11 @@ export const accountLabel = (text: string): string | null => {
     const account = (JSON.parse(text) as {
       oauthAccount?: { emailAddress?: unknown; organizationName?: unknown }
     }).oauthAccount
-    const email = typeof account?.emailAddress === 'string' ? account.emailAddress : null
+    const email = typeof account?.emailAddress === 'string' ? clean(account.emailAddress) : null
     if (!email) return null
-    const [user] = email.split('@')
-    const org = typeof account?.organizationName === 'string' ? account.organizationName.trim() : ''
-    return org ? `${user}@${org}` : email
+    const [user = ''] = email.split('@')
+    const org = typeof account?.organizationName === 'string' ? clean(account.organizationName).trim() : ''
+    return org ? `${user}@${org}` : user || null
   } catch {
     return null
   }
@@ -186,7 +203,8 @@ export const projectDir = (root: string): string => root.replace(/[^a-zA-Z0-9]/g
 export const parseTitle = (text: string): string | null => {
   try {
     const title = (JSON.parse(text) as { customTitle?: unknown }).customTitle
-    return typeof title === 'string' && title.trim() ? title.trim() : null
+    const shown = typeof title === 'string' ? clean(title).trim() : ''
+    return shown || null
   } catch {
     return null
   }
@@ -296,8 +314,8 @@ export const buildRows = (
     if (done && rec.end === undefined) rec.end = now
     return {
       id: a.id,
-      type: a.type,
-      description: a.description,
+      type: clean(a.type),
+      description: clean(a.description),
       status: a.status,
       elapsedMs: (rec.end ?? now) - rec.start,
       done,
@@ -469,7 +487,7 @@ export const mcpServers = (
     if (!t.mcp) continue
     const [, server, tool] = /^mcp__(.+?)__(.+)$/.exec(t.name) ?? []
     if (!server || !tool) continue
-    const name = prettyServer(server)
+    const name = prettyServer(clean(server))
     const isReal = !AUTH_TOOLS.has(tool)
     connectedBy.set(name, (connectedBy.get(name) ?? false) || isReal)
   }
@@ -667,24 +685,33 @@ export const register: Register = on => {
           // keep the last known offset; without one, only the countdown shows
         }
       }
-      // Refresh the cached branch every ~5s (git spawns a process).
+      // Refresh the cached branch every ~5s (git spawns a process). Each
+      // source is guarded on its own: one failing never stops the others.
       if (ticks % 5 === 1) {
-        const repo = await $.session.repo()
-        if (!repo) {
-          gitBranchCache = null
-        } else {
-          try {
-            const { stdout } = await $.process.run(['git', 'branch', '--show-current'], {
-              cwd: repo.root,
-            })
-            gitBranchCache = stdout.trim() || null
-          } catch {
+        try {
+          const repo = await $.session.repo()
+          if (!repo) {
             gitBranchCache = null
+          } else {
+            try {
+              const { stdout } = await $.process.run(['git', 'branch', '--show-current'], {
+                cwd: repo.root,
+              })
+              gitBranchCache = clean(stdout).trim() || null
+            } catch {
+              gitBranchCache = null
+            }
           }
+        } catch {
+          // keep the last known branch
         }
       }
-      const built = buildRows(await $.agent.list(), seen, await $.clock.now())
-      await update($, rows, prev => mergeRows(prev, built).filter(r => !clearedAgents.has(r.id)))
+      try {
+        const built = buildRows(await $.agent.list(), seen, await $.clock.now())
+        await update($, rows, prev => mergeRows(prev, built).filter(r => !clearedAgents.has(r.id)))
+      } catch {
+        // keep the last known rows; the next tick tries again
+      }
     }
 
     void tick()

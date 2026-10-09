@@ -54,8 +54,10 @@ To add the marketplace first and install separately:
   todos), but the account shows as `you@example`, the session title as
   `private session`, the session id is hidden, the branch shows as `••••` and
   the path as `~/…`; `🔒 private` next to the Session header shows it is on.
-  It persists across plugin reloads until you run it again. Claude Code's own
-  welcome header and status line are not affected: a plugin cannot draw them.
+  It persists across plugin reloads until you run it again. MCP server names,
+  subagent descriptions and todo text are **not** masked, and can contain
+  project or client names. Claude Code's own welcome header and status line are
+  not affected either: a plugin cannot draw them.
 
 ## How it gets its data
 
@@ -70,14 +72,23 @@ rest, and the limits that come with them:
 - **Session title** is read from Claude Code's internal file
   `~/.claude/projects/<project>/<session>/custom-title.json`. If that file
   moves or changes shape, the short session id is shown instead.
-- **Account** (email user and organization) is read from the `oauthAccount`
-  field of `~/.claude.json`; nothing else in that file is used. When
-  `CLAUDE_CONFIG_DIR` is set, both files are read from that folder instead.
+- **Account** is read from the `oauthAccount` field of `~/.claude.json` and
+  shown as `user@Organization`, or only the email's user part when there is no
+  organization; the email domain is never shown and nothing else in that file
+  is used. When `CLAUDE_CONFIG_DIR` is set (a leading `~` is expanded), both
+  files are read from that folder instead.
 - **Git branch** comes from `git branch --show-current`, refreshed about every
   5 seconds.
 - **Reset times** use the system UTC offset from `date +%z`.
 - **Dock width** cannot be forced by a plugin; a width you set wins.
 - **No network calls** are made.
+- **Control characters** (escape sequences, newlines, bells) are stripped from
+  every displayed string that comes from outside the plugin.
+
+## Security and privacy
+
+What the plugin reads, keeps and shows, and how to report a vulnerability:
+see [SECURITY.md](SECURITY.md).
 
 ## Development
 
@@ -94,8 +105,10 @@ git-ignored.
 
 ## Credits
 
-[![Built with Gentle-AI](https://raw.githubusercontent.com/Gentleman-Programming/gentle-ai/main/docs/assets/brand/built-with-gentle-ai.png)](https://github.com/Gentleman-Programming/gentle-ai)
+[![Built with Gentle-AI](https://raw.githubusercontent.com/Gentleman-Programming/gentle-ai/f182ea2018a6399f5d1b6557cf36d71a3df0f723/docs/assets/brand/built-with-gentle-ai.png)](https://github.com/Gentleman-Programming/gentle-ai)
 
 ## License
 
 [MIT](LICENSE) © GolemTech
+
+Not affiliated with or endorsed by Anthropic. Claude and Claude Code are trademarks of Anthropic, PBC.
