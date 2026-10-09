@@ -15,6 +15,8 @@ npx -y -p typescript@5.6.3 tsc -p . --noEmit     # type-check; needs .claude-plu
 
 `validate` does not type-check: run `tsc` too, it catches errors `validate` passes. The only expected `validate` warning is that a root `CLAUDE.md` is not shipped as plugin context; that is intended (this file is for developers, not for users of the plugin).
 
+CI (`.github/workflows/ci.yml`) runs `test`, `validate`, gitleaks and semgrep; `tsc` is not in CI because it needs the generated types, so run it locally.
+
 API reference: `.claude-plugin/types/claude-code/index.d.ts` (~15k lines). Grep for the event or noun (`'turn.step'`, `PaneOpenArgs`, `ButtonProps`) and read the doc comment; it is the source of truth over memory.
 
 ## Architecture
@@ -27,7 +29,7 @@ Everything runs from `hooks/register.tsx`. The top of the file is pure, exported
 - **Two surfaces.** The `Pane` (id `hud`) and the `AbovePrompt` band. The band shows only when `isSidebarShown($.ui.panes())` is false; it asks the engine instead of tracking opens and closes (see gotchas).
 - **Demo mode.** `hooks/demo.ts` provides the sample session behind `/hud-demo`, used for README recordings; both surfaces render from one view object, live or demo, and demo data never reaches `$.state`.
 - **Privacy mode.** `/hud-private` flips the `private` atom; `liveView` applies the pure `maskView` (identity fields only) when it is set, so both surfaces read masked data from one place. Demo mode wins over it.
-- **Fragile inputs** are read from Claude Code internals with a fallback, never trusted: `~/.claude/projects/<projectDir(root)>/<sessionId>/custom-title.json` (session title) and `~/.claude.json` `oauthAccount` (account; only email user and organization are kept). Both move under `CLAUDE_CONFIG_DIR` when it is set (`claudePaths`).
+- **Fragile inputs** are read from Claude Code internals with a fallback, never trusted: `~/.claude/projects/<projectDir(root)>/<sessionId>/custom-title.json` (session title) and `~/.claude.json` `oauthAccount` (account; only email user and organization are kept, never the email domain). Both move under `CLAUDE_CONFIG_DIR` when it is set (`claudePaths`). External strings pass through `clean` (control characters stripped) where they enter.
 
 ## Mods API gotchas (all hit in practice)
 
@@ -48,3 +50,4 @@ Everything runs from `hooks/register.tsx`. The top of the file is pure, exported
 - Anything the code under test calls needs a bottom answer, or the hook is skipped with "no implementation".
 - A test cannot read another plugin's `$.state` (host rule); assert through rendered output instead. The test `$` has no `$.ui.close`; reach it by pressing the plugin's own button.
 - `mock.clock(on)` controls `$.clock.now()` / `every`; advance it instead of sleeping.
+- Fixtures use reserved names only (`example.com`, `.test`, `/home/myuser`): a local identity guard blocks commits with real-looking data.
