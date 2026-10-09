@@ -2,7 +2,7 @@ import type { On } from 'claude-code'
 import { expect, mock, test } from 'claude-code/testing'
 import type { Engine } from 'claude-code/testing'
 
-import { BRANCH_ICON, CARD_ROWS, cardsFor, flowRows, layoutFor, MAX_BAR, MIN_BAR, PANE_PADDING_X, textRows } from './layout'
+import { BRANCH_ICON, CARD_ROWS, cardsFor, flowRows, layoutFor, MAX_BAR, MIN_BAR, PANE_PADDING_X, ruleWidth, textRows } from './layout'
 
 // ── Pure helpers ─────────────────────────────────────────────────────────
 
@@ -176,6 +176,34 @@ for (const cols of [20, 28, 40, 60, 100]) {
   test(`at ${cols} columns, labels keep their width and rows wrap`, async ($, on) => {
     await inDemo($, on, cols, 60, async pane => {
       checkRules(await pane.drawn(), layoutFor(cols, 60).columns)
+    })
+  })
+}
+
+test('ruleWidth: the columns left after the header items, none below the minimum', () => {
+  expect(ruleWidth(40, [11])).toBe(28) // 40 - 11 - 1 gap
+  expect(ruleWidth(40, [13, 12])).toBe(13) // 40 - 25 - 2 gaps
+  expect(ruleWidth(14, [11])).toBe(0) // 2 left: under MIN_RULE
+  expect(ruleWidth(10, [11])).toBe(0)
+})
+
+// Every section title is an inverse band, and its header row ends in a rule
+// that fills the drawable width exactly (items plus one gap between each).
+for (const cols of [28, 60, 100]) {
+  test(`at ${cols} columns, section titles stand out and their rule fills the row`, async ($, on) => {
+    await inDemo($, on, cols, 60, async pane => {
+      const tree = await pane.drawn()
+      const columns = layoutFor(cols, 60).columns
+      const titles = all(tree, 'Text').filter(t => /^ [▾▸] /.test(textOf(t)) && t.props?.inverse === true)
+      expect(titles.length).toBe(6)
+      for (const title of titles) {
+        const row = all(tree, 'Box').find(b => elements(b).some(i => all(i, 'Text').includes(title)) && b.props?.flexWrap === 'wrap')
+        expect(row).toBeDefined()
+        const items = elements(row as Node)
+        const rule = (textOf(items[items.length - 1]).match(/^─+$/) ?? [''])[0]
+        if (rule) expect(textOf(row).length + items.length - 1).toBe(columns)
+        else expect(textOf(row).length).toBeLessThanOrEqual(columns)
+      }
     })
   })
 }

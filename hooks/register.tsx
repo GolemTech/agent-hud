@@ -28,7 +28,7 @@ import {
   TOOLS,
 } from './gentle'
 import type { GentleAction, GentleInfo, GentleView, RddStatus, StrictTdd } from './gentle'
-import { BRANCH_ICON, buttonText, cardsFor, flowRows, layoutFor, PANE_PADDING_X, SUB_ROW_INDENT, textRows } from './layout'
+import { BRANCH_ICON, buttonText, cardsFor, flowRows, layoutFor, PANE_PADDING_X, ruleWidth, sectionTitle, SUB_ROW_INDENT, textRows } from './layout'
 import { clean } from './text'
 
 // Re-exported for the unit tests, which import the helpers from here.
@@ -1259,18 +1259,33 @@ export const register: Register = on => {
     const headerText = (id: SectionId, label: string) => `${c[id] ? '▸' : '▾'} ${label}`
     // Each section header is a Button that collapses just that module.
     // `update` from a handler is the documented pattern; it redraws the pane.
+    // The title is an inverse band so sections stand apart at a glance.
     const header = (id: SectionId, label: string) => (
       <Box flexShrink={0}>
         <Button
           key={`toggle-${id}`}
           onPress={() => void update($, collapsed, prev => ({ ...prev, [id]: !prev[id] }))}
         >
-          <Text bold color="claude">
-            {headerText(id, label)}
+          <Text bold inverse color="claude">
+            {sectionTitle(headerText(id, label))}
           </Text>
         </Button>
       </Box>
     )
+    const headerWidth = (id: SectionId, label: string) => sectionTitle(headerText(id, label)).length
+    // Header extras, measured for the rule: `🔒` is two cells and two code units.
+    const PRIVATE_BADGE = '🔒 private'
+    const CLEAR_DONE = '✕ clear done'
+    const REFRESH = '↻'
+    // The `───` that closes a header row, sized to what its items leave.
+    const rule = (...itemWidths: number[]) => {
+      const w = ruleWidth(L.columns, itemWidths)
+      return w > 0 ? (
+        <Box flexShrink={0}>
+          <Text color="subtle">{'─'.repeat(w)}</Text>
+        </Box>
+      ) : null
+    }
 
     // A small text button of the Gentle AI section. In demo mode no button
     // acts: it only says so.
@@ -1523,9 +1538,12 @@ export const register: Register = on => {
             {header('session', 'Session')}
             {view.private && (
               <Box flexShrink={0}>
-                <Text color="warning">🔒 private</Text>
+                <Text color="warning">{PRIVATE_BADGE}</Text>
               </Box>
             )}
+            {view.private
+              ? rule(headerWidth('session', 'Session'), PRIVATE_BADGE.length)
+              : rule(headerWidth('session', 'Session'))}
           </Box>
           {!c.session && (
             <Text wrap="truncate-end">
@@ -1581,7 +1599,10 @@ export const register: Register = on => {
         </Box>
 
         <Box marginTop={1} flexDirection="column">
-          {header('context', 'Context')}
+          <Box gap={1} flexWrap="wrap">
+            {header('context', 'Context')}
+            {rule(headerWidth('context', 'Context'))}
+          </Box>
           {!c.context && ms.length === 0 && !footer && <Text color="subtle">no usage yet</Text>}
           {!c.context &&
             ms.map(m => {
@@ -1612,7 +1633,10 @@ export const register: Register = on => {
         </Box>
 
         <Box marginTop={1} flexDirection="column">
-          {header('mcp', 'MCP')}
+          <Box gap={1} flexWrap="wrap">
+            {header('mcp', 'MCP')}
+            {rule(headerWidth('mcp', 'MCP'))}
+          </Box>
           {!c.mcp && servers.length === 0 && <Text color="subtle">none connected</Text>}
           {!c.mcp &&
             servers.map(s => (
@@ -1636,9 +1660,12 @@ export const register: Register = on => {
                   void update($, rows, prev => prev.filter(r => !r.done))
                 }}
               >
-                <Text color="subtle">✕ clear done</Text>
+                <Text color="subtle">{CLEAR_DONE}</Text>
               </Button>
             )}
+            {!c.subagents && counts.done + counts.err > 0
+              ? rule(headerWidth('subagents', 'Subagents'), CLEAR_DONE.length)
+              : rule(headerWidth('subagents', 'Subagents'))}
           </Box>
           {!c.subagents && L.compact && (
             <Text wrap="truncate-end">
@@ -1687,9 +1714,12 @@ export const register: Register = on => {
                   void update($, todos, prev => prev.filter(t => t.status !== 'completed'))
                 }}
               >
-                <Text color="subtle">✕ clear done</Text>
+                <Text color="subtle">{CLEAR_DONE}</Text>
               </Button>
             )}
+            {!c.todos && todoDone > 0
+              ? rule(headerWidth('todos', todosHeader), CLEAR_DONE.length)
+              : rule(headerWidth('todos', todosHeader))}
           </Box>
           {!c.todos && todoList.length === 0 && <Text color="subtle">no todos</Text>}
           {!c.todos &&
@@ -1719,9 +1749,12 @@ export const register: Register = on => {
                   void refreshGentle($)
                 }}
               >
-                <Text color="subtle">↻</Text>
+                <Text color="subtle">{REFRESH}</Text>
               </Button>
             )}
+            {!c.gentle
+              ? rule(headerWidth('gentle', 'Gentle AI'), REFRESH.length)
+              : rule(headerWidth('gentle', 'Gentle AI'))}
           </Box>
           {!c.gentle && gentleSection(view.gentle ?? null)}
         </Box>
