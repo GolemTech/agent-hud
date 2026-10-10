@@ -1260,6 +1260,7 @@ export const register: Register = on => {
         <Box flexShrink={0}>
           <Button
             key="expand"
+            label="▸ Agent HUD"
             onPress={() => void $.ui.open({ id: PANE, title: 'Agent HUD' })}
           >
             <Text bold color="claude">
@@ -1321,6 +1322,7 @@ export const register: Register = on => {
       <Box flexShrink={0}>
         <Button
           key={`toggle-${id}`}
+          label={headerText(id, label)}
           plain
           onPress={() => void update($, collapsed, prev => ({ ...prev, [id]: !prev[id] }))}
         >
@@ -1354,6 +1356,7 @@ export const register: Register = on => {
     const action = (key: string, label: string, act: () => Promise<unknown>, selected = false) => (
       <Button
         key={key}
+        label={buttonText(label, selected)}
         plain
         onPress={() => {
           if (view.demo) return $.ui.toast('demo mode')
@@ -1540,6 +1543,7 @@ export const register: Register = on => {
           <Box flexShrink={0}>
             <Button
               key="hide-sidebar"
+              label={HIDE_BUTTON}
               plain
               onPress={() => void $.ui.close({ id: PANE })}
             >
@@ -1686,6 +1690,7 @@ export const register: Register = on => {
             {!c.subagents && counts.done + counts.err > 0 && (
               <Button
                 key="clear-subagents"
+                label={CLEAR_DONE}
                 plain
                 onPress={() => {
                   if (view.demo) return // sample data: nothing real to clear
@@ -1739,6 +1744,7 @@ export const register: Register = on => {
             {!c.todos && todoDone > 0 && (
               <Button
                 key="clear-todos"
+                label={CLEAR_DONE}
                 plain
                 onPress={() => {
                   if (view.demo) return // sample data: nothing real to clear
@@ -1776,6 +1782,7 @@ export const register: Register = on => {
             {!c.gentle && (
               <Button
                 key="gentle-refresh"
+                label={REFRESH}
                 plain
                 onPress={() => {
                   if (view.demo) return $.ui.toast('demo mode')
