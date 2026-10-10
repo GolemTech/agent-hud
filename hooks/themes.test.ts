@@ -98,6 +98,6 @@ test('shownTheme draws the preview over the saved theme, and the saved one witho
   expect(shownTheme(undefined, undefined)).toBe(THEMES.default)
 })
 
-test('pickerRows counts a title, one row per theme and the Cancel row', () => {
-  expect(pickerRows()).toBe(THEME_NAMES.length + 2)
+test('pickerRows counts two hint rows, one row per theme and the Cancel row', () => {
+  expect(pickerRows()).toBe(THEME_NAMES.length + 3)
 })

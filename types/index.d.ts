@@ -37,9 +37,9 @@ declare module 'claude-code' {
       scroll: number
       /** The `/hud-theme` name (`hooks/themes.ts`); an unknown one draws as `default`. */
       theme: string
-      /** The `/hud-theme` picker is open in the Pane. */
+      /** The `/hud-theme` dialog pane (`hud-theme`) is open. */
       picker: boolean
-      /** The theme the picker's focus ring rests on, drawn over `theme`; null when none. */
+      /** The theme the dialog's focus ring rests on, drawn over `theme`; null when none. */
       preview: string | null
     }
   }

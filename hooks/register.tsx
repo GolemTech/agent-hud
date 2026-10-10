@@ -54,12 +54,14 @@ import {
   isThemeName,
   parseThemeArg,
   PICKER_CANCEL,
+  PICKER_FOCUS_RETRY_MS,
   pickerRows,
   shownTheme,
   THEME_NAMES,
   themeFromKey,
   themeKey,
   themeList,
+  THEME_PANE,
   THEMES,
 } from './themes'
 import type { Role, ThemeName } from './themes'
@@ -1021,6 +1023,39 @@ const closePicker = async ($: EngineInterface): Promise<void> => {
   await update($, pickerOpen, () => false)
 }
 
+// The theme dialog's open: a dialog seated inline above the prompt, sized to
+// its rows, that asks for the keys, closes on Escape and holds the toasts.
+const THEME_DIALOG = {
+  id: THEME_PANE,
+  title: 'HUD theme',
+  focus: true,
+  closeOnEscape: true,
+  holdToasts: true,
+  rows: pickerRows(),
+} as const
+
+// Asks for the keys again once `/hud-theme` returned, unless the dialog was
+// already answered.
+const refocusDialog = async ($: EngineInterface): Promise<void> => {
+  try {
+    if (await read($, pickerOpen)) await $.ui.open(THEME_DIALOG)
+  } catch {
+    // the person can still take the keys with ctrl+x tab or a click
+  }
+}
+
+// Ends the dialog: saves `name`, or with null keeps the saved theme, and
+// closes the pane (its own close is not seen by the `ui.close` hook).
+const finishPicker = async ($: EngineInterface, name: ThemeName | null): Promise<void> => {
+  if (name) await saveTheme($, name)
+  else await closePicker($)
+  try {
+    await $.ui.close({ id: THEME_PANE })
+  } catch {
+    // already closed
+  }
+}
+
 // Applies a theme at once and keeps it for later sessions. False when the
 // save failed; the theme still applies to this session.
 const saveTheme = async ($: EngineInterface, name: ThemeName): Promise<boolean> => {
@@ -1268,6 +1303,56 @@ export const register: Register = on => {
     return next(e)
   }).catch((_$, e, next) => next(e))
 
+  // The person's Escape or close mark on the dialog: drop the preview, keep
+  // the saved theme. (The plugin's own close is not seen here; `finishPicker`
+  // clears the state itself.)
+  on('ui.close', { id: THEME_PANE }, async ($, e, next) => {
+    try {
+      await closePicker($)
+    } catch {
+      // the next session start clears it
+    }
+    return next(e)
+  }).catch((_$, e, next) => next(e))
+
+  // The theme dialog: hints, one Button per theme in its own accent (the saved
+  // one marked and focused first), and Cancel. `ui.focus` previews the theme
+  // the ring rests on; a press saves it, Cancel only closes.
+  on('ui.render', { component: 'Pane', requestId: THEME_PANE }, async ($, e) => {
+    const { Box, Text, Button } = $.ui.resolve(e)
+    const t = await activePalette($)
+    const savedTheme = await read($, themeName)
+    return (
+      <Box flexDirection="column" paddingX={PANE_PADDING_X}>
+        <Text wrap="truncate-end" color={t.subtle}>
+          ↑/↓ preview · Enter apply · Esc cancel
+        </Text>
+        <Text wrap="truncate-end" color={t.subtle}>
+          {e.props.isFocused ? ' ' : 'Keys not here? ctrl+x tab or a click focuses this dialog'}
+        </Text>
+        {THEME_NAMES.map(name => (
+          <Box flexShrink={0}>
+            <Button
+              key={themeKey(name)}
+              plain
+              autoFocus={name === savedTheme || undefined}
+              onPress={() => void finishPicker($, name)}
+            >
+              <Text wrap="truncate-end" color={THEMES[name].accent}>
+                {`${name === savedTheme ? '●' : ' '} ${name}`}
+              </Text>
+            </Button>
+          </Box>
+        ))}
+        <Box flexShrink={0}>
+          <Button key={PICKER_CANCEL} plain onPress={() => void finishPicker($, null)}>
+            <Text color={t.subtle}>{'  Cancel'}</Text>
+          </Button>
+        </Box>
+      </Box>
+    )
+  })
+
   // Todos: mirror the main loop's task tools once each call succeeded.
   // A subagent's own list (e.agentId set) would overwrite the session's.
   on('tool.call', { tool: 'TodoWrite' }, async ($, e, next) => {
@@ -1333,19 +1418,22 @@ export const register: Register = on => {
     const current = await read($, themeName)
     const active = isThemeName(current) ? current : DEFAULT_THEME
     if (arg.kind === 'list') {
-      // The picker in the Pane, focused when the prompt can give the keys;
-      // the text list stays for a session where the Pane is not placed.
+      // The picker is a dialog pane of its own, seated inline above the prompt
+      // at any width (an open answering the person's command). Its `focus` is
+      // refused while this command runs, so it is asked again once it returned.
+      // The text list stays for a session that places no panes.
       try {
         await update($, previewName, () => null)
         await update($, pickerOpen, () => true)
-        await $.ui.open({ id: PANE, title: 'Agent HUD', focus: true })
+        await $.ui.open(THEME_DIALOG)
+        $.clock.after(PICKER_FOCUS_RETRY_MS, () => void refocusDialog($))
       } catch {
         // the list below still answers
       }
       return {
         text:
           `Agent HUD themes:\n${themeList(active)}\n` +
-          'Pick one in the Agent HUD sidebar (moving the focus previews it), or run /hud-theme <name>.',
+          'Pick one in the HUD theme dialog above the prompt (moving previews it), or run /hud-theme <name>.',
       }
     }
     if (arg.kind === 'unknown') {
@@ -1360,7 +1448,7 @@ export const register: Register = on => {
   // Picker preview: the focus ring resting on a theme Button draws that theme;
   // anywhere else, the saved one. An observer: the move is forwarded untouched,
   // and a failure here never keeps the ring from moving.
-  on('ui.focus', { component: 'Pane', requestId: PANE }, async ($, e, next) => {
+  on('ui.focus', { component: 'Pane', requestId: THEME_PANE }, async ($, e, next) => {
     try {
       const [open, current] = await Promise.all([read($, pickerOpen), read($, previewName)])
       const name = open && (e.plugin === undefined || e.plugin === 'agent-hud') ? themeFromKey(e.element) : null
@@ -1945,40 +2033,6 @@ export const register: Register = on => {
         </Box>,
     ]
 
-    // `/hud-theme` picker: replaces the sections while open, one row per
-    // theme (pickerRows), each name in its own accent. The saved theme takes
-    // the focus ring first; `ui.focus` previews the one the ring rests on.
-    const savedTheme = await read($, themeName)
-    const picker = (
-      <Box flexDirection="column">
-        <Text bold wrap="truncate-end" color={t.accent}>
-          Theme · move to preview, Enter saves
-        </Text>
-        {THEME_NAMES.map(name => (
-          <Box flexShrink={0}>
-            <Button
-              key={themeKey(name)}
-              plain
-              autoFocus={name === savedTheme || undefined}
-              onPress={() => void saveTheme($, name)}
-            >
-              <Text wrap="truncate-end" color={THEMES[name].accent}>
-                {`${name === savedTheme ? '●' : ' '} ${name}`}
-              </Text>
-            </Button>
-          </Box>
-        ))}
-        <Box flexShrink={0}>
-          <Button key={PICKER_CANCEL} plain onPress={() => void closePicker($)}>
-            <Text color={t.subtle}>{'  Cancel'}</Text>
-          </Button>
-        </Box>
-      </Box>
-    )
-    const picking = await read($, pickerOpen)
-    const body = picking ? [picker] : sections
-    const bodyContentRows = picking ? pickerRows() : contentRows
-
     // Inline frames fit the tree, and without the body's height there is no
     // window to fill: the plain flow, scrolled by the engine.
     const bodyRows = e.props.scroll?.bodyRows
@@ -1987,7 +2041,7 @@ export const register: Register = on => {
       return (
         <Box flexDirection="column" paddingX={PANE_PADDING_X}>
           {headerRow}
-          <Box flexDirection="column">{body}</Box>
+          <Box flexDirection="column">{sections}</Box>
           {footerRow}
         </Box>
       )
@@ -1998,7 +2052,7 @@ export const register: Register = on => {
     // clamped here too, so a shrunk content (a collapsed section, a taller
     // pane) never leaves the window past its end.
     const viewportRows = viewportRowsFor(bodyRows, footerRow !== null)
-    const max = maxScrollOffset(bodyContentRows, viewportRows)
+    const max = maxScrollOffset(contentRows, viewportRows)
     scrollMax = max
     const offset = clampOffset(await read($, scrollOffset), max)
     return (
