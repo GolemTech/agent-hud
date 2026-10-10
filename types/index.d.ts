@@ -35,6 +35,8 @@ declare module 'claude-code' {
       private: boolean
       /** The Pane's own scroll offset, in rows, under the sticky header. */
       scroll: number
+      /** The `/hud-theme` name (`hooks/themes.ts`); an unknown one draws as `default`. */
+      theme: string
     }
   }
 }

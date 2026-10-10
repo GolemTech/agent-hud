@@ -49,6 +49,8 @@ import {
   viewportRowsFor,
 } from './layout'
 import { clean } from './text'
+import { DEFAULT_THEME, isThemeName, parseThemeArg, resolveTheme, themeList } from './themes'
+import type { Role } from './themes'
 
 // Re-exported for the unit tests, which import the helpers from here.
 export { clean }
@@ -323,6 +325,10 @@ const todos = atom({ plugin: 'agent-hud', key: 'todos' } as const, [])
 const privateMode = atom({ plugin: 'agent-hud', key: 'private' } as const, false)
 // The Pane's own scroll offset under the sticky header (`ui.scroll` moves it).
 const scrollOffset = atom({ plugin: 'agent-hud', key: 'scroll' } as const, 0)
+// `/hud-theme`: the active theme's name, kept in `$.store` under THEME_KEY
+// and loaded at session start; both surfaces read it to color their roles.
+const themeName = atom({ plugin: 'agent-hud', key: 'theme' } as const, DEFAULT_THEME as string)
+const THEME_KEY = 'theme'
 // The last offset the latest sticky render allowed; null while the Pane is
 // drawn in the plain flow (inline, or no body height), where the engine scrolls.
 let scrollMax: number | null = null
@@ -351,12 +357,11 @@ const icon = (status: string): string => {
   }
 }
 
-// Theme keys adapt to light/dark automatically, so the pane stays legible on
-// either terminal theme.
-const color = (status: string): string => {
+// The theme role a subagent's status icon is drawn in (`themes.ts`).
+const color = (status: string): Role => {
   switch (status) {
     case 'running':
-      return 'claude'
+      return 'accent'
     case 'completed':
       return 'success'
     case 'failed':
@@ -549,7 +554,8 @@ export const barCells = (percent: number, width = 10): [number, number] => {
   return [filled, width - filled]
 }
 
-export const meterColor = (percent: number): string =>
+// The theme role a meter's bar is drawn in.
+export const meterColor = (percent: number): Role =>
   percent < 60 ? 'success' : percent < 85 ? 'warning' : 'error'
 
 // 261,474 tokens · $16.13 spent
@@ -995,6 +1001,19 @@ export const register: Register = on => {
     } catch {
       // keep the last offset; the render clamps it anyway
     }
+    // The theme chosen in an earlier session; a missing or unknown one is
+    // `default`. A store that cannot be read keeps the current theme.
+    try {
+      const stored = await $.store.get(THEME_KEY)
+      await update($, themeName, () => (isThemeName(stored) ? stored : DEFAULT_THEME))
+    } catch {
+      // keep the theme this session already has
+    }
+    await $.command.register({
+      name: 'hud-theme',
+      description: 'Pick the Agent HUD color theme; without a name, list the themes',
+      argumentHint: '[name]',
+    })
     await $.command.register({
       name: 'hud',
       description: 'Open the Agent HUD sidebar',
@@ -1239,6 +1258,25 @@ export const register: Register = on => {
     }
   })
 
+  // Theme: the atom write redraws both surfaces at once; `$.store` keeps the
+  // choice for later sessions. A failed save still applies it to this one.
+  on('command.run', { command: 'hud-theme' }, async ($, e) => {
+    const arg = parseThemeArg(e.args ?? '')
+    const current = await read($, themeName)
+    const active = isThemeName(current) ? current : DEFAULT_THEME
+    if (arg.kind === 'list') return { text: `Agent HUD themes:\n${themeList(active)}\nRun /hud-theme <name> to switch.` }
+    if (arg.kind === 'unknown') {
+      return { text: `Unknown HUD theme "${clean(arg.input)}". Available themes:\n${themeList(active)}` }
+    }
+    await update($, themeName, () => arg.name)
+    try {
+      await $.store.set(THEME_KEY, arg.name)
+    } catch {
+      return { text: `HUD theme set to ${arg.name} for this session; it could not be saved for the next one.` }
+    }
+    return { text: `HUD theme set to ${arg.name}.` }
+  })
+
   // Hidden-sidebar band: shown above the prompt whenever the pane is not on
   // screen (closed by → or its ✕, or open but unplaced on a narrow terminal),
   // with a button that reopens it. It asks the engine itself through
@@ -1252,6 +1290,7 @@ export const register: Register = on => {
     if (isSidebarShown(await $.ui.panes())) return next(e)
 
     const { Box, Text, Button } = $.ui.resolve(e)
+    const t = resolveTheme(await read($, themeName))
     const view = await hudView($, list)
     const connected = view.servers.filter(s => s.connected).length
 
@@ -1263,12 +1302,12 @@ export const register: Register = on => {
             label="▸ Agent HUD"
             onPress={() => void $.ui.open({ id: PANE, title: 'Agent HUD' })}
           >
-            <Text bold color="claude">
+            <Text bold color={t.accent}>
               ▸ Agent HUD
             </Text>
           </Button>
         </Box>
-        <Text wrap="truncate-end" color="subtle">
+        <Text wrap="truncate-end" color={t.subtle}>
           {summaryLine(view.contextPercent, connected, view.servers.length, view.agents.length)}
         </Text>
       </Box>
@@ -1291,6 +1330,8 @@ export const register: Register = on => {
   on('ui.render', { component: 'Pane', requestId: PANE }, async ($, e) => {
     const { Box, Text, Button } = $.ui.resolve(e)
     const c = await read($, collapsed)
+    // Every color below is a role of the active theme (`themes.ts`).
+    const t = resolveTheme(await read($, themeName))
     const view = await hudView($, await read($, rows))
     const { servers, footer, agents: list } = view
     const ms = view.meters
@@ -1306,8 +1347,8 @@ export const register: Register = on => {
     const modelLine = (m: ModelInfo | undefined, indent = '') =>
       m && (
         <Text wrap="truncate-end">
-          {indent}🤖 <Text bold color="warning">{prettyModel(m.model)}</Text>
-          {m.effort !== undefined && <Text color="subtle"> · {String(m.effort)}</Text>}
+          {indent}🤖 <Text bold color={t.warning}>{prettyModel(m.model)}</Text>
+          {m.effort !== undefined && <Text color={t.subtle}> · {String(m.effort)}</Text>}
         </Text>
       )
 
@@ -1326,7 +1367,7 @@ export const register: Register = on => {
           plain
           onPress={() => void update($, collapsed, prev => ({ ...prev, [id]: !prev[id] }))}
         >
-          <Text bold inverse color="claude">
+          <Text bold inverse color={t.accent}>
             {sectionTitle(headerText(id, label))}
           </Text>
         </Button>
@@ -1342,7 +1383,7 @@ export const register: Register = on => {
       const w = ruleWidth(L.columns, itemWidths)
       return w > 0 ? (
         <Box flexShrink={0}>
-          <Text color="subtle">{'─'.repeat(w)}</Text>
+          <Text color={t.subtle}>{'─'.repeat(w)}</Text>
         </Box>
       ) : null
     }
@@ -1364,11 +1405,11 @@ export const register: Register = on => {
         }}
       >
         {selected ? (
-          <Text bold color="success">
+          <Text bold color={t.success}>
             {buttonText(label, true)}
           </Text>
         ) : (
-          <Text color="claude">{buttonText(label)}</Text>
+          <Text color={t.accent}>{buttonText(label)}</Text>
         )}
       </Button>
     )
@@ -1410,9 +1451,9 @@ export const register: Register = on => {
     }
 
     const gentleSection = (g: GentleView | null) => {
-      if (!g) return <Text color="subtle">checking…</Text>
+      if (!g) return <Text color={t.subtle}>checking…</Text>
       if (!g.tools.find(t => t.name === 'gentle-ai')?.version)
-        return <Text color="subtle">gentle-ai not installed</Text>
+        return <Text color={t.subtle}>gentle-ai not installed</Text>
       const { rows, grid } = gentleLayout(g)
       return (
         <Box flexDirection="column">
@@ -1420,12 +1461,12 @@ export const register: Register = on => {
             r.kind === 'heading' ? (
               <Box flexWrap="wrap" gap={1}>
                 <Box flexShrink={0}>
-                  <Text bold color="subtle">
+                  <Text bold color={t.subtle}>
                     {`${' '.repeat(HEADING_INDENT)}${r.label}`.padEnd(grid.head)}
                   </Text>
                 </Box>
                 {r.summary && (
-                  <Text wrap="truncate-end" color={r.summary.tone}>
+                  <Text wrap="truncate-end" color={r.summary.tone && t[r.summary.tone]}>
                     {r.summary.text}
                   </Text>
                 )}
@@ -1433,13 +1474,13 @@ export const register: Register = on => {
             ) : (
               <Box flexWrap="wrap" gap={1}>
                 <Box flexShrink={0}>
-                  <Text color="subtle">{`${' '.repeat(ITEM_INDENT)}${r.label}`.padEnd(grid.label)}</Text>
+                  <Text color={t.subtle}>{`${' '.repeat(ITEM_INDENT)}${r.label}`.padEnd(grid.label)}</Text>
                 </Box>
                 <Box flexShrink={0}>
-                  <Text color={r.value.tone}>{r.value.text.padEnd(grid.value)}</Text>
+                  <Text color={r.value.tone && t[r.value.tone]}>{r.value.text.padEnd(grid.value)}</Text>
                 </Box>
                 {r.detail && (
-                  <Text wrap="truncate-end" color={r.detail.tone}>
+                  <Text wrap="truncate-end" color={r.detail.tone && t[r.detail.tone]}>
                     {r.detail.text}
                   </Text>
                 )}
@@ -1536,7 +1577,7 @@ export const register: Register = on => {
       <Box flexDirection="column" flexShrink={0} marginBottom={1}>
         <Box flexWrap="wrap">
           <Box width={bandWidth} flexShrink={0}>
-            <Text bold inverse color="claude" wrap="truncate-end">
+            <Text bold inverse color={t.accent} wrap="truncate-end">
               {centerBand(`📂 ${view.project ?? projectName(view.cwd)}`, bandWidth)}
             </Text>
           </Box>
@@ -1547,7 +1588,7 @@ export const register: Register = on => {
               plain
               onPress={() => void $.ui.close({ id: PANE })}
             >
-              <Text bold inverse color="claude">
+              <Text bold inverse color={t.accent}>
                 {HIDE_BUTTON}
               </Text>
             </Button>
@@ -1560,10 +1601,10 @@ export const register: Register = on => {
     const footerRow = versionCache ? (
       <Box flexDirection="column" flexShrink={0} marginTop={1}>
         <Text wrap="truncate-end">
-          <Text color="success">● </Text>
-          <Text color="subtle">Claude</Text>
+          <Text color={t.success}>● </Text>
+          <Text color={t.subtle}>Claude</Text>
           <Text bold>Code</Text>
-          <Text color="subtle">{` ${versionCache}`}</Text>
+          <Text color={t.subtle}>{` ${versionCache}`}</Text>
         </Text>
       </Box>
     ) : null
@@ -1574,7 +1615,7 @@ export const register: Register = on => {
             {header('session', 'Session')}
             {view.private && (
               <Box flexShrink={0}>
-                <Text color="warning">{PRIVATE_BADGE}</Text>
+                <Text color={t.warning}>{PRIVATE_BADGE}</Text>
               </Box>
             )}
             {view.private
@@ -1584,7 +1625,7 @@ export const register: Register = on => {
           {!c.session && (
             <Text wrap="truncate-end">
               {view.title && <Text bold>{view.title}</Text>}
-              <Text color="subtle">
+              <Text color={t.subtle}>
                 {view.title && view.sessionId && ' · '}
                 {view.sessionId.slice(0, 8)}
               </Text>
@@ -1598,14 +1639,14 @@ export const register: Register = on => {
           {!c.session && modelLine(view.mainModel)}
           {!c.session && view.outputStyle && (
             <Text wrap="truncate-end">
-              🎭 <Text color="claude">{view.outputStyle}</Text>
+              🎭 <Text color={t.accent}>{view.outputStyle}</Text>
             </Text>
           )}
           {!c.session && branch && (
             <Box flexWrap="wrap">
               <Box>
                 <Text wrap="truncate-end">
-                  <Text bold color="claude">
+                  <Text bold color={t.accent}>
                     {BRANCH_ICON}
                   </Text>{' '}
                   <Text bold>{branch}</Text>
@@ -1614,8 +1655,8 @@ export const register: Register = on => {
               {changeText ? (
                 <Box flexShrink={0}>
                   <Text>
-                    {view.changes && view.changes.added > 0 && <Text color="success">{` +${view.changes.added}`}</Text>}
-                    {view.changes && view.changes.removed > 0 && <Text color="error">{` -${view.changes.removed}`}</Text>}
+                    {view.changes && view.changes.added > 0 && <Text color={t.success}>{` +${view.changes.added}`}</Text>}
+                    {view.changes && view.changes.removed > 0 && <Text color={t.error}>{` -${view.changes.removed}`}</Text>}
                   </Text>
                 </Box>
               ) : null}
@@ -1627,7 +1668,7 @@ export const register: Register = on => {
               const { parent, leaf } = shortPath(view.cwd, view.home, W - 3)
               return (
                 <Text wrap="truncate-start">
-                  📁 <Text color="subtle">{parent}</Text>
+                  📁 <Text color={t.subtle}>{parent}</Text>
                   <Text bold>{leaf}</Text>
                 </Text>
               )
@@ -1639,7 +1680,7 @@ export const register: Register = on => {
             {header('context', 'Context')}
             {rule(headerWidth('context', 'Context'))}
           </Box>
-          {!c.context && ms.length === 0 && !footer && <Text color="subtle">no usage yet</Text>}
+          {!c.context && ms.length === 0 && !footer && <Text color={t.subtle}>no usage yet</Text>}
           {!c.context &&
             ms.map(m => {
               const [filled, empty] = barCells(m.percent, L.barWidth)
@@ -1647,9 +1688,9 @@ export const register: Register = on => {
                 <Box flexWrap="wrap">
                   <Box flexShrink={0}>
                     <Text>
-                      <Text color="subtle">{m.label.padEnd(4)}</Text>
-                      <Text color={meterColor(m.percent)}>{'━'.repeat(filled)}</Text>
-                      <Text color="subtle" dimColor>
+                      <Text color={t.subtle}>{m.label.padEnd(4)}</Text>
+                      <Text color={t[meterColor(m.percent)]}>{'━'.repeat(filled)}</Text>
+                      <Text color={t.subtle} dimColor>
                         {'━'.repeat(empty)}
                       </Text>
                       {` ${Math.round(m.percent)}%`.padStart(5)}
@@ -1657,7 +1698,7 @@ export const register: Register = on => {
                   </Box>
                   {m.note ? (
                     <Box>
-                      <Text wrap="truncate-end" color="subtle">
+                      <Text wrap="truncate-end" color={t.subtle}>
                         {m.note}
                       </Text>
                     </Box>
@@ -1665,7 +1706,7 @@ export const register: Register = on => {
                 </Box>
               )
             })}
-          {!c.context && footer ? <Text color="subtle">{footer}</Text> : null}
+          {!c.context && footer ? <Text color={t.subtle}>{footer}</Text> : null}
         </Box>,
 
         <Box marginTop={1} flexDirection="column">
@@ -1673,13 +1714,13 @@ export const register: Register = on => {
             {header('mcp', 'MCP')}
             {rule(headerWidth('mcp', 'MCP'))}
           </Box>
-          {!c.mcp && servers.length === 0 && <Text color="subtle">none connected</Text>}
+          {!c.mcp && servers.length === 0 && <Text color={t.subtle}>none connected</Text>}
           {!c.mcp &&
             servers.map(s => (
               <Text wrap="truncate-end" dimColor={!s.connected}>
-                <Text color={s.connected ? 'success' : 'subtle'}>{s.connected ? '●' : '○'}</Text>{' '}
+                <Text color={t[s.connected ? 'success' : 'subtle']}>{s.connected ? '●' : '○'}</Text>{' '}
                 {s.name}
-                {!s.connected && <Text color="subtle"> · auth</Text>}
+                {!s.connected && <Text color={t.subtle}> · auth</Text>}
               </Text>
             ))}
         </Box>,
@@ -1698,7 +1739,7 @@ export const register: Register = on => {
                   void update($, rows, prev => prev.filter(r => !r.done))
                 }}
               >
-                <Text color="subtle">{CLEAR_DONE}</Text>
+                <Text color={t.subtle}>{CLEAR_DONE}</Text>
               </Button>
             )}
             {!c.subagents && counts.done + counts.err > 0
@@ -1707,30 +1748,30 @@ export const register: Register = on => {
           </Box>
           {!c.subagents && L.compact && (
             <Text wrap="truncate-end">
-              <Text color="claude">●{counts.run}</Text> <Text color="success">✓{counts.done}</Text>{' '}
-              <Text color="error">✕{counts.err}</Text>
+              <Text color={t.accent}>●{counts.run}</Text> <Text color={t.success}>✓{counts.done}</Text>{' '}
+              <Text color={t.error}>✕{counts.err}</Text>
             </Text>
           )}
           {!c.subagents && !L.compact && (
             <Text wrap="truncate-end">
-              <Text color="claude">● {counts.run} running</Text>
-              <Text color="subtle"> · </Text>
-              <Text color="success">✓ {counts.done} done</Text>
-              <Text color="subtle"> · </Text>
-              <Text color="error">✕ {counts.err} error</Text>
+              <Text color={t.accent}>● {counts.run} running</Text>
+              <Text color={t.subtle}> · </Text>
+              <Text color={t.success}>✓ {counts.done} done</Text>
+              <Text color={t.subtle}> · </Text>
+              <Text color={t.error}>✕ {counts.err} error</Text>
             </Text>
           )}
           {!c.subagents &&
             cardList.map(r => (
               <Box flexDirection="column">
                 <Text wrap="truncate-end">
-                  <Text color={color(r.status)}>{icon(r.status)}</Text> <Text bold>{r.description}</Text>
+                  <Text color={t[color(r.status)]}>{icon(r.status)}</Text> <Text bold>{r.description}</Text>
                 </Text>
-                <Text wrap="truncate-end" color="subtle">
+                <Text wrap="truncate-end" color={t.subtle}>
                   {'  '}(@{r.type} subagent)
                 </Text>
                 {modelLine(view.models.get(r.id), '  ')}
-                <Text wrap="truncate-end" color="subtle">
+                <Text wrap="truncate-end" color={t.subtle}>
                   {'  '}◷ {fmt(r.elapsedMs)}
                   {r.tokens !== undefined && `  ≋ ${fmtTokens(r.tokens)} tok`}
                 </Text>
@@ -1752,26 +1793,26 @@ export const register: Register = on => {
                   void update($, todos, prev => prev.filter(t => t.status !== 'completed'))
                 }}
               >
-                <Text color="subtle">{CLEAR_DONE}</Text>
+                <Text color={t.subtle}>{CLEAR_DONE}</Text>
               </Button>
             )}
             {!c.todos && todoDone > 0
               ? rule(headerWidth('todos', todosHeader), CLEAR_DONE.length)
               : rule(headerWidth('todos', todosHeader))}
           </Box>
-          {!c.todos && todoList.length === 0 && <Text color="subtle">no todos</Text>}
+          {!c.todos && todoList.length === 0 && <Text color={t.subtle}>no todos</Text>}
           {!c.todos &&
-            todoList.map(t =>
-              t.status === 'completed' ? (
-                <Text wrap="wrap" color="subtle">
-                  [✓] {t.content}
+            todoList.map(todo =>
+              todo.status === 'completed' ? (
+                <Text wrap="wrap" color={t.subtle}>
+                  [✓] {todo.content}
                 </Text>
-              ) : t.status === 'in_progress' ? (
-                <Text wrap="wrap" bold color="success">
-                  [ ] {t.content}
+              ) : todo.status === 'in_progress' ? (
+                <Text wrap="wrap" bold color={t.success}>
+                  [ ] {todo.content}
                 </Text>
               ) : (
-                <Text wrap="wrap">[ ] {t.content}</Text>
+                <Text wrap="wrap">[ ] {todo.content}</Text>
               ),
             )}
         </Box>,
@@ -1789,7 +1830,7 @@ export const register: Register = on => {
                   void refreshGentle($)
                 }}
               >
-                <Text color="subtle">{REFRESH}</Text>
+                <Text color={t.subtle}>{REFRESH}</Text>
               </Button>
             )}
             {!c.gentle
