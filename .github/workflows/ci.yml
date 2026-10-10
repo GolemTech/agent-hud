@@ -24,6 +24,16 @@ jobs:
       - run: npm install -g @anthropic-ai/claude-code@2.1.296
       - run: claude plugin test .
       - run: claude plugin validate .
+      # Claude Code 2.1.288 refuses a Button with neither a `label` nor one
+      # string child, and the whole Pane draws blank; newer builds and the test
+      # kit fill it from the children, so only the source can tell.
+      - name: Every Button passes a label
+        run: |
+          node -e '
+            const src = require("fs").readFileSync("hooks/register.tsx", "utf8").replace(/=>/g, "")
+            const bad = (src.match(/<Button\b[^>]*>/g) ?? []).filter(b => !/\blabel=/.test(b))
+            if (bad.length) { console.error("Button without label:\n" + bad.join("\n")); process.exit(1) }
+          '
 
   secrets:
     name: Secret scan (gitleaks)

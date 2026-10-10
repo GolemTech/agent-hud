@@ -35,7 +35,7 @@ Everything runs from `hooks/register.tsx`. The top of the file is pure, exported
 
 ## Mods API gotchas (all hit in practice)
 
-- Every `<Button>` needs `onPress`; without it the render hook throws and the whole Pane draws blank. State changes from a button go through `update($, atom, fn)` inside `onPress`.
+- Every `<Button>` needs `onPress`; without it the render hook throws and the whole Pane draws blank. Every `<Button>` also passes `label`: Claude Code 2.1.288 refuses a Button with neither a `label` nor one string child (ours hold styled `Text`), and the Pane draws blank there too. Newer builds and the test kit fill the label from the children, so no test can catch a missing one; a CI step checks the source instead. State changes from a button go through `update($, atom, fn)` inside `onPress`.
 - Call `$` at the call site: `$.process.run(...)` works, passing `$.process.run` as a value is refused by `validate`.
 - `$` is followed only into functions declared in the same file, never across an import: a helper in `gentle.ts` that takes `$` makes the whole module fail to load ("$ is passed to ..., imported from ..."). Keep `$`-calling code in `register.tsx` and only pure code in other modules.
 - Never run gga for detection: every gga command except `run` checks GitHub for updates (curl; `CURL_CMD=false` turns it off), and `gga config` / `gga version` source the repository's `.gga`, which executes it. Read the hook files and `.gga` as text instead (`parseGgaConfig`).

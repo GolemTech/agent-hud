@@ -454,7 +454,8 @@ const withoutCleared = (list: readonly TodoItem[]): TodoItem[] =>
 // ── Context meters ───────────────────────────────────────────────────────
 // The status line's figures from `$.session.usage()`: the session's context
 // window plus the account's rate-limit windows (5h, 7d). Each is optional
-// before the first response, so a missing one is simply dropped.
+// before the first response: a missing rate limit is dropped, a context
+// window with no reading yet shows at 0%.
 
 type UsageLike = {
   context?: { tokens?: number; percent?: number; window?: number }
@@ -510,8 +511,11 @@ export const localClock = (at: number, offsetMin: number, now: number): string =
 export const meters = (usage: UsageLike, now: number, offsetMin?: number | null): Meter[] => {
   const out: Meter[] = []
   const ctx = usage.context
-  if (ctx?.percent !== undefined) {
-    out.push({ label: 'ctx', percent: ctx.percent, note: ctx.window ? ` · ${fmtTokens(ctx.window)}` : '' })
+  // A fresh session (after /clear, before the first response) has a window
+  // but no reading yet: show it at 0%.
+  const percent = ctx?.percent ?? (ctx?.window ? 0 : undefined)
+  if (percent !== undefined) {
+    out.push({ label: 'ctx', percent, note: ctx?.window ? ` · ${fmtTokens(ctx.window)}` : '' })
   }
   const rank = (kind: string) => {
     const i = WINDOW_ORDER.indexOf(kind)
@@ -551,7 +555,7 @@ export const meterColor = (percent: number): string =>
 // 261,474 tokens · $16.13 spent
 export const contextFooter = (usage: UsageLike): string => {
   const parts: string[] = []
-  const tokens = usage.context?.tokens
+  const tokens = usage.context?.tokens ?? (usage.context?.window ? 0 : undefined)
   if (tokens !== undefined) parts.push(`${tokens.toLocaleString('en-US')} tokens`)
   const usd = usage.cost?.usd
   if (usd !== undefined) parts.push(`$${usd.toFixed(2)} spent`)
@@ -1256,6 +1260,7 @@ export const register: Register = on => {
         <Box flexShrink={0}>
           <Button
             key="expand"
+            label="▸ Agent HUD"
             onPress={() => void $.ui.open({ id: PANE, title: 'Agent HUD' })}
           >
             <Text bold color="claude">
@@ -1317,6 +1322,7 @@ export const register: Register = on => {
       <Box flexShrink={0}>
         <Button
           key={`toggle-${id}`}
+          label={headerText(id, label)}
           plain
           onPress={() => void update($, collapsed, prev => ({ ...prev, [id]: !prev[id] }))}
         >
@@ -1350,6 +1356,7 @@ export const register: Register = on => {
     const action = (key: string, label: string, act: () => Promise<unknown>, selected = false) => (
       <Button
         key={key}
+        label={buttonText(label, selected)}
         plain
         onPress={() => {
           if (view.demo) return $.ui.toast('demo mode')
@@ -1536,6 +1543,7 @@ export const register: Register = on => {
           <Box flexShrink={0}>
             <Button
               key="hide-sidebar"
+              label={HIDE_BUTTON}
               plain
               onPress={() => void $.ui.close({ id: PANE })}
             >
@@ -1682,6 +1690,7 @@ export const register: Register = on => {
             {!c.subagents && counts.done + counts.err > 0 && (
               <Button
                 key="clear-subagents"
+                label={CLEAR_DONE}
                 plain
                 onPress={() => {
                   if (view.demo) return // sample data: nothing real to clear
@@ -1735,6 +1744,7 @@ export const register: Register = on => {
             {!c.todos && todoDone > 0 && (
               <Button
                 key="clear-todos"
+                label={CLEAR_DONE}
                 plain
                 onPress={() => {
                   if (view.demo) return // sample data: nothing real to clear
@@ -1772,6 +1782,7 @@ export const register: Register = on => {
             {!c.gentle && (
               <Button
                 key="gentle-refresh"
+                label={REFRESH}
                 plain
                 onPress={() => {
                   if (view.demo) return $.ui.toast('demo mode')
