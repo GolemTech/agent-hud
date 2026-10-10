@@ -84,3 +84,23 @@ export const shownTheme = (saved: unknown, preview: unknown): Palette =>
 // Rows the picker block draws: the hint (and, without the keys, how to take
 // them), one Button per theme, Cancel, and the blank row above the sections.
 export const pickerRows = (hasKeys: boolean): number => THEME_NAMES.length + (hasKeys ? 1 : 2) + 2
+
+// The picker's focus ring order: the element the Pane draws right before the
+// picker (`before`), every theme Button in list order, then Cancel. The render
+// draws the Buttons in this same order.
+export const pickerOrder = (before: string): string[] => [before, ...THEME_NAMES.map(themeKey), PICKER_CANCEL]
+
+// Carousel: focus events carry no direction, so a wrap is inferred from the
+// previous element. A step from the last theme onto the element right after
+// it lands on the first theme; a step from the first theme onto the element
+// right before it lands on the last. Anything else (a step inside the list, a
+// jump such as a click elsewhere) is null: the move stands as it is.
+export const wrapFocus = (prev: string | null, next: string | undefined, order: readonly string[]): string | null => {
+  const themes = order.filter(key => themeFromKey(key) !== null)
+  const first = themes[0]
+  const last = themes.at(-1)
+  if (!first || !last || !prev || !next) return null
+  if (prev === last && next === order[order.indexOf(last) + 1]) return first
+  if (prev === first && next === order[order.indexOf(first) - 1]) return last
+  return null
+}

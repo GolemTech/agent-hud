@@ -9,7 +9,7 @@ const CWD = `${HOME}/code/example`
 
 // The engine's bottom for the poller, the Pane and the picker. `opens`
 // collects every `$.ui.open` argument; `ui.focus` lands wherever it is asked.
-const answerEngine = (on: On, opens: unknown[] = [], closes: unknown[] = []) => {
+const answerEngine = (on: On, opens: unknown[] = [], closes: unknown[] = [], landed: (string | undefined)[] = []) => {
   const clock = mock.clock(on)
   mock.env(on, { HOME })
   mock.store(on)
@@ -22,7 +22,10 @@ const answerEngine = (on: On, opens: unknown[] = [], closes: unknown[] = []) => 
     closes.push(e)
     return { value: undefined } as never
   })
-  on('ui.focus', () => ({}) as never)
+  on('ui.focus', (_$, e) => {
+    landed.push((e as { element?: string }).element)
+    return {} as never
+  })
   on('ui.panes', () =>
     ({ value: [{ id: 'hud', title: 'hud', isShown: true, isFocused: false, isPlaced: true }] }) as never,
   )
@@ -58,13 +61,13 @@ const mountSidebar = ($: Engine, isFocused = true) =>
   })
 
 // The person's focus ring moving onto one element of the sidebar.
-const focus = ($: Engine, element?: string) =>
+const focus = ($: Engine, element?: string, origin: object = { kind: 'person' }) =>
   $.ui.focus({
     component: 'Pane',
     requestId: 'hud',
     plugin: element ? 'agent-hud' : undefined,
     element,
-    origin: { kind: 'person' },
+    origin,
   } as never)
 
 type Open = { id?: string; title?: string; focus?: boolean; closeOnEscape?: boolean }
@@ -99,7 +102,7 @@ test('/hud-theme without a name opens the picker inside the focused sidebar, abo
   const tree = await drawn()
   for (const name of Object.keys(THEMES)) expect(tree).toContain(`theme:${name}`)
   expect(tree).toContain('theme-cancel')
-  expect(tree).toContain('↑/↓ preview · Enter apply · Esc cancel')
+  expect(tree).toContain('↑/↓ preview · Enter apply · c cancel · Esc revert')
   expect(tree).not.toContain('ctrl+x tab') // it holds the keys
   // The sections stay drawn, below the picker.
   expect(tree).toContain('Context')
@@ -200,4 +203,47 @@ test('the sidebar is filled with the theme background; default draws none; a pre
   // Sticky layout (the body's height known) fills the same root.
   await pane.redraw({ ...SIDEBAR, isFocused: true, scroll: { bodyRows: 30 } } as never)
   expect(rootBackground(await drawn())).toBe(THEMES.dracula.background)
+})
+
+test('the picker wraps like a carousel: past the last theme to the first, before the first to the last', async ($, on) => {
+  const landed: (string | undefined)[] = []
+  answerEngine(on, [], [], landed)
+  const { drawn } = await openPicker($)
+
+  // Down from monokai: the ring would land on Cancel; it lands on default.
+  await focus($, 'theme:monokai')
+  await focus($, 'theme-cancel')
+  expect(landed.at(-1)).toBe('theme:default')
+  expect(accentNow(await drawn())).toBe('claude')
+
+  // Up from default: the ring would leave for the header; it lands on monokai.
+  await focus($, 'hide-sidebar')
+  expect(landed.at(-1)).toBe('theme:monokai')
+  expect(accentNow(await drawn())).toBe(THEMES.monokai.accent)
+
+  // Up from monokai is a plain move.
+  await focus($, 'theme:kanagawa')
+  expect(landed.at(-1)).toBe('theme:kanagawa')
+})
+
+test('the carousel leaves non-adjacent jumps and plugin moves untouched', async ($, on) => {
+  const landed: (string | undefined)[] = []
+  answerEngine(on, [], [], landed)
+  await openPicker($)
+
+  // A click from dracula onto Cancel is no step past the last theme.
+  await focus($, 'theme:dracula')
+  await focus($, 'theme-cancel')
+  expect(landed.at(-1)).toBe('theme-cancel')
+
+  // The plugin's own move (an autoFocus) is never redirected.
+  await focus($, 'theme:monokai')
+  await focus($, 'theme-cancel', { kind: 'plugin', name: 'agent-hud' })
+  expect(landed.at(-1)).toBe('theme-cancel')
+})
+
+test('Cancel has the c hotkey', async ($, on) => {
+  answerEngine(on)
+  const { drawn } = await openPicker($)
+  expect(await drawn()).toMatch(/"key":"theme-cancel"[^}]*"hotkey":"c"/)
 })

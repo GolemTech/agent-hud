@@ -3,6 +3,7 @@ import { expect, test } from 'claude-code/testing'
 import {
   DEFAULT_THEME,
   parseThemeArg,
+  pickerOrder,
   pickerRows,
   resolveTheme,
   ROLES,
@@ -11,6 +12,7 @@ import {
   themeFromKey,
   themeKey,
   THEMES,
+  wrapFocus,
 } from './themes'
 
 const PRESETS = [
@@ -122,4 +124,28 @@ test('every preset has its editor background; default keeps the terminal one', (
     expect(THEMES[name].background).toBe(BACKGROUNDS[name])
   }
   expect('background' in THEMES.default).toBe(false)
+})
+
+test('pickerOrder is the element before the picker, every theme Button, then Cancel', () => {
+  const order = pickerOrder('hide-sidebar')
+  expect(order[0]).toBe('hide-sidebar')
+  expect(order.slice(1, -1)).toEqual(THEME_NAMES.map(themeKey))
+  expect(order.at(-1)).toBe('theme-cancel')
+})
+
+test('wrapFocus turns a step past either end of the themes into the other end', () => {
+  const order = pickerOrder('hide-sidebar')
+  expect(wrapFocus('theme:monokai', 'theme-cancel', order)).toBe('theme:default')
+  expect(wrapFocus('theme:default', 'hide-sidebar', order)).toBe('theme:monokai')
+})
+
+test('wrapFocus leaves every other move alone', () => {
+  const order = pickerOrder('hide-sidebar')
+  expect(wrapFocus('theme:dracula', 'theme:nord', order)).toBeNull() // inside the list
+  expect(wrapFocus('theme:dracula', 'theme-cancel', order)).toBeNull() // a jump, not a step
+  expect(wrapFocus('theme:monokai', 'hide-sidebar', order)).toBeNull()
+  expect(wrapFocus('theme:default', 'theme-cancel', order)).toBeNull()
+  expect(wrapFocus('theme-cancel', 'theme:monokai', order)).toBeNull() // back up from Cancel
+  expect(wrapFocus(null, 'theme-cancel', order)).toBeNull()
+  expect(wrapFocus('theme:monokai', undefined, order)).toBeNull()
 })

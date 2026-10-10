@@ -55,6 +55,7 @@ import {
   parseThemeArg,
   PICKER_CANCEL,
   PICKER_FOCUS_RETRY_MS,
+  pickerOrder,
   pickerRows,
   shownTheme,
   THEME_NAMES,
@@ -62,6 +63,7 @@ import {
   themeKey,
   themeList,
   THEMES,
+  wrapFocus,
 } from './themes'
 import type { Palette, Role, ThemeName } from './themes'
 import { isSupportedVersion, unsupportedMessage } from './version'
@@ -1022,8 +1024,17 @@ const activePalette = async ($: EngineInterface, hasKeys = true) => {
 // without one (default) draws exactly as before, on the terminal's own.
 const fill = (t: Palette): { backgroundColor?: string } => (t.background ? { backgroundColor: t.background } : {})
 
+// The sidebar header's hide Button: the element drawn right before the
+// picker, so the carousel's ring order starts there.
+const HIDE_KEY = 'hide-sidebar'
+const PICKER_ORDER = pickerOrder(HIDE_KEY)
+// The picker element the ring last rested on (`ui.focus`), for the carousel.
+// Module-level: a reload forgets it, and the next move is then a plain one.
+let pickerLastFocus: string | null = null
+
 // Leaves the picker: no preview, the sections back.
 const closePicker = async ($: EngineInterface): Promise<void> => {
+  pickerLastFocus = null
   await update($, previewName, () => null)
   await update($, pickerOpen, () => false)
 }
@@ -1372,6 +1383,7 @@ export const register: Register = on => {
       try {
         await update($, previewName, () => null)
         await update($, scrollOffset, () => 0)
+        pickerLastFocus = null
         await update($, pickerOpen, () => true)
         await openForPicker($)
         $.clock.after(PICKER_FOCUS_RETRY_MS, () => void refocusPicker($))
@@ -1397,14 +1409,23 @@ export const register: Register = on => {
   // anywhere else, the saved one. An observer: the move is forwarded untouched,
   // and a failure here never keeps the ring from moving.
   on('ui.focus', { component: 'Pane', requestId: PANE }, async ($, e, next) => {
+    let target = e.element
     try {
       const [open, current] = await Promise.all([read($, pickerOpen), read($, previewName)])
-      const name = open && (e.plugin === undefined || e.plugin === 'agent-hud') ? themeFromKey(e.element) : null
+      const ours = e.plugin === undefined || e.plugin === 'agent-hud'
+      if (open && ours) {
+        // Carousel: a person's step past either end of the themes lands on
+        // the other end. Inferred from the previous element (focus events
+        // carry no direction); a plugin's own move is never redirected.
+        if (e.origin.kind === 'person') target = wrapFocus(pickerLastFocus, e.element, PICKER_ORDER) ?? e.element
+        pickerLastFocus = target ?? null
+      }
+      const name = open && ours ? themeFromKey(target) : null
       if (name !== current) await update($, previewName, () => name)
     } catch {
-      // the preview just does not follow this move
+      target = e.element // any failure: the move stands as it is
     }
-    return next(e)
+    return target === e.element ? next(e) : next({ ...e, element: target })
   }).catch((_$, e, next) => next(e))
 
   // Hidden-sidebar band: shown above the prompt whenever the pane is not on
@@ -1731,7 +1752,7 @@ export const register: Register = on => {
           </Box>
           <Box flexShrink={0}>
             <Button
-              key="hide-sidebar"
+              key={HIDE_KEY}
               plain
               onPress={() => void $.ui.close({ id: PANE })}
             >
@@ -1764,7 +1785,7 @@ export const register: Register = on => {
     const picker = (
       <Box flexDirection="column" flexShrink={0} marginBottom={1}>
         <Text wrap="truncate-end" color={t.subtle}>
-          ↑/↓ preview · Enter apply · Esc cancel
+          ↑/↓ preview · Enter apply · c cancel · Esc revert
         </Text>
         {!hasKeys && (
           <Text wrap="truncate-end" color={t.warning}>
@@ -1786,7 +1807,7 @@ export const register: Register = on => {
           </Box>
         ))}
         <Box flexShrink={0}>
-          <Button key={PICKER_CANCEL} plain onPress={() => void finishPicker($, null)}>
+          <Button key={PICKER_CANCEL} plain hotkey="c" onPress={() => void finishPicker($, null)}>
             <Text color={t.subtle}>{'  Cancel'}</Text>
           </Button>
         </Box>

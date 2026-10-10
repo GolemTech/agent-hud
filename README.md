@@ -111,9 +111,10 @@ To add the marketplace first and install separately:
 `/hud-theme` without a name opens a picker at the top of the sidebar, like
 Claude Code's `/theme`, at any terminal width: each theme is listed in its own
 accent color, the saved one marked `●`, and the sections stay drawn below it.
-Moving through the list previews each theme on the sidebar itself; Enter (or a
-click) applies and saves it, and **Cancel** or moving off the list goes back
-to the saved theme. Esc hands the keys back to the prompt and the sidebar
+Moving through the list previews each theme on the sidebar itself, and it
+wraps around: down from the last theme lands on the first, up from the first
+on the last. Enter (or a click) applies and saves it; `c` (or clicking
+**Cancel**) goes back to the saved theme. Esc hands the keys back to the prompt and the sidebar
 shows the saved theme again; the picker stays until you choose or cancel. If
 moving does nothing, the sidebar does not hold the keys: press `ctrl+x tab` or
 click it. The command also prints the list, for a session that shows no panes.
