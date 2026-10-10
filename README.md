@@ -38,6 +38,9 @@ Details and limits are in [How it gets its data](#how-it-gets-its-data).
 
 ## Install
 
+Requirements: Claude Code 2.1.295 or newer. On an older version the sidebar
+shows only a notice asking you to run `claude update`.
+
 At the prompt of a Claude Code terminal session:
 
 ```

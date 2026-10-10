@@ -51,6 +51,7 @@ import {
 import { clean } from './text'
 import { DEFAULT_THEME, isThemeName, parseThemeArg, resolveTheme, themeList } from './themes'
 import type { Role } from './themes'
+import { isSupportedVersion, unsupportedMessage } from './version'
 
 // Re-exported for the unit tests, which import the helpers from here.
 export { clean }
@@ -669,6 +670,10 @@ export type HudView = {
 
 // The Claude Code version for the footer, read once per session start.
 let versionCache: string | null = null
+// Set at session start when Claude Code is older than MIN_CLAUDE_CODE_VERSION
+// (`version.ts`): both surfaces then draw only this notice. An unknown
+// version leaves it null, so the HUD runs normally.
+let unsupportedNotice: string | null = null
 
 // ── Gentle AI ────────────────────────────────────────────────────────────
 // The section's pure parsers and constants live in `gentle.ts`; everything
@@ -990,10 +995,26 @@ const hudView = async ($: EngineInterface, list: AgentRow[]): Promise<HudView> =
 
 export const register: Register = on => {
   on('session.start', async ($, e, next) => {
+    let supported: boolean | undefined
     try {
-      versionCache = versionLabel(await $.session.version())
+      const v = await $.session.version()
+      versionCache = versionLabel(v)
+      supported = isSupportedVersion(v.base ?? v.version)
     } catch {
-      versionCache = null // the footer is left out
+      versionCache = null // the footer is left out; an unknown version runs
+    }
+    // Too old a Claude Code: say so, keep `/hud` to show the notice, and start
+    // nothing else (no poller, no detection, no other command).
+    unsupportedNotice = supported === false ? unsupportedMessage(versionCache ?? '?') : null
+    if (unsupportedNotice !== null) {
+      try {
+        await $.ui.toast(unsupportedNotice)
+        await $.command.register({ name: 'hud', description: 'Open the Agent HUD sidebar' })
+        void $.ui.open({ id: PANE, title: 'Agent HUD' })
+      } catch {
+        // the notice is best effort; the session goes on regardless
+      }
+      return next(e)
     }
     // A new session starts at the top of the sidebar.
     try {
@@ -1291,6 +1312,13 @@ export const register: Register = on => {
 
     const { Box, Text, Button } = $.ui.resolve(e)
     const t = resolveTheme(await read($, themeName))
+    if (unsupportedNotice !== null) {
+      return (
+        <Text wrap="truncate-end" color={t.warning}>
+          {unsupportedNotice}
+        </Text>
+      )
+    }
     const view = await hudView($, list)
     const connected = view.servers.filter(s => s.connected).length
 
@@ -1329,9 +1357,19 @@ export const register: Register = on => {
 
   on('ui.render', { component: 'Pane', requestId: PANE }, async ($, e) => {
     const { Box, Text, Button } = $.ui.resolve(e)
-    const c = await read($, collapsed)
     // Every color below is a role of the active theme (`themes.ts`).
     const t = resolveTheme(await read($, themeName))
+    // Too old a Claude Code: only the notice, plain text and no buttons.
+    if (unsupportedNotice !== null) {
+      return (
+        <Box flexDirection="column" paddingX={PANE_PADDING_X}>
+          <Text wrap="wrap" color={t.warning}>
+            {unsupportedNotice}
+          </Text>
+        </Box>
+      )
+    }
+    const c = await read($, collapsed)
     const view = await hudView($, await read($, rows))
     const { servers, footer, agents: list } = view
     const ms = view.meters
