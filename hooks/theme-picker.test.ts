@@ -46,133 +46,135 @@ const answerEngine = (on: On, opens: unknown[] = [], closes: unknown[] = []) => 
 
 const startSession = ($: Engine) => $.session.start({ cwd: CWD, surface: 'terminal', isInteractive: true } as never)
 
-const mount = ($: Engine, requestId: string, title: string) =>
+const SIDEBAR = { title: 'Agent HUD', bodyColumns: 60, placement: 'dock' }
+
+const mountSidebar = ($: Engine, isFocused = true) =>
   $.ui.mount({
     plugin: 'agent-hud',
     surface: 'terminal',
     component: 'Pane',
-    requestId,
-    props: { title, isFocused: true, bodyColumns: 60, placement: 'inline' } as never,
+    requestId: 'hud',
+    props: { ...SIDEBAR, isFocused } as never,
   })
 
-// The person's focus ring moving onto one element of the theme dialog.
-const focus = ($: Engine, element: string) =>
+// The person's focus ring moving onto one element of the sidebar.
+const focus = ($: Engine, element?: string) =>
   $.ui.focus({
     component: 'Pane',
-    requestId: 'hud-theme',
-    plugin: 'agent-hud',
+    requestId: 'hud',
+    plugin: element ? 'agent-hud' : undefined,
     element,
     origin: { kind: 'person' },
   } as never)
 
-type Open = { id?: string; focus?: boolean; closeOnEscape?: boolean; holdToasts?: boolean; rows?: number }
-const dialogOpens = (opens: unknown[]) => (opens as Open[]).filter(o => o.id === 'hud-theme')
+type Open = { id?: string; title?: string; focus?: boolean; closeOnEscape?: boolean }
 
-// The sidebar is up; `/hud-theme` opens the dialog, mounted here as the
-// engine would draw it.
 const openPicker = async ($: Engine) => {
   await startSession($)
-  const sidebar = await mount($, 'hud', 'Agent HUD')
+  const pane = await mountSidebar($)
   const text = (await $.command.run({ command: 'hud-theme', args: '' } as never)).text ?? ''
-  const dialog = await mount($, 'hud-theme', 'HUD theme')
-  return {
-    text,
-    dialog,
-    sidebarText: async () => JSON.stringify(await sidebar.drawn()),
-    dialogText: async () => JSON.stringify(await dialog.drawn()),
-  }
+  return { pane, text, drawn: async () => JSON.stringify(await pane.drawn()) }
 }
 
 // The HUD's own accent: the color of the sidebar header's hide button.
 const accentNow = (drawn: string): string | undefined => /"key":"hide-sidebar".*?"color":"([^"]+)"/.exec(drawn)?.[1]
 
-test('/hud-theme without a name opens a focused dialog pane, and asks for the keys again once it returned', async ($, on) => {
+test('/hud-theme without a name opens the picker inside the focused sidebar, above its sections', async ($, on) => {
   const opens: unknown[] = []
   const clock = answerEngine(on, opens)
-  const { text, dialog: mounted, dialogText, sidebarText } = await openPicker($)
+  const { text, drawn } = await openPicker($)
 
   expect(text).toContain('● default (active)')
-  expect(text).toContain('HUD theme')
-  const [first] = dialogOpens(opens)
-  expect(first).toMatchObject({ id: 'hud-theme', focus: true, closeOnEscape: true, holdToasts: true })
-  expect(first?.rows).toBeGreaterThanOrEqual(Object.keys(THEMES).length + 1)
+  // The HUD's own pane, never a second one (it would be a tab hiding the sidebar).
+  expect((opens as Open[]).every(o => o.id === 'hud')).toBe(true)
+  const asked = (opens as Open[]).filter(o => o.focus === true)
+  expect(asked).toHaveLength(1)
+  expect(asked[0]).toMatchObject({ id: 'hud', title: 'Agent HUD' })
+  expect(asked[0]?.closeOnEscape).toBeUndefined() // Escape returns the keys, the HUD stays
 
-  // The focus asked during the command is refused while it runs: once it
-  // returned, the dialog is opened again to ask for the keys.
+  // Once the command returned, the keys are asked for again.
   await clock.advance(PICKER_FOCUS_RETRY_MS)
-  expect(dialogOpens(opens)).toHaveLength(2)
-  expect(dialogOpens(opens)[1]).toMatchObject({ focus: true, closeOnEscape: true })
+  expect((opens as Open[]).filter(o => o.focus === true)).toHaveLength(2)
 
-  const dialog = await dialogText()
-  for (const name of Object.keys(THEMES)) expect(dialog).toContain(`theme:${name}`)
-  expect(dialog).toContain('theme-cancel')
-  expect(dialog).toContain('↑/↓ preview · Enter apply · Esc cancel')
-  expect(dialog).not.toContain('ctrl+x tab') // it holds the keys
-
-  // Without the keys (the focus was refused), it says how to take them.
-  await mounted.redraw({ title: 'HUD theme', isFocused: false, bodyColumns: 60, placement: 'inline' } as never)
-  expect(await dialogText()).toContain('ctrl+x tab or a click focuses this dialog')
-
-  // The sidebar keeps its sections: no picker there.
-  const sidebar = await sidebarText()
-  expect(sidebar).toContain('Context')
-  expect(sidebar).not.toContain('theme:dracula')
+  const tree = await drawn()
+  for (const name of Object.keys(THEMES)) expect(tree).toContain(`theme:${name}`)
+  expect(tree).toContain('theme-cancel')
+  expect(tree).toContain('↑/↓ preview · Enter apply · Esc cancel')
+  expect(tree).not.toContain('ctrl+x tab') // it holds the keys
+  // The sections stay drawn, below the picker.
+  expect(tree).toContain('Context')
+  expect(tree.indexOf('theme-cancel')).toBeLessThan(tree.indexOf('Context'))
 })
 
-test('focusing a theme in the dialog previews it on the sidebar without saving; focus elsewhere reverts', async ($, on) => {
+test('focusing a theme recolors the sidebar itself without saving; focus elsewhere reverts', async ($, on) => {
   answerEngine(on)
-  const { sidebarText } = await openPicker($)
+  const { drawn } = await openPicker($)
 
   await focus($, 'theme:dracula')
-  expect(accentNow(await sidebarText())).toBe(THEMES.dracula.accent)
+  expect(accentNow(await drawn())).toBe(THEMES.dracula.accent)
   await focus($, 'theme:nord')
-  expect(accentNow(await sidebarText())).toBe(THEMES.nord.accent)
+  expect(accentNow(await drawn())).toBe(THEMES.nord.accent)
   await focus($, 'theme-cancel')
-  expect(accentNow(await sidebarText())).toBe('claude')
+  expect(accentNow(await drawn())).toBe('claude')
+  await focus($, 'theme:nord')
+  await focus($) // one of the engine's own stops
+  expect(accentNow(await drawn())).toBe('claude')
 
   // Nothing was saved: a new session loads the default again.
   await focus($, 'theme:dracula')
   await startSession($)
-  expect(accentNow(await sidebarText())).toBe('claude')
+  expect(accentNow(await drawn())).toBe('claude')
 })
 
-test('pressing a theme saves it and closes the dialog', async ($, on) => {
+test('without the keys the sidebar shows the saved theme and how to take them', async ($, on) => {
+  answerEngine(on)
+  const { pane, drawn } = await openPicker($)
+  await focus($, 'theme:dracula')
+  await pane.redraw({ ...SIDEBAR, isFocused: false } as never)
+  const tree = await drawn()
+  expect(accentNow(tree)).toBe('claude')
+  expect(tree).toContain('ctrl+x tab or a click')
+  expect(tree).toContain('theme:dracula') // still picking
+})
+
+test('pressing a theme saves it and closes the picker, not the sidebar', async ($, on) => {
   const closes: unknown[] = []
   answerEngine(on, [], closes)
-  const { dialog, sidebarText } = await openPicker($)
+  const { pane, drawn } = await openPicker($)
 
   await focus($, 'theme:dracula')
-  await dialog.press({ key: 'theme:dracula' })
-  expect(accentNow(await sidebarText())).toBe(THEMES.dracula.accent)
-  expect(closes).toContainEqual(expect.objectContaining({ id: 'hud-theme' }))
+  await pane.press({ key: 'theme:dracula' })
+  const tree = await drawn()
+  expect(accentNow(tree)).toBe(THEMES.dracula.accent)
+  expect(tree).not.toContain('theme:nord')
+  expect(tree).toContain('Context')
+  expect(closes).toEqual([])
 
   await startSession($)
-  expect(accentNow(await sidebarText())).toBe(THEMES.dracula.accent)
+  expect(accentNow(await drawn())).toBe(THEMES.dracula.accent)
 })
 
-test('Cancel drops the preview, closes the dialog and is not reopened by the focus retry', async ($, on) => {
-  const opens: unknown[] = []
+test('Cancel drops the preview and closes the picker without saving', async ($, on) => {
   const closes: unknown[] = []
-  const clock = answerEngine(on, opens, closes)
-  const { dialog, sidebarText } = await openPicker($)
+  answerEngine(on, [], closes)
+  const { pane, drawn } = await openPicker($)
 
   await focus($, 'theme:gruvbox-dark')
-  expect(accentNow(await sidebarText())).toBe(THEMES['gruvbox-dark'].accent)
-  await dialog.press({ key: 'theme-cancel' })
-  expect(accentNow(await sidebarText())).toBe('claude')
-  expect(closes).toContainEqual(expect.objectContaining({ id: 'hud-theme' }))
-
-  await clock.advance(PICKER_FOCUS_RETRY_MS)
-  expect(dialogOpens(opens)).toHaveLength(1)
+  expect(accentNow(await drawn())).toBe(THEMES['gruvbox-dark'].accent)
+  await pane.press({ key: 'theme-cancel' })
+  const tree = await drawn()
+  expect(accentNow(tree)).toBe('claude')
+  expect(tree).not.toContain('theme:dracula')
+  expect(closes).toEqual([])
 
   await startSession($)
-  expect(accentNow(await sidebarText())).toBe('claude')
+  expect(accentNow(await drawn())).toBe('claude')
 })
 
-test('a focus move while no dialog is open previews nothing', async ($, on) => {
+test('a focus move while no picker is open previews nothing', async ($, on) => {
   answerEngine(on)
   await startSession($)
-  const sidebar = await mount($, 'hud', 'Agent HUD')
+  const sidebar = await mountSidebar($)
   await focus($, 'theme:dracula')
   expect(accentNow(JSON.stringify(await sidebar.drawn()))).toBe('claude')
 })

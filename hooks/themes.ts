@@ -51,14 +51,14 @@ export const themeList = (active: ThemeName): string =>
   THEME_NAMES.map(name => (name === active ? `● ${name} (active)` : `  ${name}`)).join('\n')
 
 // ── Picker ───────────────────────────────────────────────────────────────
-// `/hud-theme` without a name opens a dialog pane (THEME_PANE): two hint
-// rows, one Button per theme keyed `theme:<name>`, and Cancel. The focus ring
-// on a theme Button previews it (`ui.focus`); a press saves it.
+// `/hud-theme` without a name opens a picker inside the HUD's own Pane (a
+// second pane would be a dock tab hiding the sidebar), above its sections:
+// hints, one Button per theme keyed `theme:<name>`, and Cancel. The focus
+// ring on a theme Button previews it (`ui.focus`); a press saves it.
 
-export const THEME_PANE = 'hud-theme'
-// The pane's `focus` is granted only while the prompt holds the keys over an
-// empty composer, never while the command that opens it still runs: the
-// dialog is opened again this long after, to ask for the keys once more.
+// The Pane's `focus` is granted only while the prompt holds the keys over an
+// empty composer, never while the command that opens it still runs: the Pane
+// is opened again this long after, to ask for the keys once more.
 export const PICKER_FOCUS_RETRY_MS = 300
 
 const KEY_PREFIX = 'theme:'
@@ -78,5 +78,6 @@ export const themeFromKey = (key: string | undefined): ThemeName | null => {
 export const shownTheme = (saved: unknown, preview: unknown): Palette =>
   resolveTheme(isThemeName(preview) ? preview : saved)
 
-// Rows the dialog draws: two hint rows, one Button per theme, and Cancel.
-export const pickerRows = (): number => THEME_NAMES.length + 3
+// Rows the picker block draws: the hint (and, without the keys, how to take
+// them), one Button per theme, Cancel, and the blank row above the sections.
+export const pickerRows = (hasKeys: boolean): number => THEME_NAMES.length + (hasKeys ? 1 : 2) + 2

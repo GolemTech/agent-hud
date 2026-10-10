@@ -108,13 +108,15 @@ To add the marketplace first and install separately:
 
 ## Themes
 
-`/hud-theme` without a name opens a **HUD theme** dialog above the prompt,
-like Claude Code's `/theme`, at any terminal width: each theme is listed in
-its own accent color, the saved one marked `●`. `↑`/`↓` preview each theme on
-the sidebar and the band, Enter (or a click) applies and saves it, and Esc or
-**Cancel** goes back to the saved theme. If the arrows do nothing, the dialog
-does not hold the keys yet: press `ctrl+x tab` or click it. The command also
-prints the list, for a session that shows no panes.
+`/hud-theme` without a name opens a picker at the top of the sidebar, like
+Claude Code's `/theme`, at any terminal width: each theme is listed in its own
+accent color, the saved one marked `●`, and the sections stay drawn below it.
+Moving through the list previews each theme on the sidebar itself; Enter (or a
+click) applies and saves it, and **Cancel** or moving off the list goes back
+to the saved theme. Esc hands the keys back to the prompt and the sidebar
+shows the saved theme again; the picker stays until you choose or cancel. If
+moving does nothing, the sidebar does not hold the keys: press `ctrl+x tab` or
+click it. The command also prints the list, for a session that shows no panes.
 
 `/hud-theme <name>` sets a theme directly. Names are case-insensitive, and
 spaces or underscores work for hyphens (`/hud-theme tokyo night`).

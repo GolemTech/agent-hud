@@ -61,7 +61,6 @@ import {
   themeFromKey,
   themeKey,
   themeList,
-  THEME_PANE,
   THEMES,
 } from './themes'
 import type { Role, ThemeName } from './themes'
@@ -1011,10 +1010,12 @@ const liveView = async ($: EngineInterface, list: AgentRow[]): Promise<HudView> 
 const hudView = async ($: EngineInterface, list: AgentRow[]): Promise<HudView> =>
   demoStartedAt === null ? liveView($, list) : demoView((await $.clock.now()) - demoStartedAt)
 
-// The palette both surfaces draw with: the picker's preview, else the saved theme.
-const activePalette = async ($: EngineInterface) => {
+// The palette both surfaces draw with: the picker's preview, else the saved
+// theme. `hasKeys` false (the Pane lost the keys, e.g. to Escape, which
+// raises no event a hook sees) drops the preview from the drawing.
+const activePalette = async ($: EngineInterface, hasKeys = true) => {
   const [saved, preview] = await Promise.all([read($, themeName), read($, previewName)])
-  return shownTheme(saved, preview)
+  return shownTheme(saved, hasKeys ? preview : null)
 }
 
 // Leaves the picker: no preview, the sections back.
@@ -1023,37 +1024,28 @@ const closePicker = async ($: EngineInterface): Promise<void> => {
   await update($, pickerOpen, () => false)
 }
 
-// The theme dialog's open: a dialog seated inline above the prompt, sized to
-// its rows, that asks for the keys, closes on Escape and holds the toasts.
-const THEME_DIALOG = {
-  id: THEME_PANE,
-  title: 'HUD theme',
-  focus: true,
-  closeOnEscape: true,
-  holdToasts: true,
-  rows: pickerRows(),
-} as const
+// Opens the HUD's own Pane asking for the keys: the same id and title, so
+// no second pane (a dock tab that would hide the sidebar). No `closeOnEscape`:
+// Escape only returns the keys and the HUD stays.
+const openForPicker = async ($: EngineInterface): Promise<void> => {
+  await $.ui.open({ id: PANE, title: 'Agent HUD', focus: true })
+}
 
-// Asks for the keys again once `/hud-theme` returned, unless the dialog was
+// Asks for the keys again once `/hud-theme` returned, unless the picker was
 // already answered.
-const refocusDialog = async ($: EngineInterface): Promise<void> => {
+const refocusPicker = async ($: EngineInterface): Promise<void> => {
   try {
-    if (await read($, pickerOpen)) await $.ui.open(THEME_DIALOG)
+    if (await read($, pickerOpen)) await openForPicker($)
   } catch {
     // the person can still take the keys with ctrl+x tab or a click
   }
 }
 
-// Ends the dialog: saves `name`, or with null keeps the saved theme, and
-// closes the pane (its own close is not seen by the `ui.close` hook).
+// Ends the picker: saves `name`, or with null keeps the saved theme. The
+// Pane stays open.
 const finishPicker = async ($: EngineInterface, name: ThemeName | null): Promise<void> => {
   if (name) await saveTheme($, name)
   else await closePicker($)
-  try {
-    await $.ui.close({ id: THEME_PANE })
-  } catch {
-    // already closed
-  }
 }
 
 // Applies a theme at once and keeps it for later sessions. False when the
@@ -1303,56 +1295,6 @@ export const register: Register = on => {
     return next(e)
   }).catch((_$, e, next) => next(e))
 
-  // The person's Escape or close mark on the dialog: drop the preview, keep
-  // the saved theme. (The plugin's own close is not seen here; `finishPicker`
-  // clears the state itself.)
-  on('ui.close', { id: THEME_PANE }, async ($, e, next) => {
-    try {
-      await closePicker($)
-    } catch {
-      // the next session start clears it
-    }
-    return next(e)
-  }).catch((_$, e, next) => next(e))
-
-  // The theme dialog: hints, one Button per theme in its own accent (the saved
-  // one marked and focused first), and Cancel. `ui.focus` previews the theme
-  // the ring rests on; a press saves it, Cancel only closes.
-  on('ui.render', { component: 'Pane', requestId: THEME_PANE }, async ($, e) => {
-    const { Box, Text, Button } = $.ui.resolve(e)
-    const t = await activePalette($)
-    const savedTheme = await read($, themeName)
-    return (
-      <Box flexDirection="column" paddingX={PANE_PADDING_X}>
-        <Text wrap="truncate-end" color={t.subtle}>
-          ↑/↓ preview · Enter apply · Esc cancel
-        </Text>
-        <Text wrap="truncate-end" color={t.subtle}>
-          {e.props.isFocused ? ' ' : 'Keys not here? ctrl+x tab or a click focuses this dialog'}
-        </Text>
-        {THEME_NAMES.map(name => (
-          <Box flexShrink={0}>
-            <Button
-              key={themeKey(name)}
-              plain
-              autoFocus={name === savedTheme || undefined}
-              onPress={() => void finishPicker($, name)}
-            >
-              <Text wrap="truncate-end" color={THEMES[name].accent}>
-                {`${name === savedTheme ? '●' : ' '} ${name}`}
-              </Text>
-            </Button>
-          </Box>
-        ))}
-        <Box flexShrink={0}>
-          <Button key={PICKER_CANCEL} plain onPress={() => void finishPicker($, null)}>
-            <Text color={t.subtle}>{'  Cancel'}</Text>
-          </Button>
-        </Box>
-      </Box>
-    )
-  })
-
   // Todos: mirror the main loop's task tools once each call succeeded.
   // A subagent's own list (e.agentId set) would overwrite the session's.
   on('tool.call', { tool: 'TodoWrite' }, async ($, e, next) => {
@@ -1418,22 +1360,24 @@ export const register: Register = on => {
     const current = await read($, themeName)
     const active = isThemeName(current) ? current : DEFAULT_THEME
     if (arg.kind === 'list') {
-      // The picker is a dialog pane of its own, seated inline above the prompt
-      // at any width (an open answering the person's command). Its `focus` is
-      // refused while this command runs, so it is asked again once it returned.
-      // The text list stays for a session that places no panes.
+      // The picker opens inside the HUD's own Pane, above its sections, so
+      // the sidebar is seen recoloring. An open answering the person's command
+      // is placed at any width, but its `focus` is refused while this command
+      // runs: the keys are asked for again once it returned. The text list
+      // stays for a session that places no panes.
       try {
         await update($, previewName, () => null)
+        await update($, scrollOffset, () => 0)
         await update($, pickerOpen, () => true)
-        await $.ui.open(THEME_DIALOG)
-        $.clock.after(PICKER_FOCUS_RETRY_MS, () => void refocusDialog($))
+        await openForPicker($)
+        $.clock.after(PICKER_FOCUS_RETRY_MS, () => void refocusPicker($))
       } catch {
         // the list below still answers
       }
       return {
         text:
           `Agent HUD themes:\n${themeList(active)}\n` +
-          'Pick one in the HUD theme dialog above the prompt (moving previews it), or run /hud-theme <name>.',
+          'Pick one at the top of the Agent HUD sidebar (moving previews it), or run /hud-theme <name>.',
       }
     }
     if (arg.kind === 'unknown') {
@@ -1448,7 +1392,7 @@ export const register: Register = on => {
   // Picker preview: the focus ring resting on a theme Button draws that theme;
   // anywhere else, the saved one. An observer: the move is forwarded untouched,
   // and a failure here never keeps the ring from moving.
-  on('ui.focus', { component: 'Pane', requestId: THEME_PANE }, async ($, e, next) => {
+  on('ui.focus', { component: 'Pane', requestId: PANE }, async ($, e, next) => {
     try {
       const [open, current] = await Promise.all([read($, pickerOpen), read($, previewName)])
       const name = open && (e.plugin === undefined || e.plugin === 'agent-hud') ? themeFromKey(e.element) : null
@@ -1518,7 +1462,9 @@ export const register: Register = on => {
   on('ui.render', { component: 'Pane', requestId: PANE }, async ($, e) => {
     const { Box, Text, Button } = $.ui.resolve(e)
     // Every color below is a role of the active theme (`themes.ts`).
-    const t = await activePalette($)
+    // The Pane holds the keys: the picker's preview shows only then.
+    const hasKeys = e.props.isFocused
+    const t = await activePalette($, hasKeys)
     // Too old a Claude Code: only the notice, plain text and no buttons.
     if (unsupportedNotice !== null) {
       return (
@@ -1725,7 +1671,9 @@ export const register: Register = on => {
     // scroll absorbs one.
     const section = (id: SectionId, headerRows: number, bodyRows: number) => 1 + headerRows + (c[id] ? 0 : bodyRows)
     const cardList = displayRows(list)
+    const picking = await read($, pickerOpen)
     const contentRows =
+      (picking ? pickerRows(hasKeys) : 0) +
       flowRows([headerText('session', 'Session').length, ...(view.private ? [10] : [])], W) +
       (c.session
         ? 0
@@ -1804,7 +1752,45 @@ export const register: Register = on => {
       </Box>
     ) : null
 
+    // `/hud-theme` picker: a block above the sections, which stay drawn below
+    // it so they are seen recoloring. One row per theme in its own accent, the
+    // saved one marked and focused first; `ui.focus` previews the theme the
+    // ring rests on, a press saves it, Cancel only closes the block.
+    const savedTheme = await read($, themeName)
+    const picker = (
+      <Box flexDirection="column" flexShrink={0} marginBottom={1}>
+        <Text wrap="truncate-end" color={t.subtle}>
+          ↑/↓ preview · Enter apply · Esc cancel
+        </Text>
+        {!hasKeys && (
+          <Text wrap="truncate-end" color={t.warning}>
+            Keys elsewhere: ctrl+x tab or a click focuses the HUD
+          </Text>
+        )}
+        {THEME_NAMES.map(name => (
+          <Box flexShrink={0}>
+            <Button
+              key={themeKey(name)}
+              plain
+              autoFocus={name === savedTheme || undefined}
+              onPress={() => void finishPicker($, name)}
+            >
+              <Text wrap="truncate-end" color={THEMES[name].accent}>
+                {`${name === savedTheme ? '●' : ' '} ${name}`}
+              </Text>
+            </Button>
+          </Box>
+        ))}
+        <Box flexShrink={0}>
+          <Button key={PICKER_CANCEL} plain onPress={() => void finishPicker($, null)}>
+            <Text color={t.subtle}>{'  Cancel'}</Text>
+          </Button>
+        </Box>
+      </Box>
+    )
+
     const sections = [
+        ...(picking ? [picker] : []),
         <Box flexDirection="column">
           <Box gap={1} flexWrap="wrap">
             {header('session', 'Session')}
