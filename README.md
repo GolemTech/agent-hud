@@ -108,10 +108,15 @@ To add the marketplace first and install separately:
 
 ## Themes
 
-`/hud-theme <name>` recolors the sidebar and the band above the prompt at
-once. `/hud-theme` without a name lists the themes and marks the active one.
-Names are case-insensitive, and spaces or underscores work for hyphens
-(`/hud-theme tokyo night`).
+`/hud-theme` without a name opens a picker in the sidebar, like Claude
+Code's `/theme`: each theme is listed in its own accent color, the saved one
+marked `●`. Moving through the list (arrows, Tab or the mouse) previews each
+theme on the whole sidebar and the band; Enter or a click saves it, and
+**Cancel** or moving off the list goes back to the saved theme. The command
+also prints the list, for when the sidebar is not shown.
+
+`/hud-theme <name>` sets a theme directly. Names are case-insensitive, and
+spaces or underscores work for hyphens (`/hud-theme tokyo night`).
 
 | Theme | Notes |
 | --- | --- |

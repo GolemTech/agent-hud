@@ -1,6 +1,17 @@
 import { expect, test } from 'claude-code/testing'
 
-import { DEFAULT_THEME, parseThemeArg, resolveTheme, ROLES, THEME_NAMES, THEMES } from './themes'
+import {
+  DEFAULT_THEME,
+  parseThemeArg,
+  pickerRows,
+  resolveTheme,
+  ROLES,
+  shownTheme,
+  THEME_NAMES,
+  themeFromKey,
+  themeKey,
+  THEMES,
+} from './themes'
 
 const PRESETS = [
   'one-dark-pro',
@@ -62,4 +73,31 @@ test('parseThemeArg: spaces and underscores stand for hyphens', () => {
 test('parseThemeArg: an unknown name is reported as typed', () => {
   expect(parseThemeArg(' solarized-light ')).toEqual({ kind: 'unknown', input: 'solarized-light' })
   expect(parseThemeArg('toString')).toEqual({ kind: 'unknown', input: 'toString' })
+})
+
+test('themeKey and themeFromKey round-trip the picker Button keys', () => {
+  expect(themeKey('dracula')).toBe('theme:dracula')
+  expect(themeFromKey('theme:dracula')).toBe('dracula')
+  expect(themeFromKey('theme:default')).toBe('default')
+  for (const name of THEME_NAMES) expect(themeFromKey(themeKey(name))).toBe(name)
+})
+
+test('themeFromKey is null for any other element', () => {
+  expect(themeFromKey(undefined)).toBeNull()
+  expect(themeFromKey('theme-cancel')).toBeNull()
+  expect(themeFromKey('hide-sidebar')).toBeNull()
+  expect(themeFromKey('theme:nope')).toBeNull()
+  expect(themeFromKey('theme:')).toBeNull()
+  expect(themeFromKey('dracula')).toBeNull()
+})
+
+test('shownTheme draws the preview over the saved theme, and the saved one without it', () => {
+  expect(shownTheme('nord', 'dracula')).toBe(THEMES.dracula)
+  expect(shownTheme('nord', null)).toBe(THEMES.nord)
+  expect(shownTheme('nord', 'nope')).toBe(THEMES.nord)
+  expect(shownTheme(undefined, undefined)).toBe(THEMES.default)
+})
+
+test('pickerRows counts a title, one row per theme and the Cancel row', () => {
+  expect(pickerRows()).toBe(THEME_NAMES.length + 2)
 })

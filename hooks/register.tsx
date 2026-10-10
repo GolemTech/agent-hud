@@ -49,8 +49,20 @@ import {
   viewportRowsFor,
 } from './layout'
 import { clean } from './text'
-import { DEFAULT_THEME, isThemeName, parseThemeArg, resolveTheme, themeList } from './themes'
-import type { Role } from './themes'
+import {
+  DEFAULT_THEME,
+  isThemeName,
+  parseThemeArg,
+  PICKER_CANCEL,
+  pickerRows,
+  shownTheme,
+  THEME_NAMES,
+  themeFromKey,
+  themeKey,
+  themeList,
+  THEMES,
+} from './themes'
+import type { Role, ThemeName } from './themes'
 import { isSupportedVersion, unsupportedMessage } from './version'
 
 // Re-exported for the unit tests, which import the helpers from here.
@@ -330,6 +342,10 @@ const scrollOffset = atom({ plugin: 'agent-hud', key: 'scroll' } as const, 0)
 // and loaded at session start; both surfaces read it to color their roles.
 const themeName = atom({ plugin: 'agent-hud', key: 'theme' } as const, DEFAULT_THEME as string)
 const THEME_KEY = 'theme'
+// `/hud-theme` with no name: the picker replaces the Pane's sections, and the
+// theme its focus ring rests on (`ui.focus`) is drawn until a press or Cancel.
+const pickerOpen = atom({ plugin: 'agent-hud', key: 'picker' } as const, false)
+const previewName = atom({ plugin: 'agent-hud', key: 'preview' } as const, null as string | null)
 // The last offset the latest sticky render allowed; null while the Pane is
 // drawn in the plain flow (inline, or no body height), where the engine scrolls.
 let scrollMax: number | null = null
@@ -993,6 +1009,31 @@ const liveView = async ($: EngineInterface, list: AgentRow[]): Promise<HudView> 
 const hudView = async ($: EngineInterface, list: AgentRow[]): Promise<HudView> =>
   demoStartedAt === null ? liveView($, list) : demoView((await $.clock.now()) - demoStartedAt)
 
+// The palette both surfaces draw with: the picker's preview, else the saved theme.
+const activePalette = async ($: EngineInterface) => {
+  const [saved, preview] = await Promise.all([read($, themeName), read($, previewName)])
+  return shownTheme(saved, preview)
+}
+
+// Leaves the picker: no preview, the sections back.
+const closePicker = async ($: EngineInterface): Promise<void> => {
+  await update($, previewName, () => null)
+  await update($, pickerOpen, () => false)
+}
+
+// Applies a theme at once and keeps it for later sessions. False when the
+// save failed; the theme still applies to this session.
+const saveTheme = async ($: EngineInterface, name: ThemeName): Promise<boolean> => {
+  await update($, themeName, () => name)
+  await closePicker($)
+  try {
+    await $.store.set(THEME_KEY, name)
+    return true
+  } catch {
+    return false
+  }
+}
+
 export const register: Register = on => {
   on('session.start', async ($, e, next) => {
     let supported: boolean | undefined
@@ -1029,6 +1070,12 @@ export const register: Register = on => {
       await update($, themeName, () => (isThemeName(stored) ? stored : DEFAULT_THEME))
     } catch {
       // keep the theme this session already has
+    }
+    // A new session starts with no picker and no preview.
+    try {
+      await closePicker($)
+    } catch {
+      // the next press or Cancel clears them
     }
     await $.command.register({
       name: 'hud-theme',
@@ -1285,18 +1332,44 @@ export const register: Register = on => {
     const arg = parseThemeArg(e.args ?? '')
     const current = await read($, themeName)
     const active = isThemeName(current) ? current : DEFAULT_THEME
-    if (arg.kind === 'list') return { text: `Agent HUD themes:\n${themeList(active)}\nRun /hud-theme <name> to switch.` }
+    if (arg.kind === 'list') {
+      // The picker in the Pane, focused when the prompt can give the keys;
+      // the text list stays for a session where the Pane is not placed.
+      try {
+        await update($, previewName, () => null)
+        await update($, pickerOpen, () => true)
+        await $.ui.open({ id: PANE, title: 'Agent HUD', focus: true })
+      } catch {
+        // the list below still answers
+      }
+      return {
+        text:
+          `Agent HUD themes:\n${themeList(active)}\n` +
+          'Pick one in the Agent HUD sidebar (moving the focus previews it), or run /hud-theme <name>.',
+      }
+    }
     if (arg.kind === 'unknown') {
       return { text: `Unknown HUD theme "${clean(arg.input)}". Available themes:\n${themeList(active)}` }
     }
-    await update($, themeName, () => arg.name)
-    try {
-      await $.store.set(THEME_KEY, arg.name)
-    } catch {
+    if (!(await saveTheme($, arg.name))) {
       return { text: `HUD theme set to ${arg.name} for this session; it could not be saved for the next one.` }
     }
     return { text: `HUD theme set to ${arg.name}.` }
   })
+
+  // Picker preview: the focus ring resting on a theme Button draws that theme;
+  // anywhere else, the saved one. An observer: the move is forwarded untouched,
+  // and a failure here never keeps the ring from moving.
+  on('ui.focus', { component: 'Pane', requestId: PANE }, async ($, e, next) => {
+    try {
+      const [open, current] = await Promise.all([read($, pickerOpen), read($, previewName)])
+      const name = open && (e.plugin === undefined || e.plugin === 'agent-hud') ? themeFromKey(e.element) : null
+      if (name !== current) await update($, previewName, () => name)
+    } catch {
+      // the preview just does not follow this move
+    }
+    return next(e)
+  }).catch((_$, e, next) => next(e))
 
   // Hidden-sidebar band: shown above the prompt whenever the pane is not on
   // screen (closed by → or its ✕, or open but unplaced on a narrow terminal),
@@ -1311,7 +1384,7 @@ export const register: Register = on => {
     if (isSidebarShown(await $.ui.panes())) return next(e)
 
     const { Box, Text, Button } = $.ui.resolve(e)
-    const t = resolveTheme(await read($, themeName))
+    const t = await activePalette($)
     if (unsupportedNotice !== null) {
       return (
         <Text wrap="truncate-end" color={t.warning}>
@@ -1357,7 +1430,7 @@ export const register: Register = on => {
   on('ui.render', { component: 'Pane', requestId: PANE }, async ($, e) => {
     const { Box, Text, Button } = $.ui.resolve(e)
     // Every color below is a role of the active theme (`themes.ts`).
-    const t = resolveTheme(await read($, themeName))
+    const t = await activePalette($)
     // Too old a Claude Code: only the notice, plain text and no buttons.
     if (unsupportedNotice !== null) {
       return (
@@ -1872,6 +1945,40 @@ export const register: Register = on => {
         </Box>,
     ]
 
+    // `/hud-theme` picker: replaces the sections while open, one row per
+    // theme (pickerRows), each name in its own accent. The saved theme takes
+    // the focus ring first; `ui.focus` previews the one the ring rests on.
+    const savedTheme = await read($, themeName)
+    const picker = (
+      <Box flexDirection="column">
+        <Text bold wrap="truncate-end" color={t.accent}>
+          Theme · move to preview, Enter saves
+        </Text>
+        {THEME_NAMES.map(name => (
+          <Box flexShrink={0}>
+            <Button
+              key={themeKey(name)}
+              plain
+              autoFocus={name === savedTheme || undefined}
+              onPress={() => void saveTheme($, name)}
+            >
+              <Text wrap="truncate-end" color={THEMES[name].accent}>
+                {`${name === savedTheme ? '●' : ' '} ${name}`}
+              </Text>
+            </Button>
+          </Box>
+        ))}
+        <Box flexShrink={0}>
+          <Button key={PICKER_CANCEL} plain onPress={() => void closePicker($)}>
+            <Text color={t.subtle}>{'  Cancel'}</Text>
+          </Button>
+        </Box>
+      </Box>
+    )
+    const picking = await read($, pickerOpen)
+    const body = picking ? [picker] : sections
+    const bodyContentRows = picking ? pickerRows() : contentRows
+
     // Inline frames fit the tree, and without the body's height there is no
     // window to fill: the plain flow, scrolled by the engine.
     const bodyRows = e.props.scroll?.bodyRows
@@ -1880,7 +1987,7 @@ export const register: Register = on => {
       return (
         <Box flexDirection="column" paddingX={PANE_PADDING_X}>
           {headerRow}
-          <Box flexDirection="column">{sections}</Box>
+          <Box flexDirection="column">{body}</Box>
           {footerRow}
         </Box>
       )
@@ -1891,7 +1998,7 @@ export const register: Register = on => {
     // clamped here too, so a shrunk content (a collapsed section, a taller
     // pane) never leaves the window past its end.
     const viewportRows = viewportRowsFor(bodyRows, footerRow !== null)
-    const max = maxScrollOffset(contentRows, viewportRows)
+    const max = maxScrollOffset(bodyContentRows, viewportRows)
     scrollMax = max
     const offset = clampOffset(await read($, scrollOffset), max)
     return (

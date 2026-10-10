@@ -49,3 +49,28 @@ export const parseThemeArg = (raw: string): ThemeArg => {
 // The `/hud-theme` listing, the active theme marked.
 export const themeList = (active: ThemeName): string =>
   THEME_NAMES.map(name => (name === active ? `● ${name} (active)` : `  ${name}`)).join('\n')
+
+// ── Picker ───────────────────────────────────────────────────────────────
+// `/hud-theme` without a name opens a picker in the Pane: one Button per
+// theme keyed `theme:<name>`, and Cancel. The focus ring on a theme Button
+// previews it (`ui.focus`); a press saves it.
+
+const KEY_PREFIX = 'theme:'
+export const PICKER_CANCEL = 'theme-cancel'
+
+export const themeKey = (name: ThemeName): string => `${KEY_PREFIX}${name}`
+
+// The theme a picker Button's key names; null for any other element.
+export const themeFromKey = (key: string | undefined): ThemeName | null => {
+  if (!key?.startsWith(KEY_PREFIX)) return null
+  const name = key.slice(KEY_PREFIX.length)
+  return isThemeName(name) ? name : null
+}
+
+// The palette both surfaces draw with: the picker's preview while one is
+// focused, else the saved theme.
+export const shownTheme = (saved: unknown, preview: unknown): Palette =>
+  resolveTheme(isThemeName(preview) ? preview : saved)
+
+// Rows the picker draws: its title, one Button per theme, and Cancel.
+export const pickerRows = (): number => THEME_NAMES.length + 2
