@@ -63,7 +63,7 @@ import {
   themeList,
   THEMES,
 } from './themes'
-import type { Role, ThemeName } from './themes'
+import type { Palette, Role, ThemeName } from './themes'
 import { isSupportedVersion, unsupportedMessage } from './version'
 
 // Re-exported for the unit tests, which import the helpers from here.
@@ -1018,6 +1018,10 @@ const activePalette = async ($: EngineInterface, hasKeys = true) => {
   return shownTheme(saved, hasKeys ? preview : null)
 }
 
+// The root Box's fill: the theme's background, or no prop at all, so a theme
+// without one (default) draws exactly as before, on the terminal's own.
+const fill = (t: Palette): { backgroundColor?: string } => (t.background ? { backgroundColor: t.background } : {})
+
 // Leaves the picker: no preview, the sections back.
 const closePicker = async ($: EngineInterface): Promise<void> => {
   await update($, previewName, () => null)
@@ -1428,7 +1432,7 @@ export const register: Register = on => {
     const connected = view.servers.filter(s => s.connected).length
 
     return (
-      <Box flexWrap="wrap" gap={1}>
+      <Box flexWrap="wrap" gap={1} {...fill(t)}>
         <Box flexShrink={0}>
           <Button
             key="expand"
@@ -1468,7 +1472,7 @@ export const register: Register = on => {
     // Too old a Claude Code: only the notice, plain text and no buttons.
     if (unsupportedNotice !== null) {
       return (
-        <Box flexDirection="column" paddingX={PANE_PADDING_X}>
+        <Box flexDirection="column" paddingX={PANE_PADDING_X} {...fill(t)}>
           <Text wrap="wrap" color={t.warning}>
             {unsupportedNotice}
           </Text>
@@ -2025,7 +2029,7 @@ export const register: Register = on => {
     if (e.props.placement === 'inline' || typeof bodyRows !== 'number') {
       scrollMax = null
       return (
-        <Box flexDirection="column" paddingX={PANE_PADDING_X}>
+        <Box flexDirection="column" paddingX={PANE_PADDING_X} {...fill(t)}>
           {headerRow}
           <Box flexDirection="column">{sections}</Box>
           {footerRow}
@@ -2042,7 +2046,7 @@ export const register: Register = on => {
     scrollMax = max
     const offset = clampOffset(await read($, scrollOffset), max)
     return (
-      <Box flexDirection="column" paddingX={PANE_PADDING_X} height={bodyRows}>
+      <Box flexDirection="column" paddingX={PANE_PADDING_X} height={bodyRows} {...fill(t)}>
         {headerRow}
         <Box flexDirection="column" flexShrink={0} height={viewportRows} overflow="hidden">
           <Box flexDirection="column" flexShrink={0} marginTop={0 - offset}>

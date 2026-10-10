@@ -127,7 +127,10 @@ spaces or underscores work for hyphens (`/hud-theme tokyo night`).
 | `one-dark-pro`, `catppuccin-mocha`, `gruvbox-dark`, `dracula`, `nord`, `tokyo-night`, `solarized-dark`, `rose-pine`, `kanagawa`, `monokai` | Fixed colors from each theme's palette |
 
 The choice is saved and applies to every later session until you change it.
-The presets are tuned for dark terminals; on a light terminal, use `default`.
+Each preset also fills the sidebar and the band above the prompt with its
+editor background (for example `#282a36` for `dracula`), and a preview changes
+it too; `default` keeps your terminal's own background. The presets are tuned
+for dark terminals; on a light terminal, use `default`.
 
 ## How it gets its data
 

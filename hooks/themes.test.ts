@@ -44,7 +44,7 @@ test('the theme list is default followed by the ten presets', () => {
 test('every preset defines every role as a #rrggbb color', () => {
   for (const name of PRESETS) {
     const palette = THEMES[name]
-    expect(Object.keys(palette).sort()).toEqual([...ROLES].sort())
+    expect(Object.keys(palette).filter(k => k !== 'background').sort()).toEqual([...ROLES].sort())
     for (const role of ROLES) expect(palette[role]).toMatch(/^#[0-9a-f]{6}$/)
   }
 })
@@ -101,4 +101,25 @@ test('shownTheme draws the preview over the saved theme, and the saved one witho
 test('pickerRows counts the hints, one row per theme, Cancel and the blank row under it', () => {
   expect(pickerRows(true)).toBe(THEME_NAMES.length + 3) // one hint
   expect(pickerRows(false)).toBe(THEME_NAMES.length + 4) // and how to take the keys
+})
+
+const BACKGROUNDS = {
+  'one-dark-pro': '#282c34',
+  'catppuccin-mocha': '#1e1e2e',
+  'gruvbox-dark': '#282828',
+  dracula: '#282a36',
+  nord: '#2e3440',
+  'tokyo-night': '#1a1b26',
+  'solarized-dark': '#002b36',
+  'rose-pine': '#191724',
+  kanagawa: '#1f1f28',
+  monokai: '#272822',
+} as const
+
+test('every preset has its editor background; default keeps the terminal one', () => {
+  for (const name of PRESETS) {
+    expect(THEMES[name].background).toMatch(/^#[0-9a-f]{6}$/)
+    expect(THEMES[name].background).toBe(BACKGROUNDS[name])
+  }
+  expect('background' in THEMES.default).toBe(false)
 })

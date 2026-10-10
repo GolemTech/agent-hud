@@ -178,3 +178,26 @@ test('a focus move while no picker is open previews nothing', async ($, on) => {
   await focus($, 'theme:dracula')
   expect(accentNow(JSON.stringify(await sidebar.drawn()))).toBe('claude')
 })
+
+// The background the Pane's root Box is filled with, if any.
+const rootBackground = (drawn: string): string | undefined =>
+  (JSON.parse(drawn) as { props?: { backgroundColor?: string } }).props?.backgroundColor
+
+test('the sidebar is filled with the theme background; default draws none; a preview changes it', async ($, on) => {
+  answerEngine(on)
+  const { pane, drawn } = await openPicker($)
+
+  const plain = await drawn()
+  expect(rootBackground(plain)).toBeUndefined()
+  expect(plain).not.toContain('backgroundColor')
+
+  await focus($, 'theme:nord')
+  expect(rootBackground(await drawn())).toBe(THEMES.nord.background)
+
+  await pane.press({ key: 'theme:dracula' })
+  expect(rootBackground(await drawn())).toBe(THEMES.dracula.background)
+
+  // Sticky layout (the body's height known) fills the same root.
+  await pane.redraw({ ...SIDEBAR, isFocused: true, scroll: { bodyRows: 30 } } as never)
+  expect(rootBackground(await drawn())).toBe(THEMES.dracula.background)
+})
