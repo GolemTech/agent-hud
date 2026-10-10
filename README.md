@@ -103,6 +103,21 @@ To add the marketplace first and install separately:
     Review the text and press Enter yourself.
   - In demo mode the section shows sample values and its buttons do nothing.
 
+## Themes
+
+`/hud-theme <name>` recolors the sidebar and the band above the prompt at
+once. `/hud-theme` without a name lists the themes and marks the active one.
+Names are case-insensitive, and spaces or underscores work for hyphens
+(`/hud-theme tokyo night`).
+
+| Theme | Notes |
+| --- | --- |
+| `default` | Claude Code's own theme colors; follows `/theme`, light or dark |
+| `one-dark-pro`, `catppuccin-mocha`, `gruvbox-dark`, `dracula`, `nord`, `tokyo-night`, `solarized-dark`, `rose-pine`, `kanagawa`, `monokai` | Fixed colors from each theme's palette |
+
+The choice is saved and applies to every later session until you change it.
+The presets are tuned for dark terminals; on a light terminal, use `default`.
+
 ## How it gets its data
 
 Most values come from the plugin API (`$.session`, `$.agent`, `$.tool`). The
