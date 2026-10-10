@@ -109,6 +109,12 @@ test('meters drop what is not available yet', () => {
   ])
 })
 
+test('meters show a fresh session (no response yet) at 0% of its window', () => {
+  expect(meters({ context: { window: 1_000_000 } }, 0)).toEqual([
+    { label: 'ctx', percent: 0, note: ' · 1M' },
+  ])
+})
+
 test('untilLabel counts down in m, h+m and d+h', () => {
   expect(untilLabel(45 * 60_000)).toBe('45m')
   expect(untilLabel(160 * 60_000)).toBe('2h40m')
@@ -135,6 +141,10 @@ test('contextFooter joins tokens and spend', () => {
     '261,474 tokens · $16.13 spent',
   )
   expect(contextFooter({})).toBe('')
+  // A fresh session has a window but no reading yet: 0 tokens.
+  expect(contextFooter({ context: { window: 1_000_000 }, cost: { usd: 0 } })).toBe(
+    '0 tokens · $0.00 spent',
+  )
 })
 
 test('mcpServers reports clean names and connected-vs-pending status', () => {
