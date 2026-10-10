@@ -2,3 +2,6 @@
 odd/
 node_modules/
 *.log
+openspec/
+.atl/
+.gga
