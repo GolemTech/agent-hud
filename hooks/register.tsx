@@ -48,6 +48,8 @@ import {
   textRows,
   viewportRowsFor,
 } from './layout'
+import { DEFAULT_MCP_FILTER, filterServers, isMcpFilter, MCP_FILTERS, mcpBodyRows, mcpEmptyText, mcpHiddenText } from './mcp'
+import type { McpFilter } from './mcp'
 import { clean } from './text'
 import {
   DEFAULT_THEME,
@@ -345,6 +347,10 @@ const scrollOffset = atom({ plugin: 'agent-hud', key: 'scroll' } as const, 0)
 // and loaded at session start; both surfaces read it to color their roles.
 const themeName = atom({ plugin: 'agent-hud', key: 'theme' } as const, DEFAULT_THEME as string)
 const THEME_KEY = 'theme'
+// The MCP section's `active` / `all` filter, kept in `$.store` under
+// MCP_FILTER_KEY and loaded at session start; `all` until one is chosen.
+const mcpFilter = atom({ plugin: 'agent-hud', key: 'mcpFilter' } as const, DEFAULT_MCP_FILTER as McpFilter)
+const MCP_FILTER_KEY = 'mcpFilter'
 // `/hud-theme` with no name: the picker replaces the Pane's sections, and the
 // theme its focus ring rests on (`ui.focus`) is drawn until a press or Cancel.
 const pickerOpen = atom({ plugin: 'agent-hud', key: 'picker' } as const, false)
@@ -1032,6 +1038,17 @@ const PICKER_ORDER = pickerOrder(HIDE_KEY)
 // Module-level: a reload forgets it, and the next move is then a plain one.
 let pickerLastFocus: string | null = null
 
+// Sets the MCP filter at once and keeps it for later sessions; a failed save
+// still applies it to this session.
+const setMcpFilter = async ($: EngineInterface, mode: McpFilter): Promise<void> => {
+  await update($, mcpFilter, () => mode)
+  try {
+    await $.store.set(MCP_FILTER_KEY, mode)
+  } catch {
+    // this session keeps it
+  }
+}
+
 // Leaves the picker: no preview, the sections back.
 const closePicker = async ($: EngineInterface): Promise<void> => {
   pickerLastFocus = null
@@ -1112,6 +1129,13 @@ export const register: Register = on => {
       await update($, themeName, () => (isThemeName(stored) ? stored : DEFAULT_THEME))
     } catch {
       // keep the theme this session already has
+    }
+    // The MCP filter chosen in an earlier session; missing or unknown is `all`.
+    try {
+      const stored = await $.store.get(MCP_FILTER_KEY)
+      await update($, mcpFilter, () => (isMcpFilter(stored) ? stored : DEFAULT_MCP_FILTER))
+    } catch {
+      // keep the filter this session already has
     }
     // A new session starts with no picker and no preview.
     try {
@@ -1503,6 +1527,10 @@ export const register: Register = on => {
     const c = await read($, collapsed)
     const view = await hudView($, await read($, rows))
     const { servers, footer, agents: list } = view
+    // MCP filter: `active` hides servers waiting on auth (`mcp.ts`).
+    const mcpMode = await read($, mcpFilter)
+    const mcp = filterServers(servers, isMcpFilter(mcpMode) ? mcpMode : DEFAULT_MCP_FILTER)
+    const mcpButtons = MCP_FILTERS.map(mode => ({ mode, text: buttonText(mode, mode === mcpMode) }))
     const ms = view.meters
     const counts = agentCounts(list)
     const todoList = orderTodos(view.todos)
@@ -1716,7 +1744,11 @@ export const register: Register = on => {
           : ms.reduce((n, m) => n + flowRows([meterHead, ...(m.note ? [meterNote(m)] : [])], W, 0), 0) +
               (footer ? textRows(footer.length, W) : 0),
       ) +
-      section('mcp', 1, Math.max(1, servers.length)) +
+      section(
+        'mcp',
+        flowRows([headerText('mcp', 'MCP').length, ...(c.mcp ? [] : mcpButtons.map(b => b.text.length))], W),
+        mcpBodyRows(mcp.shown.length, mcp.hidden),
+      ) +
       section(
         'subagents',
         flowRows([headerText('subagents', 'Subagents').length, ...(counts.done + counts.err > 0 ? [CLEAR] : [])], W),
@@ -1918,17 +1950,32 @@ export const register: Register = on => {
         <Box marginTop={1} flexDirection="column">
           <Box gap={1} flexWrap="wrap">
             {header('mcp', 'MCP')}
-            {rule(headerWidth('mcp', 'MCP'))}
+            {!c.mcp &&
+              mcpButtons.map(b => (
+                <Box flexShrink={0}>
+                  <Button key={`mcp-filter-${b.mode}`} plain onPress={() => void setMcpFilter($, b.mode)}>
+                    <Text bold={b.mode === mcpMode} color={b.mode === mcpMode ? t.success : t.accent}>
+                      {b.text}
+                    </Text>
+                  </Button>
+                </Box>
+              ))}
+            {c.mcp
+              ? rule(headerWidth('mcp', 'MCP'))
+              : rule(headerWidth('mcp', 'MCP'), ...mcpButtons.map(b => b.text.length))}
           </Box>
-          {!c.mcp && servers.length === 0 && <Text color={t.subtle}>none connected</Text>}
+          {!c.mcp && mcp.shown.length === 0 && <Text color={t.subtle}>{mcpEmptyText(mcp.hidden)}</Text>}
           {!c.mcp &&
-            servers.map(s => (
+            mcp.shown.map(s => (
               <Text wrap="truncate-end" dimColor={!s.connected}>
                 <Text color={t[s.connected ? 'success' : 'subtle']}>{s.connected ? '●' : '○'}</Text>{' '}
                 {s.name}
                 {!s.connected && <Text color={t.subtle}> · auth</Text>}
               </Text>
             ))}
+          {!c.mcp && mcp.shown.length > 0 && mcp.hidden > 0 && (
+            <Text color={t.subtle}>{mcpHiddenText(mcp.hidden)}</Text>
+          )}
         </Box>,
 
         <Box marginTop={1} flexDirection="column">
