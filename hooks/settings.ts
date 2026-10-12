@@ -75,10 +75,9 @@ export const summaryParts = (
   ...(hidden.includes('subagents') ? [] : [`${agents} agents`]),
 ]
 
-// The `⚙` is East-Asian-ambiguous width: `.length` counts it as 1 cell here,
-// while the header counts the gear as SETTINGS_BUTTON_CELLS; no difference at
-// the tested widths.
-export const ALL_HIDDEN_TEXT = `all sections hidden · ${SETTINGS_BUTTON} to show`
+// The wrench is 2 cells wide and 2 UTF-16 code units, so `.length` counts its
+// drawn width exactly: there is no ambiguity left.
+export const ALL_HIDDEN_TEXT = `all sections hidden · ${SETTINGS_GLYPH} to show`
 
 // A section's check: `[✓ Todo]` shown, `[  Todo]` hidden, the same width.
 export const checkText = (id: SectionId, shown: boolean): string => `[${shown ? '✓' : ' '} ${SECTION_LABELS[id]}]`
