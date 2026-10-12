@@ -38,7 +38,6 @@ import {
   flowRows,
   gridFor,
   HEADING_INDENT,
-  HIDE_BUTTON,
   ITEM_INDENT,
   layoutFor,
   maxScrollOffset,
@@ -50,6 +49,18 @@ import {
 } from './layout'
 import { DEFAULT_MCP_FILTER, filterServers, isMcpFilter, MCP_FILTERS, mcpBodyRows, mcpEmptyText, mcpHiddenText } from './mcp'
 import type { McpFilter } from './mcp'
+import {
+  CHANGE_TEXT,
+  CLOSE_TEXT,
+  SETTINGS_BUTTON,
+  SETTINGS_BUTTON_CELLS,
+  SETTINGS_CHANGE,
+  SETTINGS_CLOSE,
+  SETTINGS_KEY,
+  SETTINGS_TITLE,
+  settingsLabel,
+  settingsRows,
+} from './settings'
 import type { SectionId } from './settings'
 import { clean } from './text'
 import {
@@ -354,6 +365,9 @@ const MCP_FILTER_KEY = 'mcpFilter'
 // theme its focus ring rests on (`ui.focus`) is drawn until a press or Cancel.
 const pickerOpen = atom({ plugin: 'agent-hud', key: 'picker' } as const, false)
 const previewName = atom({ plugin: 'agent-hud', key: 'preview' } as const, null as string | null)
+// `⚙` in the header: the settings block is open at the top of the Pane. Not
+// kept in `$.store`; `session.start` closes it.
+const settingsOpen = atom({ plugin: 'agent-hud', key: 'settingsOpen' } as const, false)
 // The last offset the latest sticky render allowed; null while the Pane is
 // drawn in the plain flow (inline, or no body height), where the engine scrolls.
 let scrollMax: number | null = null
@@ -1029,10 +1043,9 @@ const activePalette = async ($: EngineInterface, hasKeys = true) => {
 // without one (default) draws exactly as before, on the terminal's own.
 const fill = (t: Palette): { backgroundColor?: string } => (t.background ? { backgroundColor: t.background } : {})
 
-// The sidebar header's hide Button: the element drawn right before the
-// picker, so the carousel's ring order starts there.
-const HIDE_KEY = 'hide-sidebar'
-const PICKER_ORDER = pickerOrder(HIDE_KEY)
+// The sidebar header's ⚙ Button is its only Button: the element drawn right
+// before the picker, so the carousel's ring order starts there.
+const PICKER_ORDER = pickerOrder(SETTINGS_KEY)
 // The picker element the ring last rested on (`ui.focus`), for the carousel.
 // Module-level: a reload forgets it, and the next move is then a plain one.
 let pickerLastFocus: string | null = null
@@ -1070,6 +1083,33 @@ const refocusPicker = async ($: EngineInterface): Promise<void> => {
   } catch {
     // the person can still take the keys with ctrl+x tab or a click
   }
+}
+
+// Opens the picker above the sections: no settings block (the two are never
+// drawn together), no preview, the scroll at the top so the block is in
+// view, and the HUD's own Pane asked for the keys now and again once the
+// command returned. `/hud-theme` and the block's `[change]` both start here.
+const startPicker = async ($: EngineInterface): Promise<void> => {
+  await update($, settingsOpen, () => false)
+  await update($, previewName, () => null)
+  await update($, scrollOffset, () => 0)
+  pickerLastFocus = null
+  await update($, pickerOpen, () => true)
+  await openForPicker($)
+  $.clock.after(PICKER_FOCUS_RETRY_MS, () => void refocusPicker($))
+}
+
+// `⚙`: closes the settings block, or opens it with the scroll at the top
+// (drawn above the sections, it is otherwise out of view when scrolled),
+// first closing the picker without saving.
+const toggleSettings = async ($: EngineInterface): Promise<void> => {
+  if (await read($, settingsOpen)) {
+    await update($, settingsOpen, () => false)
+    return
+  }
+  if (await read($, pickerOpen)) await closePicker($)
+  await update($, scrollOffset, () => 0)
+  await update($, settingsOpen, () => true)
 }
 
 // Ends the picker: saves `name`, or with null keeps the saved theme. The
@@ -1141,6 +1181,12 @@ export const register: Register = on => {
       await closePicker($)
     } catch {
       // the next press or Cancel clears them
+    }
+    // ... and with the settings block closed.
+    try {
+      await update($, settingsOpen, () => false)
+    } catch {
+      // the next ⚙ or [close] closes it
     }
     await $.command.register({
       name: 'hud-theme',
@@ -1404,12 +1450,7 @@ export const register: Register = on => {
       // runs: the keys are asked for again once it returned. The text list
       // stays for a session that places no panes.
       try {
-        await update($, previewName, () => null)
-        await update($, scrollOffset, () => 0)
-        pickerLastFocus = null
-        await update($, pickerOpen, () => true)
-        await openForPicker($)
-        $.clock.after(PICKER_FOCUS_RETRY_MS, () => void refocusPicker($))
+        await startPicker($)
       } catch {
         // the list below still answers
       }
@@ -1724,8 +1765,12 @@ export const register: Register = on => {
     const section = (id: SectionId, headerRows: number, bodyRows: number) => 1 + headerRows + (c[id] ? 0 : bodyRows)
     const cardList = displayRows(list)
     const picking = await read($, pickerOpen)
+    // `⚙` settings block: never drawn with the picker.
+    const settingsShown = !picking && (await read($, settingsOpen))
+    const savedTheme = await read($, themeName)
+    const shownName: ThemeName = isThemeName(savedTheme) ? savedTheme : DEFAULT_THEME
     const contentRows =
-      (picking ? pickerRows(hasKeys) : 0) +
+      (picking ? pickerRows(hasKeys) : settingsShown ? settingsRows(W, shownName) : 0) +
       flowRows([headerText('session', 'Session').length, ...(view.private ? [10] : [])], W) +
       (c.session
         ? 0
@@ -1762,17 +1807,14 @@ export const register: Register = on => {
       // Every card is drawn (the content scrolls); one without a model line is a row shorter.
       (c.subagents ? 0 : cardList.reduce((n, r) => n + (view.models.get(r.id) ? CARD_ROWS : CARD_ROWS - 1), 0))
 
-    // Sticky header: the project's name, and → which hides the sidebar,
-    // right under the pane's ✕ (the frame row itself is the engine's). The
-    // dock cannot be forced narrower (a width the person set wins over
-    // `columns`), so hiding goes to the band above the prompt, which reopens
-    // it. The name's Box takes the line less the button and its gap, so the
-    // row never wraps and a long name truncates.
-    // One band: the centered name and, at its right end, a solid ► that hides
-    // the sidebar, drawn inverse too and with no gap so both read as one bar.
-    // (The pane's ✕ is the engine's frame and cannot move into it.) A blank
-    // row below keeps the band apart from the first section.
-    const bandWidth = Math.max(1, W - HIDE_BUTTON.length)
+    // Sticky header: the project's name in a full-width inverse band that
+    // ends in ⚙, the settings gear, drawn inverse too with no gap so both
+    // read as one bar. Closing the sidebar is the engine's own close mark on
+    // the frame (or ctrl+x x); the band above the prompt then reopens it.
+    // The name's Box takes the line less the gear (counted as two cells), so
+    // the row never wraps and a long name truncates. A blank row below keeps
+    // the band apart from the first section.
+    const bandWidth = Math.max(1, W - SETTINGS_BUTTON_CELLS)
     const headerRow = (
       <Box flexDirection="column" flexShrink={0} marginBottom={1}>
         <Box flexWrap="wrap">
@@ -1782,13 +1824,9 @@ export const register: Register = on => {
             </Text>
           </Box>
           <Box flexShrink={0}>
-            <Button
-              key={HIDE_KEY}
-              plain
-              onPress={() => void $.ui.close({ id: PANE })}
-            >
+            <Button key={SETTINGS_KEY} plain onPress={() => void toggleSettings($)}>
               <Text bold inverse color={t.accent}>
-                {HIDE_BUTTON}
+                {SETTINGS_BUTTON}
               </Text>
             </Button>
           </Box>
@@ -1812,7 +1850,6 @@ export const register: Register = on => {
     // it so they are seen recoloring. One row per theme in its own accent, the
     // saved one marked and focused first; `ui.focus` previews the theme the
     // ring rests on, a press saves it, Cancel only closes the block.
-    const savedTheme = await read($, themeName)
     const picker = (
       <Box flexDirection="column" flexShrink={0} marginBottom={1}>
         <Text wrap="truncate-end" color={t.subtle}>
@@ -1845,8 +1882,37 @@ export const register: Register = on => {
       </Box>
     )
 
+    // `⚙` settings block: above the sections, which stay drawn below it; never
+    // with the picker (`settingsShown`). Its rows are counted by
+    // `settingsRows`: keep the two in step.
+    const settingsBlock = (
+      <Box flexDirection="column" flexShrink={0} marginBottom={1}>
+        <Text bold color={t.accent}>
+          {SETTINGS_TITLE}
+        </Text>
+        <Box flexWrap="wrap" gap={1}>
+          <Box flexShrink={0}>
+            <Text color={t.subtle}>{settingsLabel('Theme')}</Text>
+          </Box>
+          <Box flexShrink={0}>
+            <Text>{shownName}</Text>
+          </Box>
+          <Box flexShrink={0}>
+            <Button key={SETTINGS_CHANGE} plain onPress={() => void startPicker($)}>
+              <Text color={t.accent}>{CHANGE_TEXT}</Text>
+            </Button>
+          </Box>
+        </Box>
+        <Box flexShrink={0}>
+          <Button key={SETTINGS_CLOSE} plain onPress={() => void update($, settingsOpen, () => false)}>
+            <Text color={t.accent}>{CLOSE_TEXT}</Text>
+          </Button>
+        </Box>
+      </Box>
+    )
+
     const sections = [
-        ...(picking ? [picker] : []),
+        ...(picking ? [picker] : settingsShown ? [settingsBlock] : []),
         <Box flexDirection="column">
           <Box gap={1} flexWrap="wrap">
             {header('session', 'Session')}

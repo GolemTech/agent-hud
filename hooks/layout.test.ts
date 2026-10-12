@@ -23,6 +23,7 @@ import {
   viewportRowsFor,
   FOOTER_ROWS,
 } from './layout'
+import { SETTINGS_BUTTON, SETTINGS_BUTTON_CELLS, SETTINGS_KEY } from './settings'
 
 // ── Pure helpers ─────────────────────────────────────────────────────────
 
@@ -168,7 +169,11 @@ const inDemo = async (
   on: On,
   bodyColumns: number,
   bodyRows: number,
-  body: (pane: { drawn: () => Promise<unknown>; redraw: (props: never) => Promise<void> }) => Promise<void>,
+  body: (pane: {
+    drawn: () => Promise<unknown>
+    redraw: (props: never) => Promise<void>
+    press: (target: { key: string }) => Promise<unknown>
+  }) => Promise<void>,
 ) => {
   const clock = answerEngine(on)
   await $.session.start({ cwd: CWD, surface: 'terminal', isInteractive: true } as never)
@@ -232,6 +237,23 @@ for (const cols of [20, 28, 40, 60, 100]) {
   test(`at ${cols} columns, labels keep their width and rows wrap`, async ($, on) => {
     await inDemo($, on, cols, 60, async pane => {
       checkRules(await pane.drawn(), layoutFor(cols, 60).columns)
+    })
+  })
+}
+
+// Review focus: a narrow dock with the settings block open keeps the rules,
+// and the header band is counted at exactly the drawable width (⚙ as two
+// cells), so it never wraps past HEADER_ROWS.
+for (const cols of [20, 28]) {
+  test(`at ${cols} columns, the settings block keeps the rules and the header one band`, async ($, on) => {
+    await inDemo($, on, cols, 60, async pane => {
+      await pane.press({ key: SETTINGS_KEY })
+      const tree = (await pane.drawn()) as Node
+      const W = layoutFor(cols, 60).columns
+      checkRules(tree, W)
+      expect(textOf(tree)).toContain('[close]')
+      const bandRow = elements(elements(tree)[0] as Node)[0] as Node
+      expect(textOf(bandRow).length - SETTINGS_BUTTON.length + SETTINGS_BUTTON_CELLS).toBe(W)
     })
   })
 }

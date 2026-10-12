@@ -87,7 +87,7 @@ test('themeKey and themeFromKey round-trip the picker Button keys', () => {
 test('themeFromKey is null for any other element', () => {
   expect(themeFromKey(undefined)).toBeNull()
   expect(themeFromKey('theme-cancel')).toBeNull()
-  expect(themeFromKey('hide-sidebar')).toBeNull()
+  expect(themeFromKey('settings')).toBeNull()
   expect(themeFromKey('theme:nope')).toBeNull()
   expect(themeFromKey('theme:')).toBeNull()
   expect(themeFromKey('dracula')).toBeNull()
@@ -127,23 +127,23 @@ test('every preset has its editor background; default keeps the terminal one', (
 })
 
 test('pickerOrder is the element before the picker, every theme Button, then Cancel', () => {
-  const order = pickerOrder('hide-sidebar')
-  expect(order[0]).toBe('hide-sidebar')
+  const order = pickerOrder('settings')
+  expect(order[0]).toBe('settings')
   expect(order.slice(1, -1)).toEqual(THEME_NAMES.map(themeKey))
   expect(order.at(-1)).toBe('theme-cancel')
 })
 
 test('wrapFocus turns a step past either end of the themes into the other end', () => {
-  const order = pickerOrder('hide-sidebar')
+  const order = pickerOrder('settings')
   expect(wrapFocus('theme:monokai', 'theme-cancel', order)).toBe('theme:default')
-  expect(wrapFocus('theme:default', 'hide-sidebar', order)).toBe('theme:monokai')
+  expect(wrapFocus('theme:default', 'settings', order)).toBe('theme:monokai')
 })
 
 test('wrapFocus leaves every other move alone', () => {
-  const order = pickerOrder('hide-sidebar')
+  const order = pickerOrder('settings')
   expect(wrapFocus('theme:dracula', 'theme:nord', order)).toBeNull() // inside the list
   expect(wrapFocus('theme:dracula', 'theme-cancel', order)).toBeNull() // a jump, not a step
-  expect(wrapFocus('theme:monokai', 'hide-sidebar', order)).toBeNull()
+  expect(wrapFocus('theme:monokai', 'settings', order)).toBeNull()
   expect(wrapFocus('theme:default', 'theme-cancel', order)).toBeNull()
   expect(wrapFocus('theme-cancel', 'theme:monokai', order)).toBeNull() // back up from Cancel
   expect(wrapFocus(null, 'theme-cancel', order)).toBeNull()

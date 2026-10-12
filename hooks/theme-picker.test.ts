@@ -79,8 +79,8 @@ const openPicker = async ($: Engine) => {
   return { pane, text, drawn: async () => JSON.stringify(await pane.drawn()) }
 }
 
-// The HUD's own accent: the color of the sidebar header's hide button.
-const accentNow = (drawn: string): string | undefined => /"key":"hide-sidebar".*?"color":"([^"]+)"/.exec(drawn)?.[1]
+// The HUD's own accent: the color of the sidebar header's ⚙ Button.
+const accentNow = (drawn: string): string | undefined => /"key":"settings".*?"color":"([^"]+)"/.exec(drawn)?.[1]
 
 test('/hud-theme without a name opens the picker inside the focused sidebar, above its sections', async ($, on) => {
   const opens: unknown[] = []
@@ -216,8 +216,8 @@ test('the picker wraps like a carousel: past the last theme to the first, before
   expect(landed.at(-1)).toBe('theme:default')
   expect(accentNow(await drawn())).toBe('claude')
 
-  // Up from default: the ring would leave for the header; it lands on monokai.
-  await focus($, 'hide-sidebar')
+  // Up from default: the ring would leave for the header's ⚙; it lands on monokai.
+  await focus($, 'settings')
   expect(landed.at(-1)).toBe('theme:monokai')
   expect(accentNow(await drawn())).toBe(THEMES.monokai.accent)
 

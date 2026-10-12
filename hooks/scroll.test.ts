@@ -4,6 +4,7 @@ import type { Engine } from 'claude-code/testing'
 
 import { FOOTER_ROWS, HEADER_ROWS } from './layout'
 import { projectName } from './register'
+import { SETTINGS_BUTTON, SETTINGS_KEY } from './settings'
 
 // The sticky header and footer: the Pane is drawn at exactly its body's
 // height, the sections scroll inside a clipped viewport by the plugin's own
@@ -103,9 +104,13 @@ test('the Pane is drawn at its body height: header, clipped viewport, footer', a
     expect(p.viewport.props?.overflow).toBe('hidden')
     expect(p.viewport.props?.height).toBe(24 - HEADER_ROWS - FOOTER_ROWS)
     expect(p.content.props?.marginTop).toBe(0)
-    // The header names the project and keeps the hide button.
+    // The header names the project and holds one Button: the ⚙ gear (the
+    // engine's own close mark on the frame closes the sidebar).
     expect(textOf(p.header)).toContain('api')
-    expect(all(p.header, 'Button').length).toBe(1)
+    const buttons = all(p.header, 'Button')
+    expect(buttons.length).toBe(1)
+    expect(JSON.stringify(buttons[0])).toContain(`"key":"${SETTINGS_KEY}"`)
+    expect(JSON.stringify(p.header)).not.toContain('hide-sidebar')
     // The name is a centered band: inverse, padded evenly on both sides.
     const band = all(p.header, 'Text').find(t => t.props?.inverse === true)
     expect(band).toBeDefined()
@@ -115,11 +120,11 @@ test('the Pane is drawn at its body height: header, clipped viewport, footer', a
     const right = label.length - label.trimEnd().length
     expect(Math.abs(left - right)).toBeLessThanOrEqual(1)
     expect(left).toBeGreaterThan(1)
-    // The hide button sits inside the band: a solid ► drawn inverse, with
-    // no gap between them, and a blank row separates the band from Session.
-    const hide = all(p.header, 'Button')[0]
-    expect(textOf(hide)).toContain('►')
-    expect(all(hide, 'Text').some(t => t.props?.inverse === true)).toBe(true)
+    // The gear sits inside the band: drawn inverse with no gap, and a blank
+    // row separates the band from Session.
+    const gear = buttons[0]
+    expect(textOf(gear)).toBe(SETTINGS_BUTTON)
+    expect(all(gear, 'Text').some(t => t.props?.inverse === true)).toBe(true)
     expect(p.header.props?.marginBottom).toBe(1)
     expect(HEADER_ROWS).toBe(2)
     expect(textOf(p.viewport)).not.toContain('📂')

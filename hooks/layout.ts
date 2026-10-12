@@ -119,14 +119,11 @@ export const flowRows = (widths: readonly number[], columns: number, gap = 1): n
 
 // ── Sticky header and footer ─────────────────────────────────────────────
 // The Pane is drawn at exactly its body's height: the header (project name
-// and the hide button) on top, the footer (Claude Code version) at the
+// and the ⚙ gear) on top, the footer (Claude Code version) at the
 // bottom, and between them a clipped viewport whose content the plugin moves
 // itself by an offset, so the header and footer never scroll away.
 
-export const HEADER_ROWS = 2 // the band (name + hide button) and a blank row under it
-// The hide button inside the header band: a solid arrow padded to a cell
-// either side, so it reads as the band's end cap.
-export const HIDE_BUTTON = ' ► '
+export const HEADER_ROWS = 2 // the band (name + ⚙) and a blank row under it
 export const FOOTER_ROWS = 2 // a blank separator row and the version line
 // Blank rows left under the last content line at the end of the scroll.
 export const SCROLL_BOTTOM_MARGIN = 1
