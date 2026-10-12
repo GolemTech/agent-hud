@@ -1812,6 +1812,7 @@ export const register: Register = on => {
     // The name's Box takes the line less the gear (counted as two cells), so
     // the row never wraps and a long name truncates. A blank row below keeps
     // the band apart from the first section.
+    // Privacy mode prefixes 🔒 to the name, so it is seen whatever is hidden.
     const bandWidth = Math.max(1, W - SETTINGS_BUTTON_CELLS)
     const headerRow = (
       <Box flexDirection="column" flexShrink={0} marginBottom={1}>
