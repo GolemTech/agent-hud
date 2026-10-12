@@ -34,3 +34,53 @@ export const settingsLabel = (label: string): string =>
 // under the block.
 export const settingsRows = (columns: number, themeName: string): number =>
   1 + flowRows([SETTINGS_LABEL_CELLS, themeName.length, CHANGE_TEXT.length], columns) + 1 + 1
+
+// ── Hidden sections ──────────────────────────────────────────────────────
+// A hidden section is not drawn at all (a collapsed one keeps its title);
+// its data is still collected. `register.tsx` keeps the list in the
+// `hiddenSections` atom and its `$.store` copy.
+
+export const SECTION_IDS: readonly SectionId[] = ['session', 'context', 'mcp', 'subagents', 'todos', 'gentle']
+
+export const SECTION_LABELS: Record<SectionId, string> = {
+  session: 'Session',
+  context: 'Context',
+  mcp: 'MCP',
+  subagents: 'Subagents',
+  todos: 'Todo',
+  gentle: 'Gentle AI',
+}
+
+// A stored list: known ids only, each once, in draw order; anything else none.
+export const parseHidden = (stored: unknown): SectionId[] =>
+  Array.isArray(stored) ? SECTION_IDS.filter(id => stored.includes(id)) : []
+
+export const toggleHidden = (hidden: readonly SectionId[], id: SectionId): SectionId[] =>
+  hidden.includes(id) ? hidden.filter(h => h !== id) : SECTION_IDS.filter(s => s === id || hidden.includes(s))
+
+export const visibleSections = (hidden: readonly SectionId[]): SectionId[] =>
+  SECTION_IDS.filter(id => !hidden.includes(id))
+
+// The band's one-line digest, part by part: context `42%`, `MCP 3/5` and
+// `2 agents`, each dropped when its section is hidden.
+export const summaryParts = (
+  percent: number | undefined,
+  connected: number,
+  total: number,
+  agents: number,
+  hidden: readonly SectionId[],
+): string[] => [
+  ...(hidden.includes('context') ? [] : [`${percent === undefined ? '–' : Math.round(percent)}%`]),
+  ...(hidden.includes('mcp') ? [] : [`MCP ${connected}/${total}`]),
+  ...(hidden.includes('subagents') ? [] : [`${agents} agents`]),
+]
+
+// The `⚙` is East-Asian-ambiguous width: `.length` counts it as 1 cell here,
+// while the header counts the gear as SETTINGS_BUTTON_CELLS; no difference at
+// the tested widths.
+export const ALL_HIDDEN_TEXT = `all sections hidden · ${SETTINGS_BUTTON} to show`
+
+// A section's check: `[✓ Todo]` shown, `[  Todo]` hidden, the same width.
+export const checkText = (id: SectionId, shown: boolean): string => `[${shown ? '✓' : ' '} ${SECTION_LABELS[id]}]`
+
+export const sectionKey = (id: SectionId): string => `show-${id}`

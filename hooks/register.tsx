@@ -60,6 +60,7 @@ import {
   SETTINGS_TITLE,
   settingsLabel,
   settingsRows,
+  summaryParts,
 } from './settings'
 import type { SectionId } from './settings'
 import { clean } from './text'
@@ -663,14 +664,15 @@ export const agentCounts = (list: readonly { status: string }[]): AgentCounts =>
   return { run, done, err, total: list.length }
 }
 
-// One-line digest shown in the collapsed-sidebar band above the prompt.
+// One-line digest shown in the collapsed-sidebar band above the prompt; the
+// parts of hidden sections are left out, and '' when all three are.
 export const summaryLine = (
   percent: number | undefined,
   connected: number,
   total: number,
   agents: number,
-): string =>
-  `${percent === undefined ? '–' : Math.round(percent)}% · MCP ${connected}/${total} · ${agents} agents`
+  hidden: readonly SectionId[] = [],
+): string => summaryParts(percent, connected, total, agents, hidden).join(' · ')
 
 // ── View ─────────────────────────────────────────────────────────────────
 // Everything the Pane and the band display, assembled from the live sources

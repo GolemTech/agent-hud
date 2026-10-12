@@ -2,10 +2,20 @@ import type { On } from 'claude-code'
 import { expect, mock, test } from 'claude-code/testing'
 import type { Engine } from 'claude-code/testing'
 
-import { layoutFor } from './layout'
+import { layoutFor, textRows } from './layout'
+import { summaryLine } from './register'
 import {
+  ALL_HIDDEN_TEXT,
   CHANGE_TEXT,
+  checkText,
   CLOSE_TEXT,
+  parseHidden,
+  SECTION_IDS,
+  SECTION_LABELS,
+  sectionKey,
+  summaryParts,
+  toggleHidden,
+  visibleSections,
   SETTINGS_BUTTON,
   SETTINGS_BUTTON_CELLS,
   SETTINGS_GLYPH,
@@ -46,6 +56,52 @@ test('settingsRows: the title, the Theme row as it wraps, [close] and the blank 
   expect(settingsRows(32, 'catppuccin-mocha')).toBe(5)
   // 20 columns (18 drawable): label, name and [change] each take a line.
   expect(settingsRows(18, 'catppuccin-mocha')).toBe(6)
+})
+
+test('SECTION_IDS lists the six sections in draw order, each with its label', () => {
+  expect(SECTION_IDS).toEqual(['session', 'context', 'mcp', 'subagents', 'todos', 'gentle'])
+  expect(SECTION_IDS.map(id => SECTION_LABELS[id])).toEqual(['Session', 'Context', 'MCP', 'Subagents', 'Todo', 'Gentle AI'])
+})
+
+test('parseHidden keeps known ids once, in draw order; anything else is none', () => {
+  expect(parseHidden(['todos', 'bogus', 'session', 'todos', 3])).toEqual(['session', 'todos'])
+  expect(parseHidden([])).toEqual([])
+  for (const bad of [undefined, null, 'mcp', 3, { mcp: true }]) expect(parseHidden(bad)).toEqual([])
+})
+
+test('toggleHidden hides or shows one section, keeping draw order', () => {
+  expect(toggleHidden([], 'todos')).toEqual(['todos'])
+  expect(toggleHidden(['todos'], 'session')).toEqual(['session', 'todos'])
+  expect(toggleHidden(['session', 'todos'], 'session')).toEqual(['todos'])
+})
+
+test('visibleSections keeps draw order', () => {
+  expect(visibleSections([])).toEqual([...SECTION_IDS])
+  expect(visibleSections(['mcp', 'session'])).toEqual(['context', 'subagents', 'todos', 'gentle'])
+  expect(visibleSections([...SECTION_IDS])).toEqual([])
+})
+
+test('summaryParts drops the parts of hidden sections; nothing hidden is the old line', () => {
+  expect(summaryParts(26, 5, 9, 2, []).join(' · ')).toBe('26% · MCP 5/9 · 2 agents')
+  expect(summaryParts(undefined, 0, 0, 0, []).join(' · ')).toBe('–% · MCP 0/0 · 0 agents')
+  expect(summaryParts(26, 5, 9, 2, ['context'])).toEqual(['MCP 5/9', '2 agents'])
+  expect(summaryParts(26, 5, 9, 2, ['mcp', 'subagents'])).toEqual(['26%'])
+  expect(summaryParts(26, 5, 9, 2, ['context', 'mcp', 'subagents'])).toEqual([])
+  expect(summaryParts(26, 5, 9, 2, ['session', 'todos', 'gentle'])).toEqual(['26%', 'MCP 5/9', '2 agents'])
+  expect(summaryLine(26, 5, 9, 2)).toBe('26% · MCP 5/9 · 2 agents')
+  expect(summaryLine(26, 5, 9, 2, ['context', 'mcp', 'subagents'])).toBe('')
+})
+
+test('checks keep one width checked or not, so a toggle never changes the wrap', () => {
+  expect(checkText('todos', true)).toBe('[✓ Todo]')
+  expect(checkText('todos', false)).toBe('[  Todo]')
+  for (const id of SECTION_IDS) expect(checkText(id, false).length).toBe(checkText(id, true).length)
+  expect(sectionKey('mcp')).toBe('show-mcp')
+})
+
+test('the all-hidden line names the gear and takes two rows at 28 columns', () => {
+  expect(ALL_HIDDEN_TEXT).toBe('all sections hidden · ⚙ to show')
+  expect(textRows(ALL_HIDDEN_TEXT.length, layoutFor(28, 24).columns)).toBe(2)
 })
 
 // ── Wiring ───────────────────────────────────────────────────────────────
