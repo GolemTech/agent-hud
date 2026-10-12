@@ -361,8 +361,9 @@ const THEME_KEY = 'theme'
 // MCP_FILTER_KEY and loaded at session start; `all` until one is chosen.
 const mcpFilter = atom({ plugin: 'agent-hud', key: 'mcpFilter' } as const, DEFAULT_MCP_FILTER as McpFilter)
 const MCP_FILTER_KEY = 'mcpFilter'
-// `/hud-theme` with no name: the picker replaces the Pane's sections, and the
-// theme its focus ring rests on (`ui.focus`) is drawn until a press or Cancel.
+// `/hud-theme` with no name: the picker is drawn above the Pane's sections
+// (never with the settings block), and the theme its focus ring rests on
+// (`ui.focus`) is drawn until a press or Cancel.
 const pickerOpen = atom({ plugin: 'agent-hud', key: 'picker' } as const, false)
 const previewName = atom({ plugin: 'agent-hud', key: 'preview' } as const, null as string | null)
 // `⋮` in the header: the settings block is open at the top of the Pane. Not
@@ -1493,7 +1494,7 @@ export const register: Register = on => {
   }).catch((_$, e, next) => next(e))
 
   // Hidden-sidebar band: shown above the prompt whenever the pane is not on
-  // screen (closed by its ✕ (or ctrl+x x), or open but unplaced on a narrow terminal),
+  // screen (closed by its ✕ or ctrl+x x, or open but unplaced on a narrow terminal),
   // with a button that reopens it. It asks the engine itself through
   // `$.ui.panes()` rather than tracking opens and closes: a plugin's own
   // `$.ui.close` is not seen by its own `ui.close` hook, and a state write

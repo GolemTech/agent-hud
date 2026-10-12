@@ -120,11 +120,11 @@ test('the Pane is drawn at its body height: header, clipped viewport, footer', a
     const right = label.length - label.trimEnd().length
     expect(Math.abs(left - right)).toBeLessThanOrEqual(1)
     expect(left).toBeGreaterThan(1)
-    // The gear sits inside the band: drawn inverse with no gap, and a blank
-    // row separates the band from Session.
-    const gear = buttons[0]
-    expect(textOf(gear)).toBe(SETTINGS_BUTTON)
-    expect(all(gear, 'Text').some(t => t.props?.inverse === true)).toBe(true)
+    // The settings button sits inside the band: drawn inverse with no gap,
+    // and a blank row separates the band from Session.
+    const settings = buttons[0]
+    expect(textOf(settings)).toBe(SETTINGS_BUTTON)
+    expect(all(settings, 'Text').some(t => t.props?.inverse === true)).toBe(true)
     expect(p.header.props?.marginBottom).toBe(1)
     expect(HEADER_ROWS).toBe(2)
     expect(textOf(p.viewport)).not.toContain('📂')

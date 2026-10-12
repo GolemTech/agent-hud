@@ -102,7 +102,7 @@
   <rect class="panel" x="776" y="134" width="200" height="236" rx="10"/>
   <rect x="784" y="142" width="184" height="26" rx="5" fill="#3DD6D0"/>
   <text class="t" x="794" y="160" style="fill:#0B1420; font-weight:bold;">project</text>
-  <text class="t" x="958" y="160" text-anchor="end" style="fill:#0B1420; font-weight:bold;">►</text>
+  <text class="t" x="958" y="160" text-anchor="end" style="fill:#0B1420; font-weight:bold;">⋮</text>
   <text class="t" x="792" y="192">▾ Session</text>
   <text class="t" x="792" y="214">▾ Context</text>
   <rect x="884" y="205" width="80" height="8" rx="3" fill="#22364A"/>
