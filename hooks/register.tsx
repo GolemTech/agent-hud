@@ -49,6 +49,24 @@ import {
   viewportRowsFor,
 } from './layout'
 import { clean } from './text'
+import {
+  DEFAULT_THEME,
+  isThemeName,
+  parseThemeArg,
+  PICKER_CANCEL,
+  PICKER_FOCUS_RETRY_MS,
+  pickerOrder,
+  pickerRows,
+  shownTheme,
+  THEME_NAMES,
+  themeFromKey,
+  themeKey,
+  themeList,
+  THEMES,
+  wrapFocus,
+} from './themes'
+import type { Palette, Role, ThemeName } from './themes'
+import { isSupportedVersion, unsupportedMessage } from './version'
 
 // Re-exported for the unit tests, which import the helpers from here.
 export { clean }
@@ -323,6 +341,14 @@ const todos = atom({ plugin: 'agent-hud', key: 'todos' } as const, [])
 const privateMode = atom({ plugin: 'agent-hud', key: 'private' } as const, false)
 // The Pane's own scroll offset under the sticky header (`ui.scroll` moves it).
 const scrollOffset = atom({ plugin: 'agent-hud', key: 'scroll' } as const, 0)
+// `/hud-theme`: the active theme's name, kept in `$.store` under THEME_KEY
+// and loaded at session start; both surfaces read it to color their roles.
+const themeName = atom({ plugin: 'agent-hud', key: 'theme' } as const, DEFAULT_THEME as string)
+const THEME_KEY = 'theme'
+// `/hud-theme` with no name: the picker replaces the Pane's sections, and the
+// theme its focus ring rests on (`ui.focus`) is drawn until a press or Cancel.
+const pickerOpen = atom({ plugin: 'agent-hud', key: 'picker' } as const, false)
+const previewName = atom({ plugin: 'agent-hud', key: 'preview' } as const, null as string | null)
 // The last offset the latest sticky render allowed; null while the Pane is
 // drawn in the plain flow (inline, or no body height), where the engine scrolls.
 let scrollMax: number | null = null
@@ -351,12 +377,11 @@ const icon = (status: string): string => {
   }
 }
 
-// Theme keys adapt to light/dark automatically, so the pane stays legible on
-// either terminal theme.
-const color = (status: string): string => {
+// The theme role a subagent's status icon is drawn in (`themes.ts`).
+const color = (status: string): Role => {
   switch (status) {
     case 'running':
-      return 'claude'
+      return 'accent'
     case 'completed':
       return 'success'
     case 'failed':
@@ -549,7 +574,8 @@ export const barCells = (percent: number, width = 10): [number, number] => {
   return [filled, width - filled]
 }
 
-export const meterColor = (percent: number): string =>
+// The theme role a meter's bar is drawn in.
+export const meterColor = (percent: number): Role =>
   percent < 60 ? 'success' : percent < 85 ? 'warning' : 'error'
 
 // 261,474 tokens · $16.13 spent
@@ -663,6 +689,10 @@ export type HudView = {
 
 // The Claude Code version for the footer, read once per session start.
 let versionCache: string | null = null
+// Set at session start when Claude Code is older than MIN_CLAUDE_CODE_VERSION
+// (`version.ts`): both surfaces then draw only this notice. An unknown
+// version leaves it null, so the HUD runs normally.
+let unsupportedNotice: string | null = null
 
 // ── Gentle AI ────────────────────────────────────────────────────────────
 // The section's pure parsers and constants live in `gentle.ts`; everything
@@ -982,12 +1012,92 @@ const liveView = async ($: EngineInterface, list: AgentRow[]): Promise<HudView> 
 const hudView = async ($: EngineInterface, list: AgentRow[]): Promise<HudView> =>
   demoStartedAt === null ? liveView($, list) : demoView((await $.clock.now()) - demoStartedAt)
 
+// The palette both surfaces draw with: the picker's preview, else the saved
+// theme. `hasKeys` false (the Pane lost the keys, e.g. to Escape, which
+// raises no event a hook sees) drops the preview from the drawing.
+const activePalette = async ($: EngineInterface, hasKeys = true) => {
+  const [saved, preview] = await Promise.all([read($, themeName), read($, previewName)])
+  return shownTheme(saved, hasKeys ? preview : null)
+}
+
+// The root Box's fill: the theme's background, or no prop at all, so a theme
+// without one (default) draws exactly as before, on the terminal's own.
+const fill = (t: Palette): { backgroundColor?: string } => (t.background ? { backgroundColor: t.background } : {})
+
+// The sidebar header's hide Button: the element drawn right before the
+// picker, so the carousel's ring order starts there.
+const HIDE_KEY = 'hide-sidebar'
+const PICKER_ORDER = pickerOrder(HIDE_KEY)
+// The picker element the ring last rested on (`ui.focus`), for the carousel.
+// Module-level: a reload forgets it, and the next move is then a plain one.
+let pickerLastFocus: string | null = null
+
+// Leaves the picker: no preview, the sections back.
+const closePicker = async ($: EngineInterface): Promise<void> => {
+  pickerLastFocus = null
+  await update($, previewName, () => null)
+  await update($, pickerOpen, () => false)
+}
+
+// Opens the HUD's own Pane asking for the keys: the same id and title, so
+// no second pane (a dock tab that would hide the sidebar). No `closeOnEscape`:
+// Escape only returns the keys and the HUD stays.
+const openForPicker = async ($: EngineInterface): Promise<void> => {
+  await $.ui.open({ id: PANE, title: 'Agent HUD', focus: true })
+}
+
+// Asks for the keys again once `/hud-theme` returned, unless the picker was
+// already answered.
+const refocusPicker = async ($: EngineInterface): Promise<void> => {
+  try {
+    if (await read($, pickerOpen)) await openForPicker($)
+  } catch {
+    // the person can still take the keys with ctrl+x tab or a click
+  }
+}
+
+// Ends the picker: saves `name`, or with null keeps the saved theme. The
+// Pane stays open.
+const finishPicker = async ($: EngineInterface, name: ThemeName | null): Promise<void> => {
+  if (name) await saveTheme($, name)
+  else await closePicker($)
+}
+
+// Applies a theme at once and keeps it for later sessions. False when the
+// save failed; the theme still applies to this session.
+const saveTheme = async ($: EngineInterface, name: ThemeName): Promise<boolean> => {
+  await update($, themeName, () => name)
+  await closePicker($)
+  try {
+    await $.store.set(THEME_KEY, name)
+    return true
+  } catch {
+    return false
+  }
+}
+
 export const register: Register = on => {
   on('session.start', async ($, e, next) => {
+    let supported: boolean | undefined
     try {
-      versionCache = versionLabel(await $.session.version())
+      const v = await $.session.version()
+      versionCache = versionLabel(v)
+      supported = isSupportedVersion(v.base ?? v.version)
     } catch {
-      versionCache = null // the footer is left out
+      versionCache = null // the footer is left out; an unknown version runs
+    }
+    // Too old a Claude Code: say so, keep `/hud` to show the notice, and start
+    // nothing else (no poller, no detection, no other command).
+    unsupportedNotice = supported === false ? unsupportedMessage(versionCache ?? '?') : null
+    if (unsupportedNotice !== null) {
+      try {
+        await $.ui.toast(unsupportedNotice)
+        await $.command.register({ name: 'hud', description: 'Open the Agent HUD sidebar' })
+        void $.ui.open({ id: PANE, title: 'Agent HUD' })
+      } catch {
+        // the notice is best effort; the session goes on regardless
+      }
+      return next(e)
     }
     // A new session starts at the top of the sidebar.
     try {
@@ -995,6 +1105,25 @@ export const register: Register = on => {
     } catch {
       // keep the last offset; the render clamps it anyway
     }
+    // The theme chosen in an earlier session; a missing or unknown one is
+    // `default`. A store that cannot be read keeps the current theme.
+    try {
+      const stored = await $.store.get(THEME_KEY)
+      await update($, themeName, () => (isThemeName(stored) ? stored : DEFAULT_THEME))
+    } catch {
+      // keep the theme this session already has
+    }
+    // A new session starts with no picker and no preview.
+    try {
+      await closePicker($)
+    } catch {
+      // the next press or Cancel clears them
+    }
+    await $.command.register({
+      name: 'hud-theme',
+      description: 'Pick the Agent HUD color theme; without a name, list the themes',
+      argumentHint: '[name]',
+    })
     await $.command.register({
       name: 'hud',
       description: 'Open the Agent HUD sidebar',
@@ -1239,6 +1368,66 @@ export const register: Register = on => {
     }
   })
 
+  // Theme: the atom write redraws both surfaces at once; `$.store` keeps the
+  // choice for later sessions. A failed save still applies it to this one.
+  on('command.run', { command: 'hud-theme' }, async ($, e) => {
+    const arg = parseThemeArg(e.args ?? '')
+    const current = await read($, themeName)
+    const active = isThemeName(current) ? current : DEFAULT_THEME
+    if (arg.kind === 'list') {
+      // The picker opens inside the HUD's own Pane, above its sections, so
+      // the sidebar is seen recoloring. An open answering the person's command
+      // is placed at any width, but its `focus` is refused while this command
+      // runs: the keys are asked for again once it returned. The text list
+      // stays for a session that places no panes.
+      try {
+        await update($, previewName, () => null)
+        await update($, scrollOffset, () => 0)
+        pickerLastFocus = null
+        await update($, pickerOpen, () => true)
+        await openForPicker($)
+        $.clock.after(PICKER_FOCUS_RETRY_MS, () => void refocusPicker($))
+      } catch {
+        // the list below still answers
+      }
+      return {
+        text:
+          `Agent HUD themes:\n${themeList(active)}\n` +
+          'Pick one at the top of the Agent HUD sidebar (moving previews it), or run /hud-theme <name>.',
+      }
+    }
+    if (arg.kind === 'unknown') {
+      return { text: `Unknown HUD theme "${clean(arg.input)}". Available themes:\n${themeList(active)}` }
+    }
+    if (!(await saveTheme($, arg.name))) {
+      return { text: `HUD theme set to ${arg.name} for this session; it could not be saved for the next one.` }
+    }
+    return { text: `HUD theme set to ${arg.name}.` }
+  })
+
+  // Picker preview: the focus ring resting on a theme Button draws that theme;
+  // anywhere else, the saved one. An observer: the move is forwarded untouched,
+  // and a failure here never keeps the ring from moving.
+  on('ui.focus', { component: 'Pane', requestId: PANE }, async ($, e, next) => {
+    let target = e.element
+    try {
+      const [open, current] = await Promise.all([read($, pickerOpen), read($, previewName)])
+      const ours = e.plugin === undefined || e.plugin === 'agent-hud'
+      if (open && ours) {
+        // Carousel: a person's step past either end of the themes lands on
+        // the other end. Inferred from the previous element (focus events
+        // carry no direction); a plugin's own move is never redirected.
+        if (e.origin.kind === 'person') target = wrapFocus(pickerLastFocus, e.element, PICKER_ORDER) ?? e.element
+        pickerLastFocus = target ?? null
+      }
+      const name = open && ours ? themeFromKey(target) : null
+      if (name !== current) await update($, previewName, () => name)
+    } catch {
+      target = e.element // any failure: the move stands as it is
+    }
+    return target === e.element ? next(e) : next({ ...e, element: target })
+  }).catch((_$, e, next) => next(e))
+
   // Hidden-sidebar band: shown above the prompt whenever the pane is not on
   // screen (closed by → or its ✕, or open but unplaced on a narrow terminal),
   // with a button that reopens it. It asks the engine itself through
@@ -1252,23 +1441,30 @@ export const register: Register = on => {
     if (isSidebarShown(await $.ui.panes())) return next(e)
 
     const { Box, Text, Button } = $.ui.resolve(e)
+    const t = await activePalette($)
+    if (unsupportedNotice !== null) {
+      return (
+        <Text wrap="truncate-end" color={t.warning}>
+          {unsupportedNotice}
+        </Text>
+      )
+    }
     const view = await hudView($, list)
     const connected = view.servers.filter(s => s.connected).length
 
     return (
-      <Box flexWrap="wrap" gap={1}>
+      <Box flexWrap="wrap" gap={1} {...fill(t)}>
         <Box flexShrink={0}>
           <Button
             key="expand"
-            label="▸ Agent HUD"
             onPress={() => void $.ui.open({ id: PANE, title: 'Agent HUD' })}
           >
-            <Text bold color="claude">
+            <Text bold color={t.accent}>
               ▸ Agent HUD
             </Text>
           </Button>
         </Box>
-        <Text wrap="truncate-end" color="subtle">
+        <Text wrap="truncate-end" color={t.subtle}>
           {summaryLine(view.contextPercent, connected, view.servers.length, view.agents.length)}
         </Text>
       </Box>
@@ -1290,6 +1486,20 @@ export const register: Register = on => {
 
   on('ui.render', { component: 'Pane', requestId: PANE }, async ($, e) => {
     const { Box, Text, Button } = $.ui.resolve(e)
+    // Every color below is a role of the active theme (`themes.ts`).
+    // The Pane holds the keys: the picker's preview shows only then.
+    const hasKeys = e.props.isFocused
+    const t = await activePalette($, hasKeys)
+    // Too old a Claude Code: only the notice, plain text and no buttons.
+    if (unsupportedNotice !== null) {
+      return (
+        <Box flexDirection="column" paddingX={PANE_PADDING_X} {...fill(t)}>
+          <Text wrap="wrap" color={t.warning}>
+            {unsupportedNotice}
+          </Text>
+        </Box>
+      )
+    }
     const c = await read($, collapsed)
     const view = await hudView($, await read($, rows))
     const { servers, footer, agents: list } = view
@@ -1306,8 +1516,8 @@ export const register: Register = on => {
     const modelLine = (m: ModelInfo | undefined, indent = '') =>
       m && (
         <Text wrap="truncate-end">
-          {indent}🤖 <Text bold color="warning">{prettyModel(m.model)}</Text>
-          {m.effort !== undefined && <Text color="subtle"> · {String(m.effort)}</Text>}
+          {indent}🤖 <Text bold color={t.warning}>{prettyModel(m.model)}</Text>
+          {m.effort !== undefined && <Text color={t.subtle}> · {String(m.effort)}</Text>}
         </Text>
       )
 
@@ -1322,11 +1532,10 @@ export const register: Register = on => {
       <Box flexShrink={0}>
         <Button
           key={`toggle-${id}`}
-          label={headerText(id, label)}
           plain
           onPress={() => void update($, collapsed, prev => ({ ...prev, [id]: !prev[id] }))}
         >
-          <Text bold inverse color="claude">
+          <Text bold inverse color={t.accent}>
             {sectionTitle(headerText(id, label))}
           </Text>
         </Button>
@@ -1342,7 +1551,7 @@ export const register: Register = on => {
       const w = ruleWidth(L.columns, itemWidths)
       return w > 0 ? (
         <Box flexShrink={0}>
-          <Text color="subtle">{'─'.repeat(w)}</Text>
+          <Text color={t.subtle}>{'─'.repeat(w)}</Text>
         </Box>
       ) : null
     }
@@ -1356,7 +1565,6 @@ export const register: Register = on => {
     const action = (key: string, label: string, act: () => Promise<unknown>, selected = false) => (
       <Button
         key={key}
-        label={buttonText(label, selected)}
         plain
         onPress={() => {
           if (view.demo) return $.ui.toast('demo mode')
@@ -1364,11 +1572,11 @@ export const register: Register = on => {
         }}
       >
         {selected ? (
-          <Text bold color="success">
+          <Text bold color={t.success}>
             {buttonText(label, true)}
           </Text>
         ) : (
-          <Text color="claude">{buttonText(label)}</Text>
+          <Text color={t.accent}>{buttonText(label)}</Text>
         )}
       </Button>
     )
@@ -1410,9 +1618,9 @@ export const register: Register = on => {
     }
 
     const gentleSection = (g: GentleView | null) => {
-      if (!g) return <Text color="subtle">checking…</Text>
+      if (!g) return <Text color={t.subtle}>checking…</Text>
       if (!g.tools.find(t => t.name === 'gentle-ai')?.version)
-        return <Text color="subtle">gentle-ai not installed</Text>
+        return <Text color={t.subtle}>gentle-ai not installed</Text>
       const { rows, grid } = gentleLayout(g)
       return (
         <Box flexDirection="column">
@@ -1420,12 +1628,12 @@ export const register: Register = on => {
             r.kind === 'heading' ? (
               <Box flexWrap="wrap" gap={1}>
                 <Box flexShrink={0}>
-                  <Text bold color="subtle">
+                  <Text bold color={t.subtle}>
                     {`${' '.repeat(HEADING_INDENT)}${r.label}`.padEnd(grid.head)}
                   </Text>
                 </Box>
                 {r.summary && (
-                  <Text wrap="truncate-end" color={r.summary.tone}>
+                  <Text wrap="truncate-end" color={r.summary.tone && t[r.summary.tone]}>
                     {r.summary.text}
                   </Text>
                 )}
@@ -1433,13 +1641,13 @@ export const register: Register = on => {
             ) : (
               <Box flexWrap="wrap" gap={1}>
                 <Box flexShrink={0}>
-                  <Text color="subtle">{`${' '.repeat(ITEM_INDENT)}${r.label}`.padEnd(grid.label)}</Text>
+                  <Text color={t.subtle}>{`${' '.repeat(ITEM_INDENT)}${r.label}`.padEnd(grid.label)}</Text>
                 </Box>
                 <Box flexShrink={0}>
-                  <Text color={r.value.tone}>{r.value.text.padEnd(grid.value)}</Text>
+                  <Text color={r.value.tone && t[r.value.tone]}>{r.value.text.padEnd(grid.value)}</Text>
                 </Box>
                 {r.detail && (
-                  <Text wrap="truncate-end" color={r.detail.tone}>
+                  <Text wrap="truncate-end" color={r.detail.tone && t[r.detail.tone]}>
                     {r.detail.text}
                   </Text>
                 )}
@@ -1488,7 +1696,9 @@ export const register: Register = on => {
     // scroll absorbs one.
     const section = (id: SectionId, headerRows: number, bodyRows: number) => 1 + headerRows + (c[id] ? 0 : bodyRows)
     const cardList = displayRows(list)
+    const picking = await read($, pickerOpen)
     const contentRows =
+      (picking ? pickerRows(hasKeys) : 0) +
       flowRows([headerText('session', 'Session').length, ...(view.private ? [10] : [])], W) +
       (c.session
         ? 0
@@ -1536,18 +1746,17 @@ export const register: Register = on => {
       <Box flexDirection="column" flexShrink={0} marginBottom={1}>
         <Box flexWrap="wrap">
           <Box width={bandWidth} flexShrink={0}>
-            <Text bold inverse color="claude" wrap="truncate-end">
+            <Text bold inverse color={t.accent} wrap="truncate-end">
               {centerBand(`📂 ${view.project ?? projectName(view.cwd)}`, bandWidth)}
             </Text>
           </Box>
           <Box flexShrink={0}>
             <Button
-              key="hide-sidebar"
-              label={HIDE_BUTTON}
+              key={HIDE_KEY}
               plain
               onPress={() => void $.ui.close({ id: PANE })}
             >
-              <Text bold inverse color="claude">
+              <Text bold inverse color={t.accent}>
                 {HIDE_BUTTON}
               </Text>
             </Button>
@@ -1560,21 +1769,59 @@ export const register: Register = on => {
     const footerRow = versionCache ? (
       <Box flexDirection="column" flexShrink={0} marginTop={1}>
         <Text wrap="truncate-end">
-          <Text color="success">● </Text>
-          <Text color="subtle">Claude</Text>
+          <Text color={t.success}>● </Text>
+          <Text color={t.subtle}>Claude</Text>
           <Text bold>Code</Text>
-          <Text color="subtle">{` ${versionCache}`}</Text>
+          <Text color={t.subtle}>{` ${versionCache}`}</Text>
         </Text>
       </Box>
     ) : null
 
+    // `/hud-theme` picker: a block above the sections, which stay drawn below
+    // it so they are seen recoloring. One row per theme in its own accent, the
+    // saved one marked and focused first; `ui.focus` previews the theme the
+    // ring rests on, a press saves it, Cancel only closes the block.
+    const savedTheme = await read($, themeName)
+    const picker = (
+      <Box flexDirection="column" flexShrink={0} marginBottom={1}>
+        <Text wrap="truncate-end" color={t.subtle}>
+          ↑/↓ preview · Enter apply · c cancel · Esc revert
+        </Text>
+        {!hasKeys && (
+          <Text wrap="truncate-end" color={t.warning}>
+            Keys elsewhere: ctrl+x tab or a click focuses the HUD
+          </Text>
+        )}
+        {THEME_NAMES.map(name => (
+          <Box flexShrink={0}>
+            <Button
+              key={themeKey(name)}
+              plain
+              autoFocus={name === savedTheme || undefined}
+              onPress={() => void finishPicker($, name)}
+            >
+              <Text wrap="truncate-end" color={THEMES[name].accent}>
+                {`${name === savedTheme ? '●' : ' '} ${name}`}
+              </Text>
+            </Button>
+          </Box>
+        ))}
+        <Box flexShrink={0}>
+          <Button key={PICKER_CANCEL} plain hotkey="c" onPress={() => void finishPicker($, null)}>
+            <Text color={t.subtle}>{'  Cancel'}</Text>
+          </Button>
+        </Box>
+      </Box>
+    )
+
     const sections = [
+        ...(picking ? [picker] : []),
         <Box flexDirection="column">
           <Box gap={1} flexWrap="wrap">
             {header('session', 'Session')}
             {view.private && (
               <Box flexShrink={0}>
-                <Text color="warning">{PRIVATE_BADGE}</Text>
+                <Text color={t.warning}>{PRIVATE_BADGE}</Text>
               </Box>
             )}
             {view.private
@@ -1584,7 +1831,7 @@ export const register: Register = on => {
           {!c.session && (
             <Text wrap="truncate-end">
               {view.title && <Text bold>{view.title}</Text>}
-              <Text color="subtle">
+              <Text color={t.subtle}>
                 {view.title && view.sessionId && ' · '}
                 {view.sessionId.slice(0, 8)}
               </Text>
@@ -1598,14 +1845,14 @@ export const register: Register = on => {
           {!c.session && modelLine(view.mainModel)}
           {!c.session && view.outputStyle && (
             <Text wrap="truncate-end">
-              🎭 <Text color="claude">{view.outputStyle}</Text>
+              🎭 <Text color={t.accent}>{view.outputStyle}</Text>
             </Text>
           )}
           {!c.session && branch && (
             <Box flexWrap="wrap">
               <Box>
                 <Text wrap="truncate-end">
-                  <Text bold color="claude">
+                  <Text bold color={t.accent}>
                     {BRANCH_ICON}
                   </Text>{' '}
                   <Text bold>{branch}</Text>
@@ -1614,8 +1861,8 @@ export const register: Register = on => {
               {changeText ? (
                 <Box flexShrink={0}>
                   <Text>
-                    {view.changes && view.changes.added > 0 && <Text color="success">{` +${view.changes.added}`}</Text>}
-                    {view.changes && view.changes.removed > 0 && <Text color="error">{` -${view.changes.removed}`}</Text>}
+                    {view.changes && view.changes.added > 0 && <Text color={t.success}>{` +${view.changes.added}`}</Text>}
+                    {view.changes && view.changes.removed > 0 && <Text color={t.error}>{` -${view.changes.removed}`}</Text>}
                   </Text>
                 </Box>
               ) : null}
@@ -1627,7 +1874,7 @@ export const register: Register = on => {
               const { parent, leaf } = shortPath(view.cwd, view.home, W - 3)
               return (
                 <Text wrap="truncate-start">
-                  📁 <Text color="subtle">{parent}</Text>
+                  📁 <Text color={t.subtle}>{parent}</Text>
                   <Text bold>{leaf}</Text>
                 </Text>
               )
@@ -1639,7 +1886,7 @@ export const register: Register = on => {
             {header('context', 'Context')}
             {rule(headerWidth('context', 'Context'))}
           </Box>
-          {!c.context && ms.length === 0 && !footer && <Text color="subtle">no usage yet</Text>}
+          {!c.context && ms.length === 0 && !footer && <Text color={t.subtle}>no usage yet</Text>}
           {!c.context &&
             ms.map(m => {
               const [filled, empty] = barCells(m.percent, L.barWidth)
@@ -1647,9 +1894,9 @@ export const register: Register = on => {
                 <Box flexWrap="wrap">
                   <Box flexShrink={0}>
                     <Text>
-                      <Text color="subtle">{m.label.padEnd(4)}</Text>
-                      <Text color={meterColor(m.percent)}>{'━'.repeat(filled)}</Text>
-                      <Text color="subtle" dimColor>
+                      <Text color={t.subtle}>{m.label.padEnd(4)}</Text>
+                      <Text color={t[meterColor(m.percent)]}>{'━'.repeat(filled)}</Text>
+                      <Text color={t.subtle} dimColor>
                         {'━'.repeat(empty)}
                       </Text>
                       {` ${Math.round(m.percent)}%`.padStart(5)}
@@ -1657,7 +1904,7 @@ export const register: Register = on => {
                   </Box>
                   {m.note ? (
                     <Box>
-                      <Text wrap="truncate-end" color="subtle">
+                      <Text wrap="truncate-end" color={t.subtle}>
                         {m.note}
                       </Text>
                     </Box>
@@ -1665,7 +1912,7 @@ export const register: Register = on => {
                 </Box>
               )
             })}
-          {!c.context && footer ? <Text color="subtle">{footer}</Text> : null}
+          {!c.context && footer ? <Text color={t.subtle}>{footer}</Text> : null}
         </Box>,
 
         <Box marginTop={1} flexDirection="column">
@@ -1673,13 +1920,13 @@ export const register: Register = on => {
             {header('mcp', 'MCP')}
             {rule(headerWidth('mcp', 'MCP'))}
           </Box>
-          {!c.mcp && servers.length === 0 && <Text color="subtle">none connected</Text>}
+          {!c.mcp && servers.length === 0 && <Text color={t.subtle}>none connected</Text>}
           {!c.mcp &&
             servers.map(s => (
               <Text wrap="truncate-end" dimColor={!s.connected}>
-                <Text color={s.connected ? 'success' : 'subtle'}>{s.connected ? '●' : '○'}</Text>{' '}
+                <Text color={t[s.connected ? 'success' : 'subtle']}>{s.connected ? '●' : '○'}</Text>{' '}
                 {s.name}
-                {!s.connected && <Text color="subtle"> · auth</Text>}
+                {!s.connected && <Text color={t.subtle}> · auth</Text>}
               </Text>
             ))}
         </Box>,
@@ -1690,7 +1937,6 @@ export const register: Register = on => {
             {!c.subagents && counts.done + counts.err > 0 && (
               <Button
                 key="clear-subagents"
-                label={CLEAR_DONE}
                 plain
                 onPress={() => {
                   if (view.demo) return // sample data: nothing real to clear
@@ -1698,7 +1944,7 @@ export const register: Register = on => {
                   void update($, rows, prev => prev.filter(r => !r.done))
                 }}
               >
-                <Text color="subtle">{CLEAR_DONE}</Text>
+                <Text color={t.subtle}>{CLEAR_DONE}</Text>
               </Button>
             )}
             {!c.subagents && counts.done + counts.err > 0
@@ -1707,30 +1953,30 @@ export const register: Register = on => {
           </Box>
           {!c.subagents && L.compact && (
             <Text wrap="truncate-end">
-              <Text color="claude">●{counts.run}</Text> <Text color="success">✓{counts.done}</Text>{' '}
-              <Text color="error">✕{counts.err}</Text>
+              <Text color={t.accent}>●{counts.run}</Text> <Text color={t.success}>✓{counts.done}</Text>{' '}
+              <Text color={t.error}>✕{counts.err}</Text>
             </Text>
           )}
           {!c.subagents && !L.compact && (
             <Text wrap="truncate-end">
-              <Text color="claude">● {counts.run} running</Text>
-              <Text color="subtle"> · </Text>
-              <Text color="success">✓ {counts.done} done</Text>
-              <Text color="subtle"> · </Text>
-              <Text color="error">✕ {counts.err} error</Text>
+              <Text color={t.accent}>● {counts.run} running</Text>
+              <Text color={t.subtle}> · </Text>
+              <Text color={t.success}>✓ {counts.done} done</Text>
+              <Text color={t.subtle}> · </Text>
+              <Text color={t.error}>✕ {counts.err} error</Text>
             </Text>
           )}
           {!c.subagents &&
             cardList.map(r => (
               <Box flexDirection="column">
                 <Text wrap="truncate-end">
-                  <Text color={color(r.status)}>{icon(r.status)}</Text> <Text bold>{r.description}</Text>
+                  <Text color={t[color(r.status)]}>{icon(r.status)}</Text> <Text bold>{r.description}</Text>
                 </Text>
-                <Text wrap="truncate-end" color="subtle">
+                <Text wrap="truncate-end" color={t.subtle}>
                   {'  '}(@{r.type} subagent)
                 </Text>
                 {modelLine(view.models.get(r.id), '  ')}
-                <Text wrap="truncate-end" color="subtle">
+                <Text wrap="truncate-end" color={t.subtle}>
                   {'  '}◷ {fmt(r.elapsedMs)}
                   {r.tokens !== undefined && `  ≋ ${fmtTokens(r.tokens)} tok`}
                 </Text>
@@ -1744,7 +1990,6 @@ export const register: Register = on => {
             {!c.todos && todoDone > 0 && (
               <Button
                 key="clear-todos"
-                label={CLEAR_DONE}
                 plain
                 onPress={() => {
                   if (view.demo) return // sample data: nothing real to clear
@@ -1752,26 +1997,26 @@ export const register: Register = on => {
                   void update($, todos, prev => prev.filter(t => t.status !== 'completed'))
                 }}
               >
-                <Text color="subtle">{CLEAR_DONE}</Text>
+                <Text color={t.subtle}>{CLEAR_DONE}</Text>
               </Button>
             )}
             {!c.todos && todoDone > 0
               ? rule(headerWidth('todos', todosHeader), CLEAR_DONE.length)
               : rule(headerWidth('todos', todosHeader))}
           </Box>
-          {!c.todos && todoList.length === 0 && <Text color="subtle">no todos</Text>}
+          {!c.todos && todoList.length === 0 && <Text color={t.subtle}>no todos</Text>}
           {!c.todos &&
-            todoList.map(t =>
-              t.status === 'completed' ? (
-                <Text wrap="wrap" color="subtle">
-                  [✓] {t.content}
+            todoList.map(todo =>
+              todo.status === 'completed' ? (
+                <Text wrap="wrap" color={t.subtle}>
+                  [✓] {todo.content}
                 </Text>
-              ) : t.status === 'in_progress' ? (
-                <Text wrap="wrap" bold color="success">
-                  [ ] {t.content}
+              ) : todo.status === 'in_progress' ? (
+                <Text wrap="wrap" bold color={t.success}>
+                  [ ] {todo.content}
                 </Text>
               ) : (
-                <Text wrap="wrap">[ ] {t.content}</Text>
+                <Text wrap="wrap">[ ] {todo.content}</Text>
               ),
             )}
         </Box>,
@@ -1782,14 +2027,13 @@ export const register: Register = on => {
             {!c.gentle && (
               <Button
                 key="gentle-refresh"
-                label={REFRESH}
                 plain
                 onPress={() => {
                   if (view.demo) return $.ui.toast('demo mode')
                   void refreshGentle($)
                 }}
               >
-                <Text color="subtle">{REFRESH}</Text>
+                <Text color={t.subtle}>{REFRESH}</Text>
               </Button>
             )}
             {!c.gentle
@@ -1806,7 +2050,7 @@ export const register: Register = on => {
     if (e.props.placement === 'inline' || typeof bodyRows !== 'number') {
       scrollMax = null
       return (
-        <Box flexDirection="column" paddingX={PANE_PADDING_X}>
+        <Box flexDirection="column" paddingX={PANE_PADDING_X} {...fill(t)}>
           {headerRow}
           <Box flexDirection="column">{sections}</Box>
           {footerRow}
@@ -1823,7 +2067,7 @@ export const register: Register = on => {
     scrollMax = max
     const offset = clampOffset(await read($, scrollOffset), max)
     return (
-      <Box flexDirection="column" paddingX={PANE_PADDING_X} height={bodyRows}>
+      <Box flexDirection="column" paddingX={PANE_PADDING_X} height={bodyRows} {...fill(t)}>
         {headerRow}
         <Box flexDirection="column" flexShrink={0} height={viewportRows} overflow="hidden">
           <Box flexDirection="column" flexShrink={0} marginTop={0 - offset}>
