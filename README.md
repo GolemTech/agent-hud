@@ -19,7 +19,7 @@ from the repository root (needs `vhs`, `ffmpeg` and `gifsicle`).
 
 | Section   | Contents |
 | --------- | -------- |
-| Header    | Always at the top: the project's name (`📂`, the repository root's folder, else the working directory's, after `🔒` in privacy mode), centered in a full-width band that ends in the `⚙` settings button. |
+| Header    | Always at the top: the project's name (`📂`, the repository root's folder, else the working directory's, after `🔒` in privacy mode), centered in a full-width band that ends in the `🔧` settings button. |
 | Session   | Session title (or short id), signed-in account, model and effort, output style (when not the default), git branch (`⑂`) with working-tree changes (`+N` added, `-M` removed lines, shown only when there are any), working directory shortened to fit. |
 | Context   | Meters for the context window and each rate-limit window, with time to reset and the local reset time; a footer with total tokens and cost. |
 | MCP       | MCP servers, connected first; servers waiting for authentication are dimmed. `[active]` / `[all]` in its header filters the list. |
@@ -60,10 +60,10 @@ To add the marketplace first and install separately:
 ## Usage
 
 - The sidebar opens on session start. `/hud` opens it again at any time.
-- `⚙` (right end of the header band) opens the settings block at the top of
+- `🔧` (right end of the header band) opens the settings block at the top of
   the sidebar: the current theme with `[change]` (opens the theme picker) and
-  `[close]`. `⚙` again closes it; it opens scrolled to the top, and it never
-  shows together with the theme picker (`⚙` closes the picker without saving).
+  `[close]`. `🔧` again closes it; it opens scrolled to the top, and it never
+  shows together with the theme picker (`🔧` closes the picker without saving).
 - The close mark Claude Code draws on the sidebar's frame (or `ctrl+x x`)
   hides it. A band above the prompt then shows a one-line summary
   (`▸ Agent HUD  55% · MCP 3/4 · 2 agents`); click it to reopen the sidebar.
@@ -118,7 +118,7 @@ To add the marketplace first and install separately:
 
 `/hud-theme` without a name opens a picker at the top of the sidebar, like
 Claude Code's `/theme`, at any terminal width: each theme is listed in its own
-accent color, the saved one marked `●`, and the sections stay drawn below it. `[change]` in the `⚙` settings block opens the same picker.
+accent color, the saved one marked `●`, and the sections stay drawn below it. `[change]` in the `🔧` settings block opens the same picker.
 Moving through the list previews each theme on the sidebar itself, and it
 wraps around: down from the last theme lands on the first, up from the first
 on the last. Enter (or a click) applies and saves it; `c` (or clicking

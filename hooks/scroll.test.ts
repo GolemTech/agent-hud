@@ -104,7 +104,7 @@ test('the Pane is drawn at its body height: header, clipped viewport, footer', a
     expect(p.viewport.props?.overflow).toBe('hidden')
     expect(p.viewport.props?.height).toBe(24 - HEADER_ROWS - FOOTER_ROWS)
     expect(p.content.props?.marginTop).toBe(0)
-    // The header names the project and holds one Button: the ⚙ gear (the
+    // The header names the project and holds one Button: the settings button (the
     // engine's own close mark on the frame closes the sidebar).
     expect(textOf(p.header)).toContain('api')
     const buttons = all(p.header, 'Button')

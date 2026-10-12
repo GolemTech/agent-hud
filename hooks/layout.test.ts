@@ -242,9 +242,9 @@ for (const cols of [20, 28, 40, 60, 100]) {
 }
 
 // Review focus: a narrow dock with the settings block open keeps the rules,
-// and the header band is counted at exactly the drawable width (⚙ as two
-// cells), so it never wraps past HEADER_ROWS.
-for (const cols of [20, 28]) {
+// and the header band is counted at exactly the drawable width (the wrench as four
+// cells with its spaces), so it never wraps past HEADER_ROWS.
+for (const cols of [20, 28, 100]) {
   test(`at ${cols} columns, the settings block keeps the rules and the header one band`, async ($, on) => {
     await inDemo($, on, cols, 60, async pane => {
       await pane.press({ key: SETTINGS_KEY })
@@ -254,6 +254,9 @@ for (const cols of [20, 28]) {
       expect(textOf(tree)).toContain('[close]')
       const bandRow = elements(elements(tree)[0] as Node)[0] as Node
       expect(textOf(bandRow).length - SETTINGS_BUTTON.length + SETTINGS_BUTTON_CELLS).toBe(W)
+      // The band's own text plus the button reach the edge, nothing unpainted.
+      const band = all(bandRow, 'Text').find(t => t.props?.inverse === true && t.props?.wrap === 'truncate-end') as Node
+      expect(textOf(band).length + SETTINGS_BUTTON_CELLS).toBe(W)
     })
   })
 }

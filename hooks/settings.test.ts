@@ -18,11 +18,12 @@ import {
 } from './settings'
 import { PICKER_CANCEL, PICKER_FOCUS_RETRY_MS, THEME_NAMES, THEMES } from './themes'
 
-test('the gear is U+2699 without VS16, counted as two cells', () => {
+test('the settings button is a space, U+1F527 and a space: four cells', () => {
   expect(SETTINGS_KEY).toBe('settings')
-  expect(SETTINGS_BUTTON).toBe('⚙')
-  expect(SETTINGS_BUTTON.length).toBe(1)
-  expect(SETTINGS_BUTTON_CELLS).toBe(2)
+  expect(SETTINGS_BUTTON).toBe(' 🔧 ')
+  expect(SETTINGS_BUTTON_CELLS).toBe(4)
+  // The wrench is 2 code units and 2 cells: the string length is the drawn width.
+  expect(SETTINGS_BUTTON.length).toBe(SETTINGS_BUTTON_CELLS)
 })
 
 test('settingsLabel pads a label to the shared label column', () => {
@@ -125,7 +126,7 @@ const endOffset = async (pane: { drawn: () => Promise<unknown> }, $: Engine, bod
   return -Number(contentBox(await pane.drawn()).props?.marginTop)
 }
 
-// The HUD's own accent: the color of the header's ⚙ Button.
+// The HUD's own accent: the color of the header's 🔧 Button.
 const accentNow = (drawn: string): string | undefined => /"key":"settings".*?"color":"([^"]+)"/.exec(drawn)?.[1]
 
 const inDemo = async ($: Engine, clock: { advance: (ms: number) => Promise<void> }, body: () => Promise<void>) => {
@@ -138,7 +139,7 @@ const inDemo = async ($: Engine, clock: { advance: (ms: number) => Promise<void>
   }
 }
 
-test('with the picker open the ring starts at ⚙: settings before the first theme, no hide-sidebar', async ($, on) => {
+test('with the picker open the ring starts at 🔧: settings before the first theme, no hide-sidebar', async ($, on) => {
   answerEngine(on)
   await startSession($)
   const pane = await mountPane($)
@@ -150,7 +151,7 @@ test('with the picker open the ring starts at ⚙: settings before the first the
   expect(tree).not.toContain('hide-sidebar')
 })
 
-test('⚙ opens the settings block above the sections, ⚙ again or [close] closes it, a new session starts closed', async ($, on) => {
+test('🔧 opens the settings block above the sections, 🔧 again or [close] closes it, a new session starts closed', async ($, on) => {
   answerEngine(on, { theme: 'tokyo-night' })
   await startSession($)
   const pane = await mountPane($)
@@ -247,7 +248,7 @@ test('/hud-theme with the block open closes it and opens the picker', async ($, 
 })
 
 // Review focus: the gear replaces a picker that is previewing a theme.
-test('⚙ with the picker open closes it without saving, drops the preview and opens the block', async ($, on) => {
+test('🔧 with the picker open closes it without saving, drops the preview and opens the block', async ($, on) => {
   answerEngine(on)
   await startSession($)
   const pane = await mountPane($, true)

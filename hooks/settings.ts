@@ -1,4 +1,4 @@
-// The settings block at the top of the Pane, opened by the header's `⚙`.
+// The settings block at the top of the Pane, opened by the header's `🔧`.
 // Pure: no `$` here (see CLAUDE.md); `register.tsx` keeps the open flag in
 // the `settingsOpen` atom and draws the block.
 
@@ -6,13 +6,14 @@ import { buttonText, flowRows, ITEM_INDENT } from './layout'
 
 export type SectionId = 'session' | 'context' | 'mcp' | 'subagents' | 'todos' | 'gentle'
 
-// The header's only Button. `⚙` (U+2699, no VS16) is East-Asian-ambiguous:
-// it is counted as two cells, so a terminal that draws it in one only leaves
-// the name band a cell narrower, while one that draws it in two never wraps
-// the header past HEADER_ROWS.
+// The header's only Button. The wrench (U+1F527) is an emoji with default
+// emoji presentation, drawn 2 cells everywhere, unlike an East-Asian-ambiguous gear; the
+// two spaces frame it like the old hide button, so the cells are exactly
+// 1 + 2 + 1 and the name band reaches the right edge.
 export const SETTINGS_KEY = 'settings'
-export const SETTINGS_BUTTON = '⚙'
-export const SETTINGS_BUTTON_CELLS = 2
+export const SETTINGS_GLYPH = '🔧'
+export const SETTINGS_BUTTON = ` ${SETTINGS_GLYPH} `
+export const SETTINGS_BUTTON_CELLS = 4
 
 export const SETTINGS_CHANGE = 'settings-change'
 export const SETTINGS_CLOSE = 'settings-close'
