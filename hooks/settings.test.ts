@@ -99,8 +99,8 @@ test('checks keep one width checked or not, so a toggle never changes the wrap',
   expect(sectionKey('mcp')).toBe('show-mcp')
 })
 
-test('the all-hidden line names the gear and takes two rows at 28 columns', () => {
-  expect(ALL_HIDDEN_TEXT).toBe('all sections hidden · 🔧 to show')
+test('the all-hidden line names the settings glyph and takes two rows at 28 columns', () => {
+  expect(ALL_HIDDEN_TEXT).toBe('all sections hidden · ⋮ to show')
   expect(textRows(ALL_HIDDEN_TEXT.length, layoutFor(28, 24).columns)).toBe(2)
 })
 
