@@ -647,7 +647,11 @@ test('in demo mode the section shows sample values and its buttons only say so',
   }
 })
 
-test('an action refresh wins over an older periodic detection that finishes later', async ($, on) => {
+// Reaching the periodic detection takes 300 real ticks, each one redrawing the
+// Pane: about 2 s here, but past the 5 s default on a slow CI runner.
+const PERIODIC = { timeoutMs: 20_000 }
+
+test('an action refresh wins over an older periodic detection that finishes later', PERIODIC, async ($, on) => {
   const offClone = JSON.stringify({ status: { global: 'on', clone_local: 'off', effective: 'off', source: 'clone' } })
   let calls = 0
   // 1: session start; 2: the periodic run at tick 301, answering 3 s late
@@ -737,7 +741,7 @@ test('outside a repository, an unreadable cwd runs nothing and says so', async (
 
 // ── Detection join deadline ──────────────────────────────────────────────
 
-test('a refresh starts a new detection once a joined one outlasts its deadline', async ($, on) => {
+test('a refresh starts a new detection once a joined one outlasts its deadline', PERIODIC, async ($, on) => {
   const offClone = JSON.stringify({ status: { global: 'on', clone_local: 'off', effective: 'off', source: 'clone' } })
   let calls = 0
   // 1: session start; 2: the periodic run at tick 301, which hangs far past
