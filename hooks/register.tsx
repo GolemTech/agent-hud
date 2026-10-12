@@ -50,8 +50,13 @@ import {
 import { DEFAULT_MCP_FILTER, filterServers, isMcpFilter, MCP_FILTERS, mcpBodyRows, mcpEmptyText, mcpHiddenText } from './mcp'
 import type { McpFilter } from './mcp'
 import {
+  ALL_HIDDEN_TEXT,
   CHANGE_TEXT,
+  checkText,
   CLOSE_TEXT,
+  parseHidden,
+  SECTION_IDS,
+  sectionKey,
   SETTINGS_BUTTON,
   SETTINGS_BUTTON_CELLS,
   SETTINGS_CHANGE,
@@ -61,6 +66,7 @@ import {
   settingsLabel,
   settingsRows,
   summaryParts,
+  toggleHidden,
   visibleSections,
 } from './settings'
 import type { SectionId } from './settings'
@@ -371,6 +377,11 @@ const previewName = atom({ plugin: 'agent-hud', key: 'preview' } as const, null 
 // `⋮` in the header: the settings block is open at the top of the Pane. Not
 // kept in `$.store`; `session.start` closes it.
 const settingsOpen = atom({ plugin: 'agent-hud', key: 'settingsOpen' } as const, false)
+// Sections hidden from the Pane and the band, kept in `$.store` under
+// HIDDEN_KEY and loaded at session start; none until one is chosen. A view
+// choice: hidden sections are still polled.
+const hiddenSections = atom({ plugin: 'agent-hud', key: 'hiddenSections' } as const, [] as SectionId[])
+const HIDDEN_KEY = 'hiddenSections'
 // The last offset the latest sticky render allowed; null while the Pane is
 // drawn in the plain flow (inline, or no body height), where the engine scrolls.
 let scrollMax: number | null = null
@@ -1120,6 +1131,18 @@ const toggleSettings = async ($: EngineInterface): Promise<void> => {
   await update($, settingsOpen, () => true)
 }
 
+// A section check: hides or shows one section at once and keeps the choice
+// for later sessions; a failed save still applies it to this session. Never
+// touches `collapsed`, so a section shown again comes back as it was.
+const toggleSection = async ($: EngineInterface, id: SectionId): Promise<void> => {
+  const next = await update($, hiddenSections, prev => toggleHidden(parseHidden(prev), id))
+  try {
+    await $.store.set(HIDDEN_KEY, next)
+  } catch {
+    // this session keeps it
+  }
+}
+
 // Ends the picker: saves `name`, or with null keeps the saved theme. The
 // Pane stays open.
 const finishPicker = async ($: EngineInterface, name: ThemeName | null): Promise<void> => {
@@ -1183,6 +1206,13 @@ export const register: Register = on => {
       await update($, mcpFilter, () => (isMcpFilter(stored) ? stored : DEFAULT_MCP_FILTER))
     } catch {
       // keep the filter this session already has
+    }
+    // The sections hidden in an earlier session; missing or invalid is none.
+    try {
+      const stored = await $.store.get(HIDDEN_KEY)
+      await update($, hiddenSections, () => parseHidden(stored))
+    } catch {
+      // keep the sections this session already hides
     }
     // A new session starts with no picker and no preview.
     try {
@@ -1767,8 +1797,8 @@ export const register: Register = on => {
     // Rows a section draws without its margin row: its header, and its body
     // unless collapsed.
     const rowsOf = (id: SectionId, headerRows: number, bodyRows: number) => headerRows + (c[id] ? 0 : bodyRows)
-    // Hidden sections (Task 7 reads them from the `hiddenSections` atom).
-    const hidden: SectionId[] = []
+    // Hidden sections (`🔧` settings): not drawn, not counted.
+    const hidden = parseHidden(await read($, hiddenSections))
     const visible = visibleSections(hidden)
     // Only the first drawn section has no blank row above it.
     const margin = (id: SectionId): { marginTop?: number } => (id === visible[0] ? {} : { marginTop: 1 })
@@ -1877,6 +1907,23 @@ export const register: Register = on => {
             </Button>
           </Box>
         </Box>
+        <Box flexWrap="wrap" gap={1}>
+          <Box flexShrink={0}>
+            <Text color={t.subtle}>{settingsLabel('Sections')}</Text>
+          </Box>
+          {SECTION_IDS.map(id => {
+            const shown = !hidden.includes(id)
+            return (
+              <Box flexShrink={0}>
+                <Button key={sectionKey(id)} plain onPress={() => void toggleSection($, id)}>
+                  <Text bold={shown} color={shown ? t.success : t.accent}>
+                    {checkText(id, shown)}
+                  </Text>
+                </Button>
+              </Box>
+            )
+          })}
+        </Box>
         <Box flexShrink={0}>
           <Button key={SETTINGS_CLOSE} plain onPress={() => void update($, settingsOpen, () => false)}>
             <Text color={t.accent}>{CLOSE_TEXT}</Text>
@@ -1888,7 +1935,7 @@ export const register: Register = on => {
     // One item per section: every row it draws (subagent cards included) and
     // its tree, so the count and the tree read the same items and cannot
     // drift (as `gentleGrid` feeds both the Gentle AI tree and `gentleRows`).
-    // `satisfies` makes a section without both a compile error.
+    // A missing section, or one missing `rows` or `node`, is a compile error.
     const cardRows = cardList.reduce((n, r) => n + (view.models.get(r.id) ? CARD_ROWS : CARD_ROWS - 1), 0)
     const sectionItems = {
       session: {
@@ -2179,20 +2226,29 @@ export const register: Register = on => {
           </Box>
         ),
       },
-    } satisfies Record<SectionId, { rows: number; node: unknown }>
+    } satisfies Record<SectionId, { rows: number; node: JSX.Element }>
     const shownSections = visible.map(id => ({ id, ...sectionItems[id] }))
 
     // Rows the scrolled content takes at this width: the block on top, then
-    // each drawn section plus the margin row above all but the first. Ink
+    // each drawn section plus the margin row above all but the first, or the
+    // all-hidden line when every section is hidden. Ink
     // wraps words, so a long text can take a row more than estimated; the
     // bottom margin of the scroll absorbs one.
     const contentRows =
       (picking ? pickerRows(hasKeys) : settingsShown ? settingsRows(W, shownName) : 0) +
-      shownSections.reduce((n, s, i) => n + (i > 0 ? 1 : 0) + s.rows, 0)
+      shownSections.reduce((n, s, i) => n + (i > 0 ? 1 : 0) + s.rows, 0) +
+      (shownSections.length === 0 ? textRows(ALL_HIDDEN_TEXT.length, W) : 0)
 
     const sections = [
       ...(picking ? [picker] : settingsShown ? [settingsBlock] : []),
       ...shownSections.map(s => s.node),
+      ...(shownSections.length === 0
+        ? [
+            <Text wrap="wrap" color={t.subtle}>
+              {ALL_HIDDEN_TEXT}
+            </Text>,
+          ]
+        : []),
     ]
 
     // Inline frames fit the tree, and without the body's height there is no

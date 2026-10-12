@@ -46,16 +46,17 @@ test('settingsLabel pads a label to the shared label column', () => {
   expect(CLOSE_TEXT).toBe('[close]')
 })
 
-test('settingsRows: the title, the Theme row as it wraps, [close] and the blank row under the block', () => {
-  // 100 columns (98 drawable): label, name and [change] share one line.
-  expect(settingsRows(98, 'default')).toBe(4)
-  // 28 columns (26 drawable): [change] goes below the name.
-  expect(settingsRows(26, 'default')).toBe(5)
+test('settingsRows: the title, the Theme and Sections rows as they wrap, [close] and the blank row', () => {
+  // 100 columns (98 drawable): each row on one line.
+  expect(settingsRows(98, 'default')).toBe(5)
+  // 28 columns (26 drawable): [change] below the name; the checks on four lines.
+  expect(settingsRows(26, 'default')).toBe(9)
   // A long name wraps the Theme row where a short one fits (34 columns, 32 drawable).
-  expect(settingsRows(32, 'default')).toBe(4)
-  expect(settingsRows(32, 'catppuccin-mocha')).toBe(5)
-  // 20 columns (18 drawable): label, name and [change] each take a line.
-  expect(settingsRows(18, 'catppuccin-mocha')).toBe(6)
+  expect(settingsRows(32, 'default')).toBe(8)
+  expect(settingsRows(32, 'catppuccin-mocha')).toBe(9)
+  // 20 columns (18 drawable): three Theme lines, seven Sections lines (every
+  // check alone: none of them fits beside another in 18 cells).
+  expect(settingsRows(18, 'catppuccin-mocha')).toBe(13)
 })
 
 test('SECTION_IDS lists the six sections in draw order, each with its label', () => {
@@ -229,7 +230,7 @@ test('⋮ opens the settings block above the sections, ⋮ again or [close] clos
   expect(open).toContain(settingsLabel('Theme'))
   expect(open).toContain('tokyo-night')
   expect(open).toContain(SETTINGS_CHANGE)
-  expect(open.indexOf(SETTINGS_CLOSE)).toBeLessThan(open.indexOf('Context'))
+  expect(open.indexOf(SETTINGS_CLOSE)).toBeLessThan(open.indexOf('toggle-context'))
 
   await pane.press({ key: SETTINGS_KEY })
   expect(await drawn()).not.toContain(SETTINGS_CLOSE)
@@ -278,6 +279,12 @@ for (const cols of [28, 100]) {
       const themeRow = elements(block)[1] as Node
       expect(themeRow.props?.flexWrap).toBe('wrap')
       expect(elements(themeRow).map(i => textOf(i).length)).toEqual([SETTINGS_LABEL_CELLS, 'default'.length, CHANGE_TEXT.length])
+      const sectionsRow = elements(block)[2] as Node
+      expect(sectionsRow.props?.flexWrap).toBe('wrap')
+      expect(elements(sectionsRow).map(i => textOf(i).length)).toEqual([
+        SETTINGS_LABEL_CELLS,
+        ...SECTION_IDS.map(id => checkText(id, true).length),
+      ])
       expect(textOf(elements(block).at(-1))).toBe(CLOSE_TEXT)
     })
   })

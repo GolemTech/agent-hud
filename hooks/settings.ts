@@ -30,10 +30,16 @@ export const settingsLabel = (label: string): string =>
   `${' '.repeat(ITEM_INDENT)}${label}`.padEnd(SETTINGS_LABEL_CELLS)
 
 // Rows the block draws at `columns`: the title, the Theme row (label, name
-// and `[change]`, wrapping as a flex row does), `[close]`, and the blank row
-// under the block.
+// and `[change]`) and the Sections row (label and one check per section),
+// each wrapping as a flex row does, `[close]`, and the blank row under the
+// block. A check has one width checked or not, so the hidden list never
+// changes it.
 export const settingsRows = (columns: number, themeName: string): number =>
-  1 + flowRows([SETTINGS_LABEL_CELLS, themeName.length, CHANGE_TEXT.length], columns) + 1 + 1
+  1 +
+  flowRows([SETTINGS_LABEL_CELLS, themeName.length, CHANGE_TEXT.length], columns) +
+  flowRows([SETTINGS_LABEL_CELLS, ...SECTION_IDS.map(id => checkText(id, true).length)], columns) +
+  1 +
+  1
 
 // ── Hidden sections ──────────────────────────────────────────────────────
 // A hidden section is not drawn at all (a collapsed one keeps its title);
@@ -80,6 +86,7 @@ export const summaryParts = (
 export const ALL_HIDDEN_TEXT = `all sections hidden · ${SETTINGS_GLYPH} to show`
 
 // A section's check: `[✓ Todo]` shown, `[  Todo]` hidden, the same width.
-export const checkText = (id: SectionId, shown: boolean): string => `[${shown ? '✓' : ' '} ${SECTION_LABELS[id]}]`
+export const checkText = (id: SectionId, shown: boolean): string =>
+  buttonText(`${shown ? '✓' : ' '} ${SECTION_LABELS[id]}`)
 
 export const sectionKey = (id: SectionId): string => `show-${id}`

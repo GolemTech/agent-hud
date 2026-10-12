@@ -45,6 +45,8 @@ declare module 'claude-code' {
       mcpFilter: 'all' | 'active'
       /** The `⋮` settings block is open at the top of the Pane. */
       settingsOpen: boolean
+      /** Sections hidden from the Pane and the band (`🔧` settings), in draw order. */
+      hiddenSections: ('session' | 'context' | 'mcp' | 'subagents' | 'todos' | 'gentle')[]
     }
   }
 }
