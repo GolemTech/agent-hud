@@ -1553,6 +1553,15 @@ export const register: Register = on => {
     }
     const view = await hudView($, list)
     const connected = view.servers.filter(s => s.connected).length
+    // Hidden sections leave their part out; with none left, no summary Text
+    // (an empty one would still take a gap).
+    const summary = summaryLine(
+      view.contextPercent,
+      connected,
+      view.servers.length,
+      view.agents.length,
+      parseHidden(await read($, hiddenSections)),
+    )
 
     return (
       <Box flexWrap="wrap" gap={1} {...fill(t)}>
@@ -1566,9 +1575,11 @@ export const register: Register = on => {
             </Text>
           </Button>
         </Box>
-        <Text wrap="truncate-end" color={t.subtle}>
-          {summaryLine(view.contextPercent, connected, view.servers.length, view.agents.length)}
-        </Text>
+        {summary !== '' && (
+          <Text wrap="truncate-end" color={t.subtle}>
+            {summary}
+          </Text>
+        )}
       </Box>
     )
   })

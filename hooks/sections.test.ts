@@ -258,3 +258,29 @@ test('privacy mode stays visible in the header with every section hidden', async
   expect(textOf(headerOf(root))).toContain('🔒')
   expect(textOf(contentBox(root))).toContain(ALL_HIDDEN_TEXT)
 })
+
+const bandTexts = async ($: Engine) => all(await (await mountBand($)).drawn(), 'Text').map(textOf)
+
+test('the band keeps its line with nothing hidden, and only the parts of visible sections', async ($, on) => {
+  answerEngine(on)
+  await startSession($)
+  const pane = await mountSticky($, 60, 200)
+  expect(await bandTexts($)).toContain('55% · MCP 1/1 · 0 agents')
+
+  // Sections with no part leave the line as it was.
+  await toggle(pane, 'session', 'todos', 'gentle')
+  expect(await bandTexts($)).toContain('55% · MCP 1/1 · 0 agents')
+
+  await toggle(pane, 'context')
+  const texts = await bandTexts($)
+  expect(texts).toContain('MCP 1/1 · 0 agents')
+  expect(texts.join('\n')).not.toContain('55%')
+})
+
+test('with context, MCP and subagents hidden the band draws no summary Text at all', async ($, on) => {
+  answerEngine(on)
+  await startSession($)
+  const pane = await mountSticky($, 60, 200)
+  await toggle(pane, 'context', 'mcp', 'subagents')
+  expect(await bandTexts($)).toEqual(['▸ Agent HUD'])
+})
