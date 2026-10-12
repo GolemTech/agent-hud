@@ -19,7 +19,7 @@ from the repository root (needs `vhs`, `ffmpeg` and `gifsicle`).
 
 | Section   | Contents |
 | --------- | -------- |
-| Header    | Always at the top: the project's name (`📂`, the repository root's folder, else the working directory's), centered in a full-width band that ends in the `►` hide button. |
+| Header    | Always at the top: the project's name (`📂`, the repository root's folder, else the working directory's, after `🔒` in privacy mode), centered in a full-width band that ends in the `⚙` settings button. |
 | Session   | Session title (or short id), signed-in account, model and effort, output style (when not the default), git branch (`⑂`) with working-tree changes (`+N` added, `-M` removed lines, shown only when there are any), working directory shortened to fit. |
 | Context   | Meters for the context window and each rate-limit window, with time to reset and the local reset time; a footer with total tokens and cost. |
 | MCP       | MCP servers, connected first; servers waiting for authentication are dimmed. `[active]` / `[all]` in its header filters the list. |
@@ -60,14 +60,18 @@ To add the marketplace first and install separately:
 ## Usage
 
 - The sidebar opens on session start. `/hud` opens it again at any time.
-- `►` (right end of the header band) hides it. A band above the prompt then shows
-  a one-line summary (`▸ Agent HUD  55% · MCP 3/4 · 2 agents`); click it to
-  reopen the sidebar.
+- `⚙` (right end of the header band) opens the settings block at the top of
+  the sidebar: the current theme with `[change]` (opens the theme picker) and
+  `[close]`. `⚙` again closes it; it opens scrolled to the top, and it never
+  shows together with the theme picker (`⚙` closes the picker without saving).
+- The close mark Claude Code draws on the sidebar's frame (or `ctrl+x x`)
+  hides it. A band above the prompt then shows a one-line summary
+  (`▸ Agent HUD  55% · MCP 3/4 · 2 agents`); click it to reopen the sidebar.
 - Claude Code can collapse that band itself, showing
   `plugin panel hidden · ctrl+x ctrl+a or click to show`. Click it or press
   `ctrl+x ctrl+a` to expand it.
 
-  <img src="docs/assets/hide-reopen.svg" width="760" alt="Hide and reopen loop: one, the sidebar is docked beside the transcript with the hide button at the right end of its header band; two, pressing the hide button closes the sidebar and a one-line band appears above the prompt reading Agent HUD 42% · MCP 3/4 · 2 agents; three, clicking the band or running /hud opens the sidebar again. If Claude Code collapses the band, press ctrl+x ctrl+a.">
+  <img src="docs/assets/hide-reopen.svg" width="760" alt="Hide and reopen loop: one, the sidebar is docked beside the transcript; two, closing it with the close mark on its frame closes the sidebar and a one-line band appears above the prompt reading Agent HUD 42% · MCP 3/4 · 2 agents; three, clicking the band or running /hud opens the sidebar again. If Claude Code collapses the band, press ctrl+x ctrl+a.">
 - `▾` / `▸` on each section header collapses or expands that section.
 - The sidebar adapts to the dock's width and height on every resize: labels
   keep their width and buttons wrap below them, meter bars scale, the
@@ -90,7 +94,7 @@ To add the marketplace first and install separately:
   sidebar stays live (model, context, rate limits, cost, MCP, subagents,
   todos), but the account shows as `you@example`, the session title as
   `private session`, the session id is hidden, the branch shows as `••••` and
-  the path and the header's project name as `~/…` and `…`; `🔒 private` next to the Session header shows it is on.
+  the path and the header's project name as `~/…` and `…`; a `🔒` before the project name in the header band shows it is on.
   It persists across plugin reloads until you run it again. MCP server names,
   subagent descriptions and todo text are **not** masked, and can contain
   project or client names. Claude Code's own welcome header and status line are
@@ -114,7 +118,7 @@ To add the marketplace first and install separately:
 
 `/hud-theme` without a name opens a picker at the top of the sidebar, like
 Claude Code's `/theme`, at any terminal width: each theme is listed in its own
-accent color, the saved one marked `●`, and the sections stay drawn below it.
+accent color, the saved one marked `●`, and the sections stay drawn below it. `[change]` in the `⚙` settings block opens the same picker.
 Moving through the list previews each theme on the sidebar itself, and it
 wraps around: down from the last theme lands on the first, up from the first
 on the last. Enter (or a click) applies and saves it; `c` (or clicking
