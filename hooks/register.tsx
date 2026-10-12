@@ -1493,7 +1493,7 @@ export const register: Register = on => {
   }).catch((_$, e, next) => next(e))
 
   // Hidden-sidebar band: shown above the prompt whenever the pane is not on
-  // screen (closed by → or its ✕, or open but unplaced on a narrow terminal),
+  // screen (closed by its ✕ (or ctrl+x x), or open but unplaced on a narrow terminal),
   // with a button that reopens it. It asks the engine itself through
   // `$.ui.panes()` rather than tracking opens and closes: a plugin's own
   // `$.ui.close` is not seen by its own `ui.close` hook, and a state write
@@ -1610,8 +1610,6 @@ export const register: Register = on => {
       </Box>
     )
     const headerWidth = (id: SectionId, label: string) => sectionTitle(headerText(id, label)).length
-    // Header extras, measured for the rule: `🔒` is two cells and two code units.
-    const PRIVATE_BADGE = '🔒 private'
     const CLEAR_DONE = '✕ clear done'
     const REFRESH = '↻'
     // The `───` that closes a header row, sized to what its items leave.
@@ -1771,7 +1769,7 @@ export const register: Register = on => {
     const shownName: ThemeName = isThemeName(savedTheme) ? savedTheme : DEFAULT_THEME
     const contentRows =
       (picking ? pickerRows(hasKeys) : settingsShown ? settingsRows(W, shownName) : 0) +
-      flowRows([headerText('session', 'Session').length, ...(view.private ? [10] : [])], W) +
+      flowRows([headerText('session', 'Session').length], W) +
       (c.session
         ? 0
         : 1 + // title · id
@@ -1820,7 +1818,7 @@ export const register: Register = on => {
         <Box flexWrap="wrap">
           <Box width={bandWidth} flexShrink={0}>
             <Text bold inverse color={t.accent} wrap="truncate-end">
-              {centerBand(`📂 ${view.project ?? projectName(view.cwd)}`, bandWidth)}
+              {centerBand(`${view.private ? '🔒 ' : ''}📂 ${view.project ?? projectName(view.cwd)}`, bandWidth)}
             </Text>
           </Box>
           <Box flexShrink={0}>
@@ -1916,14 +1914,7 @@ export const register: Register = on => {
         <Box flexDirection="column">
           <Box gap={1} flexWrap="wrap">
             {header('session', 'Session')}
-            {view.private && (
-              <Box flexShrink={0}>
-                <Text color={t.warning}>{PRIVATE_BADGE}</Text>
-              </Box>
-            )}
-            {view.private
-              ? rule(headerWidth('session', 'Session'), PRIVATE_BADGE.length)
-              : rule(headerWidth('session', 'Session'))}
+            {rule(headerWidth('session', 'Session'))}
           </Box>
           {!c.session && (
             <Text wrap="truncate-end">

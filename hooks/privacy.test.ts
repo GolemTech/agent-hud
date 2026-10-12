@@ -131,12 +131,14 @@ test('/hud-private masks the live Session section and toggles back', async ($, o
   expect(live).toContain(shortId)
   expect(live).toContain(ACCOUNT)
   expect(live).toContain(BRANCH)
-  expect(live).not.toContain('🔒 private')
+  expect(live).not.toContain('🔒')
 
   const on1 = await $.command.run({ command: 'hud-private', args: '' } as never)
   expect(on1.text).toContain('on')
   const masked = await paneText()
-  expect(masked).toContain('🔒 private')
+  // The mark sits in the header band, so it shows whatever section is hidden.
+  expect(masked).toContain('🔒 📂 …')
+  expect(masked).not.toContain('🔒 private')
   expect(masked).toContain('you@example')
   expect(masked).toContain('55%')
   for (const real of [ACCOUNT, BRANCH, TITLE, shortId, 'secret-proj', 'myuser']) expect(masked).not.toContain(real)
@@ -147,5 +149,5 @@ test('/hud-private masks the live Session section and toggles back', async ($, o
   expect(back).toContain(shortId)
   expect(back).toContain(ACCOUNT)
   expect(back).toContain(BRANCH)
-  expect(back).not.toContain('🔒 private')
+  expect(back).not.toContain('🔒')
 })

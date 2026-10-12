@@ -212,6 +212,7 @@ test('privacy mode masks the project name in the header', async ($, on) => {
   try {
     const header = textOf((await parts(pane)).header)
     expect(header).toContain('…')
+    expect(header).toContain('🔒 📂 …')
     expect(header).not.toContain('mono-repo')
   } finally {
     await $.command.run({ command: 'hud-private', args: '' } as never)
