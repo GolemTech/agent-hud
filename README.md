@@ -60,8 +60,8 @@ To add the marketplace first and install separately:
 ## Usage
 
 - The sidebar opens on session start. `/hud` opens it again at any time.
-- `⋮` (right end of the header band) opens the settings block at the top of
-  the sidebar: the current theme with `[change]` (opens the theme picker) and
+- `⋮` (right end of the header band, padded to a fixed 7-cell click target,
+  `'   ⋮   '`) opens the settings block at the top of the sidebar: the current theme with `[change]` (opens the theme picker) and
   `[close]`. `⋮` again closes it; it opens scrolled to the top, and it never
   shows together with the theme picker (`⋮` closes the picker without saving).
 - The close mark Claude Code draws on the sidebar's frame (or `ctrl+x x`)

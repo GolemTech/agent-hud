@@ -242,8 +242,8 @@ for (const cols of [20, 28, 40, 60, 100]) {
 }
 
 // Review focus: a narrow dock with the settings block open keeps the rules,
-// and the header band is counted at exactly the drawable width (the settings button as three
-// cells with its spaces), so it never wraps past HEADER_ROWS.
+// and the header band is counted at exactly the drawable width (the settings button as
+// SETTINGS_BUTTON_CELLS cells with its spaces), so it never wraps past HEADER_ROWS.
 for (const cols of [20, 28, 100]) {
   test(`at ${cols} columns, the settings block keeps the rules and the header one band`, async ($, on) => {
     await inDemo($, on, cols, 60, async pane => {
@@ -260,6 +260,26 @@ for (const cols of [20, 28, 100]) {
     })
   })
 }
+
+// The wider settings button still leaves the project-name band a column at
+// the narrowest dock, and the header draws one band row plus the blank row
+// (HEADER_ROWS): the band and the seven-cell button fit on one line.
+test('at 20 columns, the wide settings button leaves the name band a column and one header row', async ($, on) => {
+  await inDemo($, on, 20, 60, async pane => {
+    const tree = (await pane.drawn()) as Node
+    const W = layoutFor(20, 60).columns
+    expect(SETTINGS_BUTTON_CELLS).toBe(7)
+    const header = elements(tree)[0] as Node
+    const bandRow = elements(header)[0] as Node
+    const band = all(bandRow, 'Text').find(t => t.props?.inverse === true && t.props?.wrap === 'truncate-end') as Node
+    expect(textOf(band).length).toBeGreaterThanOrEqual(1)
+    expect(textOf(band).length + SETTINGS_BUTTON_CELLS).toBeLessThanOrEqual(W)
+    // One band row (it does not wrap) plus the blank row under it.
+    expect(elements(header).length).toBe(1)
+    expect(header.props?.marginBottom).toBe(1)
+    expect(1 + (header.props?.marginBottom as number)).toBe(HEADER_ROWS)
+  })
+})
 
 test('ruleWidth: the columns left after the header items, none below the minimum', () => {
   expect(ruleWidth(40, [11])).toBe(28) // 40 - 11 - 1 gap

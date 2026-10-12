@@ -1806,10 +1806,11 @@ export const register: Register = on => {
       (c.subagents ? 0 : cardList.reduce((n, r) => n + (view.models.get(r.id) ? CARD_ROWS : CARD_ROWS - 1), 0))
 
     // Sticky header: the project's name in a full-width inverse band that
-    // ends in ⋮, the settings button (a space, the glyph, a space), drawn
+    // ends in ⋮, the settings button (the glyph padded by three spaces each
+    // side, a fixed 7-cell click target), drawn
     // inverse too with no gap so both read as one bar. Closing the sidebar is the engine's own close mark on
     // the frame (or ctrl+x x); the band above the prompt then reopens it.
-    // The name's Box takes the line less the button (exactly three cells), so
+    // The name's Box takes the line less the button (SETTINGS_BUTTON_CELLS), so
     // the row never wraps and a long name truncates. A blank row below keeps
     // the band apart from the first section.
     // Privacy mode prefixes 🔒 to the name, so it is seen whatever is hidden.

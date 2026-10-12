@@ -6,15 +6,15 @@ import { buttonText, flowRows, ITEM_INDENT } from './layout'
 
 export type SectionId = 'session' | 'context' | 'mcp' | 'subagents' | 'todos' | 'gentle'
 
-// The header's only Button. A plain text glyph (not an emoji), so the terminal
-// paints it in the theme's colors like the band. U+22EE is East-Asian-width
-// Neutral: one cell everywhere, unlike an ambiguous-width gear. Two spaces
-// frame it like the old hide button, so the cells are exactly 1 + 1 + 1 and
-// the name band reaches the right edge.
+// The header's only Button. The glyph U+22EE is East-Asian-width Neutral (one
+// cell everywhere) and monochrome text, not an emoji, so the terminal paints it
+// in the theme's colors like the band. Three spaces each side widen the click
+// target to a fixed 7 cells (3 + 1 + 3), not the whole header bar, and the
+// name band takes the rest of the line up to the right edge.
 export const SETTINGS_KEY = 'settings'
 export const SETTINGS_GLYPH = '⋮'
-export const SETTINGS_BUTTON = ` ${SETTINGS_GLYPH} `
-export const SETTINGS_BUTTON_CELLS = 3
+export const SETTINGS_BUTTON = `   ${SETTINGS_GLYPH}   `
+export const SETTINGS_BUTTON_CELLS = 7
 
 export const SETTINGS_CHANGE = 'settings-change'
 export const SETTINGS_CLOSE = 'settings-close'

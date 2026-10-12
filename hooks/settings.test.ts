@@ -19,11 +19,11 @@ import {
 } from './settings'
 import { PICKER_CANCEL, PICKER_FOCUS_RETRY_MS, THEME_NAMES, THEMES } from './themes'
 
-test('the settings button is a space, U+22EE and a space: three cells', () => {
+test('the settings button is U+22EE padded by three spaces each side: seven cells', () => {
   expect(SETTINGS_KEY).toBe('settings')
   expect(SETTINGS_GLYPH).toBe('\u22EE')
-  expect(SETTINGS_BUTTON).toBe(' \u22EE ')
-  expect(SETTINGS_BUTTON_CELLS).toBe(3)
+  expect(SETTINGS_BUTTON).toBe('   \u22EE   ')
+  expect(SETTINGS_BUTTON_CELLS).toBe(7)
   // U+22EE is one UTF-16 unit and one cell: the string length is the drawn width.
   expect(SETTINGS_BUTTON.length).toBe(SETTINGS_BUTTON_CELLS)
 })
