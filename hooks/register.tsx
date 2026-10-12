@@ -1911,11 +1911,13 @@ export const register: Register = on => {
           <Box flexShrink={0}>
             <Text color={t.subtle}>{settingsLabel('Sections')}</Text>
           </Box>
+          {/* onPress returns toggleSection's promise (no `void`), so a press
+              that awaits it sees a failure toggleSection did not catch. */}
           {SECTION_IDS.map(id => {
             const shown = !hidden.includes(id)
             return (
               <Box flexShrink={0}>
-                <Button key={sectionKey(id)} plain onPress={() => void toggleSection($, id)}>
+                <Button key={sectionKey(id)} plain onPress={() => toggleSection($, id)}>
                   <Text bold={shown} color={shown ? t.success : t.accent}>
                     {checkText(id, shown)}
                   </Text>
@@ -2231,9 +2233,9 @@ export const register: Register = on => {
 
     // Rows the scrolled content takes at this width: the block on top, then
     // each drawn section plus the margin row above all but the first, or the
-    // all-hidden line when every section is hidden. Ink
-    // wraps words, so a long text can take a row more than estimated; the
-    // bottom margin of the scroll absorbs one.
+    // all-hidden line when every section is hidden. Ink wraps words, so a
+    // long text can take a row more than estimated; the bottom margin of the
+    // scroll absorbs one.
     const contentRows =
       (picking ? pickerRows(hasKeys) : settingsShown ? settingsRows(W, shownName) : 0) +
       shownSections.reduce((n, s, i) => n + (i > 0 ? 1 : 0) + s.rows, 0) +

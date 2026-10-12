@@ -3,21 +3,22 @@ import { expect, mock, test } from 'claude-code/testing'
 import type { Engine } from 'claude-code/testing'
 
 import { CARD_ROWS, layoutFor, SCROLL_BOTTOM_MARGIN, textRows, viewportRowsFor } from './layout'
-import { ALL_HIDDEN_TEXT, SECTION_IDS, sectionKey, SETTINGS_CLOSE, SETTINGS_KEY, settingsRows } from './settings'
+import { ALL_HIDDEN_TEXT, checkText, SECTION_IDS, sectionKey, SETTINGS_CLOSE, SETTINGS_KEY, settingsRows } from './settings'
 import type { SectionId } from './settings'
 
 const HOME = '/home/myuser'
 const CWD = `${HOME}/code/example`
 
 // The engine's bottom for the poller, the Pane, the band and the scroll.
-// `ui.panes` lists no pane, so the band always draws. With `storeFails`,
-// `$.store.set` throws (a full or read-only store).
-const answerEngine = (on: On, store: Record<string, unknown> = {}, storeFails = false) => {
+// `ui.panes` lists no pane, so the band always draws. With `failedSaves`,
+// `$.store.set` records the key it was asked to write there and throws.
+const answerEngine = (on: On, store: Record<string, unknown> = {}, failedSaves: string[] | null = null) => {
   const clock = mock.clock(on)
   mock.env(on, { HOME })
-  if (storeFails) {
+  if (failedSaves) {
     on('store.get', () => ({ value: undefined }) as never)
-    on('store.set', () => {
+    on('store.set', (_$, e) => {
+      failedSaves.push(e.key)
       throw new Error('store unavailable')
     })
   } else {
@@ -134,6 +135,8 @@ test('the checks mark shown sections and keep their width when unchecked', async
   const tree = await drawnText(pane)
   expect(tree).toContain('[✓ Session]')
   expect(tree).toContain('[  Todo]')
+  const todoCheck = all(await pane.drawn(), 'Button').find(b => b.props?.key === sectionKey('todos'))
+  expect(textOf(todoCheck).length).toBe(checkText('todos', true).length)
 })
 
 test('hiding Subagents with cards shrinks the end offset by the whole section (demo mode)', async ($, on) => {
@@ -227,17 +230,16 @@ for (const stored of ['mcp', { mcp: true }]) {
 }
 
 // Review focus: the store cannot be written.
+// The check's onPress returns toggleSection's promise and the kit's press
+// awaits it, so without the catch in toggleSection the press rejects and
+// this test fails at `toggle`.
 test('a failed save still hides the section for this session and keeps nothing', async ($, on) => {
-  answerEngine(on, {}, true)
+  const failedSaves: string[] = []
+  answerEngine(on, {}, failedSaves)
   await startSession($)
   const pane = await mountSticky($, 60, 200)
-  let failure: unknown = null
-  try {
-    await toggle(pane, 'todos')
-  } catch (err) {
-    failure = err
-  }
-  expect(failure).toBeNull()
+  await toggle(pane, 'todos')
+  expect(failedSaves).toEqual(['hiddenSections'])
   expect(await drawnText(pane)).not.toContain('toggle-todos')
 
   // Nothing was stored: a new session shows the section again.
