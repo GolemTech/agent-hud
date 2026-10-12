@@ -1797,7 +1797,7 @@ export const register: Register = on => {
     // Rows a section draws without its margin row: its header, and its body
     // unless collapsed.
     const rowsOf = (id: SectionId, headerRows: number, bodyRows: number) => headerRows + (c[id] ? 0 : bodyRows)
-    // Hidden sections (`🔧` settings): not drawn, not counted.
+    // Hidden sections (the settings button, `⋮`): not drawn, not counted.
     const hidden = parseHidden(await read($, hiddenSections))
     const visible = visibleSections(hidden)
     // Only the first drawn section has no blank row above it.
