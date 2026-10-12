@@ -50,6 +50,7 @@ import {
 } from './layout'
 import { DEFAULT_MCP_FILTER, filterServers, isMcpFilter, MCP_FILTERS, mcpBodyRows, mcpEmptyText, mcpHiddenText } from './mcp'
 import type { McpFilter } from './mcp'
+import type { SectionId } from './settings'
 import { clean } from './text'
 import {
   DEFAULT_THEME,
@@ -74,8 +75,6 @@ import { isSupportedVersion, unsupportedMessage } from './version'
 export { clean }
 
 const PANE = 'hud'
-
-type SectionId = 'session' | 'context' | 'mcp' | 'subagents' | 'todos' | 'gentle'
 
 // ── Todos ────────────────────────────────────────────────────────────────
 // No `$` accessor holds the task list, so the pane mirrors it from the
