@@ -64,6 +64,13 @@ To add the marketplace first and install separately:
   `'   ⋮   '`) opens the settings block at the top of the sidebar: the current theme with `[change]` (opens the theme picker) and
   `[close]`. `⋮` again closes it; it opens scrolled to the top, and it never
   shows together with the theme picker (`⋮` closes the picker without saving).
+  `Sections` has one check per section (`[✓ Todo]` shown, `[  Todo]`
+  hidden): an unchecked section is not drawn at all (a collapsed one keeps
+  its title) and drops its part from the band's summary; hiding Context,
+  MCP and Subagents leaves the band with only `▸ Agent HUD`. With every
+  section hidden the sidebar reads `all sections hidden · ⋮ to show`. The
+  choice is saved for later sessions; hidden sections keep being polled, so
+  showing one again is instant.
 - The close mark Claude Code draws on the sidebar's frame (or `ctrl+x x`)
   hides it. A band above the prompt then shows a one-line summary
   (`▸ Agent HUD  55% · MCP 3/4 · 2 agents`); click it to reopen the sidebar.
