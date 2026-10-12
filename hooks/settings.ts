@@ -42,8 +42,8 @@ export const settingsRows = (columns: number, themeName: string): number =>
   1
 
 // ── Hidden sections ──────────────────────────────────────────────────────
-// A hidden section is not drawn at all (a collapsed one keeps its title);
-// its data is still collected. `register.tsx` keeps the list in the
+// A hidden section is not drawn at all, collapsed or not (showing it
+// again restores its collapsed state); its data is still collected. `register.tsx` keeps the list in the
 // `hiddenSections` atom and its `$.store` copy.
 
 export const SECTION_IDS: readonly SectionId[] = ['session', 'context', 'mcp', 'subagents', 'todos', 'gentle']
