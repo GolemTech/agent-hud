@@ -8,6 +8,7 @@ import {
   CLOSE_TEXT,
   SETTINGS_BUTTON,
   SETTINGS_BUTTON_CELLS,
+  SETTINGS_GLYPH,
   SETTINGS_CHANGE,
   SETTINGS_CLOSE,
   SETTINGS_KEY,
@@ -18,11 +19,12 @@ import {
 } from './settings'
 import { PICKER_CANCEL, PICKER_FOCUS_RETRY_MS, THEME_NAMES, THEMES } from './themes'
 
-test('the settings button is a space, U+1F527 and a space: four cells', () => {
+test('the settings button is a space, U+22EE and a space: three cells', () => {
   expect(SETTINGS_KEY).toBe('settings')
-  expect(SETTINGS_BUTTON).toBe(' 🔧 ')
-  expect(SETTINGS_BUTTON_CELLS).toBe(4)
-  // The wrench is 2 code units and 2 cells: the string length is the drawn width.
+  expect(SETTINGS_GLYPH).toBe('\u22EE')
+  expect(SETTINGS_BUTTON).toBe(' \u22EE ')
+  expect(SETTINGS_BUTTON_CELLS).toBe(3)
+  // U+22EE is one UTF-16 unit and one cell: the string length is the drawn width.
   expect(SETTINGS_BUTTON.length).toBe(SETTINGS_BUTTON_CELLS)
 })
 
@@ -126,7 +128,7 @@ const endOffset = async (pane: { drawn: () => Promise<unknown> }, $: Engine, bod
   return -Number(contentBox(await pane.drawn()).props?.marginTop)
 }
 
-// The HUD's own accent: the color of the header's 🔧 Button.
+// The HUD's own accent: the color of the header's ⋮ Button.
 const accentNow = (drawn: string): string | undefined => /"key":"settings".*?"color":"([^"]+)"/.exec(drawn)?.[1]
 
 const inDemo = async ($: Engine, clock: { advance: (ms: number) => Promise<void> }, body: () => Promise<void>) => {
@@ -139,7 +141,7 @@ const inDemo = async ($: Engine, clock: { advance: (ms: number) => Promise<void>
   }
 }
 
-test('with the picker open the ring starts at 🔧: settings before the first theme, no hide-sidebar', async ($, on) => {
+test('with the picker open the ring starts at ⋮: settings before the first theme, no hide-sidebar', async ($, on) => {
   answerEngine(on)
   await startSession($)
   const pane = await mountPane($)
@@ -151,7 +153,7 @@ test('with the picker open the ring starts at 🔧: settings before the first th
   expect(tree).not.toContain('hide-sidebar')
 })
 
-test('🔧 opens the settings block above the sections, 🔧 again or [close] closes it, a new session starts closed', async ($, on) => {
+test('⋮ opens the settings block above the sections, ⋮ again or [close] closes it, a new session starts closed', async ($, on) => {
   answerEngine(on, { theme: 'tokyo-night' })
   await startSession($)
   const pane = await mountPane($)
@@ -247,8 +249,8 @@ test('/hud-theme with the block open closes it and opens the picker', async ($, 
   expect(tree).not.toContain(SETTINGS_CLOSE)
 })
 
-// Review focus: the gear replaces a picker that is previewing a theme.
-test('🔧 with the picker open closes it without saving, drops the preview and opens the block', async ($, on) => {
+// Review focus: the settings button replaces a picker that is previewing a theme.
+test('⋮ with the picker open closes it without saving, drops the preview and opens the block', async ($, on) => {
   answerEngine(on)
   await startSession($)
   const pane = await mountPane($, true)
@@ -265,3 +267,18 @@ test('🔧 with the picker open closes it without saving, drops the preview and 
   await startSession($)
   expect(accentNow(JSON.stringify(await pane.drawn()))).toBe('claude')
 })
+
+// Review focus: a plain text glyph painted in the theme's colors (inverse over the
+// accent), so it never disappears into the band the way a color emoji does.
+for (const name of ['default', 'dracula']) {
+  test(`the settings button's Text is inverse in the ${name} accent`, async ($, on) => {
+    answerEngine(on, { theme: name })
+    await startSession($)
+    const pane = await mountPane($)
+    const tree = JSON.stringify(await pane.drawn())
+    const accent = THEMES[name as keyof typeof THEMES].accent
+    expect(tree).toMatch(new RegExp(`"key":"settings".*?"inverse":true.*?"color":"${accent}"|"key":"settings".*?"color":"${accent}".*?"inverse":true`))
+    expect(accentNow(tree)).toBe(accent)
+    expect(tree).toContain(SETTINGS_BUTTON)
+  })
+}

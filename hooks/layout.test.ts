@@ -242,7 +242,7 @@ for (const cols of [20, 28, 40, 60, 100]) {
 }
 
 // Review focus: a narrow dock with the settings block open keeps the rules,
-// and the header band is counted at exactly the drawable width (the wrench as four
+// and the header band is counted at exactly the drawable width (the settings button as three
 // cells with its spaces), so it never wraps past HEADER_ROWS.
 for (const cols of [20, 28, 100]) {
   test(`at ${cols} columns, the settings block keeps the rules and the header one band`, async ($, on) => {

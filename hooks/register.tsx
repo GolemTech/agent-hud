@@ -365,7 +365,7 @@ const MCP_FILTER_KEY = 'mcpFilter'
 // theme its focus ring rests on (`ui.focus`) is drawn until a press or Cancel.
 const pickerOpen = atom({ plugin: 'agent-hud', key: 'picker' } as const, false)
 const previewName = atom({ plugin: 'agent-hud', key: 'preview' } as const, null as string | null)
-// `🔧` in the header: the settings block is open at the top of the Pane. Not
+// `⋮` in the header: the settings block is open at the top of the Pane. Not
 // kept in `$.store`; `session.start` closes it.
 const settingsOpen = atom({ plugin: 'agent-hud', key: 'settingsOpen' } as const, false)
 // The last offset the latest sticky render allowed; null while the Pane is
@@ -1043,7 +1043,7 @@ const activePalette = async ($: EngineInterface, hasKeys = true) => {
 // without one (default) draws exactly as before, on the terminal's own.
 const fill = (t: Palette): { backgroundColor?: string } => (t.background ? { backgroundColor: t.background } : {})
 
-// The sidebar header's 🔧 Button is its only Button: the element drawn right
+// The sidebar header's ⋮ Button is its only Button: the element drawn right
 // before the picker, so the carousel's ring order starts there.
 const PICKER_ORDER = pickerOrder(SETTINGS_KEY)
 // The picker element the ring last rested on (`ui.focus`), for the carousel.
@@ -1099,7 +1099,7 @@ const startPicker = async ($: EngineInterface): Promise<void> => {
   $.clock.after(PICKER_FOCUS_RETRY_MS, () => void refocusPicker($))
 }
 
-// `🔧`: closes the settings block, or opens it with the scroll at the top
+// `⋮`: closes the settings block, or opens it with the scroll at the top
 // (drawn above the sections, it is otherwise out of view when scrolled),
 // first closing the picker without saving.
 const toggleSettings = async ($: EngineInterface): Promise<void> => {
@@ -1186,7 +1186,7 @@ export const register: Register = on => {
     try {
       await update($, settingsOpen, () => false)
     } catch {
-      // the next 🔧 or [close] closes it
+      // the next ⋮ or [close] closes it
     }
     await $.command.register({
       name: 'hud-theme',
@@ -1763,7 +1763,7 @@ export const register: Register = on => {
     const section = (id: SectionId, headerRows: number, bodyRows: number) => 1 + headerRows + (c[id] ? 0 : bodyRows)
     const cardList = displayRows(list)
     const picking = await read($, pickerOpen)
-    // `🔧` settings block: never drawn with the picker.
+    // `⋮` settings block: never drawn with the picker.
     const settingsShown = !picking && (await read($, settingsOpen))
     const savedTheme = await read($, themeName)
     const shownName: ThemeName = isThemeName(savedTheme) ? savedTheme : DEFAULT_THEME
@@ -1806,10 +1806,10 @@ export const register: Register = on => {
       (c.subagents ? 0 : cardList.reduce((n, r) => n + (view.models.get(r.id) ? CARD_ROWS : CARD_ROWS - 1), 0))
 
     // Sticky header: the project's name in a full-width inverse band that
-    // ends in 🔧, the settings button (a space, the wrench, a space), drawn
+    // ends in ⋮, the settings button (a space, the glyph, a space), drawn
     // inverse too with no gap so both read as one bar. Closing the sidebar is the engine's own close mark on
     // the frame (or ctrl+x x); the band above the prompt then reopens it.
-    // The name's Box takes the line less the button (exactly four cells), so
+    // The name's Box takes the line less the button (exactly three cells), so
     // the row never wraps and a long name truncates. A blank row below keeps
     // the band apart from the first section.
     // Privacy mode prefixes 🔒 to the name, so it is seen whatever is hidden.
@@ -1881,7 +1881,7 @@ export const register: Register = on => {
       </Box>
     )
 
-    // `🔧` settings block: above the sections, which stay drawn below it; never
+    // `⋮` settings block: above the sections, which stay drawn below it; never
     // with the picker (`settingsShown`). Its rows are counted by
     // `settingsRows`: keep the two in step.
     const settingsBlock = (

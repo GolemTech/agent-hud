@@ -43,7 +43,7 @@ declare module 'claude-code' {
       preview: string | null
       /** The MCP section's filter: every server, or only the connected ones. */
       mcpFilter: 'all' | 'active'
-      /** The `🔧` settings block is open at the top of the Pane. */
+      /** The `⋮` settings block is open at the top of the Pane. */
       settingsOpen: boolean
     }
   }
