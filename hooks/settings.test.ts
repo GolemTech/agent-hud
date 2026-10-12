@@ -54,14 +54,21 @@ const HOME = '/home/myuser'
 const CWD = `${HOME}/code/example`
 
 // The engine's bottom for the poller, the Pane, the picker and the scroll.
-// `opens` collects every `$.ui.open` argument.
-const answerEngine = (on: On, store: Record<string, unknown> = {}, opens: unknown[] = []) => {
+// `opens` collects every `$.ui.open` argument; `refuse` throws for the ones
+// it returns true for, as a refused open.
+const answerEngine = (
+  on: On,
+  store: Record<string, unknown> = {},
+  opens: unknown[] = [],
+  refuse: (e: unknown) => boolean = () => false,
+) => {
   const clock = mock.clock(on)
   mock.env(on, { HOME })
   mock.store(on, store)
   on('command.register', () => ({ value: undefined }) as never)
   on('ui.open', (_$, e) => {
     opens.push(e)
+    if (refuse(e)) throw new Error('open refused')
     return { value: { isPlaced: true } } as never
   })
   on('ui.focus', () => ({}) as never)
@@ -234,6 +241,22 @@ test('[change] closes the block and opens the picker in the HUD pane, asking for
   const asked = () => (opens as { id?: string; focus?: boolean }[]).filter(o => o.focus === true)
   expect(asked()).toHaveLength(1)
   expect(asked()[0]?.id).toBe('hud')
+  await clock.advance(PICKER_FOCUS_RETRY_MS)
+  expect(asked()).toHaveLength(2)
+})
+
+test('[change] still schedules the focus retry when the first open fails', async ($, on) => {
+  // The first open asking for the keys is refused, later ones are placed.
+  const opens: unknown[] = []
+  const asked = () => (opens as { focus?: boolean }[]).filter(o => o.focus === true)
+  const clock = answerEngine(on, {}, opens, e => (e as { focus?: boolean }).focus === true && asked().length === 1)
+  await startSession($)
+  const pane = await mountPane($)
+  await pane.press({ key: SETTINGS_KEY })
+  await pane.press({ key: SETTINGS_CHANGE })
+  const tree = JSON.stringify(await pane.drawn())
+  expect(tree).toContain(PICKER_CANCEL)
+  expect(asked()).toHaveLength(1)
   await clock.advance(PICKER_FOCUS_RETRY_MS)
   expect(asked()).toHaveLength(2)
 })

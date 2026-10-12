@@ -1096,7 +1096,11 @@ const startPicker = async ($: EngineInterface): Promise<void> => {
   await update($, scrollOffset, () => 0)
   pickerLastFocus = null
   await update($, pickerOpen, () => true)
-  await openForPicker($)
+  try {
+    await openForPicker($)
+  } catch {
+    // refused now: the retry below asks again
+  }
   $.clock.after(PICKER_FOCUS_RETRY_MS, () => void refocusPicker($))
 }
 
