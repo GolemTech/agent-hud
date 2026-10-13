@@ -49,6 +49,14 @@ declare module 'claude-code' {
       settingsOpen: boolean
       /** Sections hidden from the Pane and the band (the settings button, `⋮`), in draw order. */
       hiddenSections: ('session' | 'context' | 'mcp' | 'subagents' | 'todos' | 'gentle')[]
+      /**
+       * The Subagents and Todo windows (`hooks/windows.ts`): the first item the
+       * wheel left each at, and whether it paused the follow of the active item.
+       */
+      lists: {
+        subagents: { first: number; paused: boolean; pausedAt: string | null }
+        todos: { first: number; paused: boolean; pausedAt: string | null }
+      }
       /** The glyph the Context meters are drawn with: `line` (━, the default) or `block` (▬). */
       meterStyle: 'line' | 'block'
     }

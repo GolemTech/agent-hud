@@ -364,15 +364,17 @@ test('subagent counts collapse to a compact form when narrow', async ($, on) => 
 
 // The content scrolls behind the sticky footer, so every card is drawn
 // whatever the height; the person scrolls to the ones below.
-test('every subagent card is drawn, short pane or tall', async ($, on) => {
+test('the subagent window draws the same whole cards, short pane or tall', async ($, on) => {
   const cards = async (pane: { drawn: () => Promise<unknown> }) =>
     all(await pane.drawn(), 'Text').filter(t => /subagent\)$/.test(textOf(t))).length
   await inDemo($, on, 60, 24, async pane => {
     const short = await cards(pane)
     await pane.redraw(paneProps(60, 80))
     const tall = await cards(pane)
-    expect(short).toBe(4)
+    // Four 4-row demo cards are 16 rows: the 12-row window shows three whole.
+    expect(short).toBe(3)
     expect(tall).toBe(short)
+    expect(textOf(await pane.drawn())).toContain('↓ 1 more')
   })
 })
 

@@ -11,7 +11,11 @@
 // while the list is windowed (blank when nothing is hidden there), so the
 // list's row count never changes with its offset.
 
-export const sumRows = (heights: readonly number[]): number => heights.reduce((n, h) => n + h, 0)
+// The Pane's two long lists, in rows: subagent cards and todos.
+export const SUBAGENT_WINDOW = 12
+export const TODO_WINDOW = 8
+
+export const sumRows =(heights: readonly number[]): number => heights.reduce((n, h) => n + h, 0)
 
 // Rows a list takes: all of it while it fits the window, else the window and
 // its two indicator rows.

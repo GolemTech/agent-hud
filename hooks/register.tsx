@@ -46,6 +46,7 @@ import {
   sectionTitle,
   textRows,
   viewportRowsFor,
+  HEADER_ROWS,
 } from './layout'
 import { DEFAULT_MCP_FILTER, filterServers, isMcpFilter, MCP_FILTERS, mcpBodyRows, mcpEmptyText, mcpHiddenText } from './mcp'
 import type { McpFilter } from './mcp'
@@ -106,6 +107,20 @@ import {
 } from './themes'
 import type { Palette, Role, ThemeName } from './themes'
 import { isSupportedVersion, unsupportedMessage } from './version'
+import {
+  fitsWindow,
+  LIST_TOP,
+  listAt,
+  parseListScroll,
+  shownFirst,
+  SUBAGENT_WINDOW,
+  sumRows,
+  TODO_WINDOW,
+  wheelList,
+  windowAt,
+  windowRows,
+} from './windows'
+import type { ListId, ListSpan, ListWindow } from './windows'
 
 // Re-exported for the unit tests, which import the helpers from here.
 export { clean }
@@ -406,6 +421,21 @@ const HIDDEN_KEY = 'hiddenSections'
 // METER_STYLE_KEY and loaded at session start; `line` until one is chosen.
 const meterStyle = atom({ plugin: 'agent-hud', key: 'meterStyle' } as const, DEFAULT_METER_STYLE as MeterStyle)
 const METER_STYLE_KEY = 'meterStyle'
+// The Subagents and Todo windows: where the wheel left each one and whether it
+// paused the follow of the active item. View state, live or demo;
+// `session.start` puts both back at the top, following.
+const listScroll = atom({ plugin: 'agent-hud', key: 'lists' } as const, { subagents: LIST_TOP, todos: LIST_TOP })
+// What the latest sticky render drew of each windowed list, for the wheel:
+// its body rows (`listAt`), the first item it showed, the items' heights and
+// the active item's id. Null in the plain flow, where the engine scrolls and
+// the pointer's row is not the tree's.
+type ListDrawn = { shown: number; heights: number[]; window: number; activeId: string | null }
+let listsDrawn: {
+  spans: ListSpan[]
+  viewTop: number
+  viewRows: number
+  lists: Partial<Record<ListId, ListDrawn>>
+} | null = null
 // The last offset the latest sticky render allowed; null while the Pane is
 // drawn in the plain flow (inline, or no body height), where the engine scrolls.
 let scrollMax: number | null = null
@@ -1262,6 +1292,12 @@ export const register: Register = on => {
     } catch {
       // keep the style this session already has
     }
+    // ... and with both list windows at the top, following.
+    try {
+      await update($, listScroll, () => ({ subagents: LIST_TOP, todos: LIST_TOP }))
+    } catch {
+      // the render clamps whatever offsets are left
+    }
     // A new session starts with no picker and no preview.
     try {
       await closePicker($)
@@ -1648,6 +1684,20 @@ export const register: Register = on => {
       const by = e.by
       await update($, pickerScroll, prev => clampPickerScroll(prev + by, PICKER_LIST_ROWS, PICKER_WINDOW))
       return next(e)
+    }
+    // A wheel tick over a windowed list's rows scrolls that list (and pauses
+    // its follow), never the Pane. Scroll keys and `$.ui.scroll` carry no
+    // pointer: they move the Pane, as does a tick anywhere else.
+    const drawn = listsDrawn
+    const row = e.pointer?.row
+    if (drawn && row !== undefined) {
+      const id = listAt(drawn.spans, row, drawn.viewTop, drawn.viewRows)
+      const list = id ? drawn.lists[id] : undefined
+      if (id && list) {
+        const moved = wheelList(list.shown, e.by, list.heights, list.window, list.activeId)
+        await update($, listScroll, prev => ({ ...prev, [id]: moved }))
+        return next(e)
+      }
     }
     const max = scrollMax
     if (max !== null) {
@@ -2067,7 +2117,68 @@ export const register: Register = on => {
     // its tree, so the count and the tree read the same items and cannot
     // drift (as `gentleGrid` feeds both the Gentle AI tree and `gentleRows`).
     // A missing section, or one missing `rows` or `node`, is a compile error.
-    const cardRows = cardList.reduce((n, r) => n + (view.models.get(r.id) ? CARD_ROWS : CARD_ROWS - 1), 0)
+    // Long lists draw in fixed windows (`windows.ts`): whole items from the
+    // first one shown, the active item kept in view unless the wheel paused
+    // the follow on it; null while the list fits and is drawn whole.
+    const lists = await read($, listScroll)
+    const windowOf = (heights: number[], window: number, activeIndex: number, activeId: string | null, stored: unknown) =>
+      fitsWindow(heights, window)
+        ? null
+        : windowAt(shownFirst(parseListScroll(stored), heights, window, activeIndex, activeId), heights, window)
+    // The window and its indicator rows, always both, so the count is stable.
+    const windowNode = (w: ListWindow, window: number, items: JSX.Element[]) => [
+      <Text wrap="truncate-end" color={t.subtle}>
+        {moreText('up', w.above) || ' '}
+      </Text>,
+      <Box flexDirection="column" flexShrink={0} height={window} overflow="hidden">
+        {items.slice(w.first, w.first + w.count)}
+      </Box>,
+      <Text wrap="truncate-end" color={t.subtle}>
+        {moreText('down', w.below) || ' '}
+      </Text>,
+    ]
+    const cardHeights = cardList.map(r => (view.models.get(r.id) ? CARD_ROWS : CARD_ROWS - 1))
+    const cardRows = sumRows(cardHeights)
+    const runIndex = cardList.findIndex(r => r.status === 'running')
+    const runId = cardList[runIndex]?.id ?? null
+    const cardWindow = windowOf(cardHeights, SUBAGENT_WINDOW, runIndex, runId, lists?.subagents)
+    const todoHeights = todoList.map(todo => textRows(4 + todo.content.length, W))
+    const todoIndex = todoList.findIndex(todo => todo.status === 'in_progress')
+    const todoId = todoList[todoIndex]?.id ?? null
+    const todoWindow = windowOf(todoHeights, TODO_WINDOW, todoIndex, todoId, lists?.todos)
+    const subagentsHeaderRows = flowRows(
+      [headerText('subagents', 'Subagents').length, ...(counts.done + counts.err > 0 ? [CLEAR] : [])],
+      W,
+    )
+    const todosHeaderRows = flowRows([headerText('todos', todosHeader).length, ...(todoDone > 0 ? [CLEAR] : [])], W)
+    const cards = cardList.map(r => (
+      <Box flexDirection="column">
+        <Text wrap="truncate-end" {...fg(t)}>
+          <Text color={t[color(r.status)]}>{icon(r.status)}</Text> <Text bold {...fg(t)}>{r.description}</Text>
+        </Text>
+        <Text wrap="truncate-end" color={t.subtle}>
+          {'  '}(@{r.type} subagent)
+        </Text>
+        {modelLine(view.models.get(r.id), '  ')}
+        <Text wrap="truncate-end" color={t.subtle}>
+          {'  '}◷ {fmt(r.elapsedMs)}
+          {r.tokens !== undefined && `  ≋ ${fmtTokens(r.tokens)} tok`}
+        </Text>
+      </Box>
+    ))
+    const todoItems = todoList.map(todo =>
+      todo.status === 'completed' ? (
+        <Text wrap="wrap" color={t.subtle}>
+          [✓] {todo.content}
+        </Text>
+      ) : todo.status === 'in_progress' ? (
+        <Text wrap="wrap" bold color={t.success}>
+          [ ] {todo.content}
+        </Text>
+      ) : (
+        <Text wrap="wrap" {...fg(t)}>[ ] {todo.content}</Text>
+      ),
+    )
     const sectionItems = {
       session: {
         rows: rowsOf(
@@ -2225,12 +2336,8 @@ export const register: Register = on => {
         ),
       },
       subagents: {
-        // The tally, then every card (the content scrolls).
-        rows: rowsOf(
-          'subagents',
-          flowRows([headerText('subagents', 'Subagents').length, ...(counts.done + counts.err > 0 ? [CLEAR] : [])], W),
-          1 + cardRows,
-        ),
+        // The tally, then every card, or the cards' window past SUBAGENT_WINDOW rows.
+        rows: rowsOf('subagents', subagentsHeaderRows, 1 + windowRows(cardRows, SUBAGENT_WINDOW)),
         node: (
           <Box {...margin('subagents')} flexDirection="column">
             <Box gap={1} flexWrap="wrap">
@@ -2267,31 +2374,13 @@ export const register: Register = on => {
                 <Text color={t.error}>✕ {counts.err} error</Text>
               </Text>
             )}
-            {!c.subagents &&
-              cardList.map(r => (
-                <Box flexDirection="column">
-                  <Text wrap="truncate-end" {...fg(t)}>
-                    <Text color={t[color(r.status)]}>{icon(r.status)}</Text> <Text bold {...fg(t)}>{r.description}</Text>
-                  </Text>
-                  <Text wrap="truncate-end" color={t.subtle}>
-                    {'  '}(@{r.type} subagent)
-                  </Text>
-                  {modelLine(view.models.get(r.id), '  ')}
-                  <Text wrap="truncate-end" color={t.subtle}>
-                    {'  '}◷ {fmt(r.elapsedMs)}
-                    {r.tokens !== undefined && `  ≋ ${fmtTokens(r.tokens)} tok`}
-                  </Text>
-                </Box>
-              ))}
+            {!c.subagents && (cardWindow ? windowNode(cardWindow, SUBAGENT_WINDOW, cards) : cards)}
           </Box>
         ),
       },
       todos: {
-        rows: rowsOf(
-          'todos',
-          flowRows([headerText('todos', todosHeader).length, ...(todoDone > 0 ? [CLEAR] : [])], W),
-          todoList.length === 0 ? 1 : todoList.reduce((n, t) => n + textRows(4 + t.content.length, W), 0),
-        ),
+        // Every todo, or their window past TODO_WINDOW rows.
+        rows: rowsOf('todos', todosHeaderRows, todoList.length === 0 ? 1 : windowRows(sumRows(todoHeights), TODO_WINDOW)),
         node: (
           <Box {...margin('todos')} flexDirection="column">
             <Box gap={1} flexWrap="wrap">
@@ -2314,20 +2403,7 @@ export const register: Register = on => {
                 : rule(headerWidth('todos', todosHeader))}
             </Box>
             {!c.todos && todoList.length === 0 && <Text color={t.subtle}>no todos</Text>}
-            {!c.todos &&
-              todoList.map(todo =>
-                todo.status === 'completed' ? (
-                  <Text wrap="wrap" color={t.subtle}>
-                    [✓] {todo.content}
-                  </Text>
-                ) : todo.status === 'in_progress' ? (
-                  <Text wrap="wrap" bold color={t.success}>
-                    [ ] {todo.content}
-                  </Text>
-                ) : (
-                  <Text wrap="wrap" {...fg(t)}>[ ] {todo.content}</Text>
-                ),
-              )}
+            {!c.todos && (todoWindow ? windowNode(todoWindow, TODO_WINDOW, todoItems) : todoItems)}
           </Box>
         ),
       },
@@ -2365,8 +2441,9 @@ export const register: Register = on => {
     // all-hidden line when every section is hidden. Ink wraps words, so a
     // long text can take a row more than estimated; the bottom margin of the
     // scroll absorbs one.
+    const blockRows = picking ? pickerRows(hasKeys) : settingsShown ? settingsRows(W, shownName) : 0
     const contentRows =
-      (picking ? pickerRows(hasKeys) : settingsShown ? settingsRows(W, shownName) : 0) +
+      blockRows +
       shownSections.reduce((n, s, i) => n + (i > 0 ? 1 : 0) + s.rows, 0) +
       (shownSections.length === 0 ? textRows(ALL_HIDDEN_TEXT.length, W) : 0)
 
@@ -2387,6 +2464,7 @@ export const register: Register = on => {
     const bodyRows = e.props.scroll?.bodyRows
     if (e.props.placement === 'inline' || typeof bodyRows !== 'number') {
       scrollMax = null
+      listsDrawn = null
       return (
         <Box flexDirection="column" paddingX={PANE_PADDING_X} {...fill(t)}>
           {headerRow}
@@ -2404,6 +2482,26 @@ export const register: Register = on => {
     const max = maxScrollOffset(contentRows, viewportRows)
     scrollMax = max
     const offset = clampOffset(await read($, scrollOffset), max)
+    // Where each windowed list is drawn, in body rows: below the sticky
+    // header, the block on top and every section before it (with its margin
+    // row), its own header rows (and the Subagents tally), less the offset.
+    const drawnLists: Partial<Record<ListId, ListDrawn>> = {}
+    const spans: ListSpan[] = []
+    let top = blockRows
+    shownSections.forEach((s, i) => {
+      const sectionTop = top + (i > 0 ? 1 : 0)
+      top = sectionTop + s.rows
+      const list =
+        s.id === 'subagents' && cardWindow && !c.subagents
+          ? { at: subagentsHeaderRows + 1, w: cardWindow, drawn: { heights: cardHeights, window: SUBAGENT_WINDOW, activeId: runId } }
+          : s.id === 'todos' && todoWindow && !c.todos
+            ? { at: todosHeaderRows, w: todoWindow, drawn: { heights: todoHeights, window: TODO_WINDOW, activeId: todoId } }
+            : null
+      if (!list) return
+      spans.push({ id: s.id as ListId, top: HEADER_ROWS + sectionTop + list.at - offset, rows: list.drawn.window + 2 })
+      drawnLists[s.id as ListId] = { ...list.drawn, shown: list.w.first }
+    })
+    listsDrawn = { spans, viewTop: HEADER_ROWS, viewRows: viewportRows, lists: drawnLists }
     return (
       <Box flexDirection="column" paddingX={PANE_PADDING_X} height={bodyRows} {...fill(t)}>
         {headerRow}

@@ -4,7 +4,9 @@ import type { Engine } from 'claude-code/testing'
 
 import { FOOTER_ROWS, HEADER_ROWS } from './layout'
 import { projectName } from './register'
-import { SETTINGS_BUTTON, SETTINGS_KEY } from './settings'
+import { SETTINGS_BUTTON, SETTINGS_KEY, sectionKey } from './settings'
+import type { SectionId } from './settings'
+import { SUBAGENT_WINDOW, TODO_WINDOW } from './windows'
 
 // The sticky header and footer: the Pane is drawn at exactly its body's
 // height, the sections scroll inside a clipped viewport by the plugin's own
@@ -14,6 +16,8 @@ const HOME = '/home/myuser'
 const REPO = `${HOME}/code/mono-repo`
 const CWD = `${REPO}/pkg/web`
 let repoRoot: string | null = REPO
+// The subagents `$.agent.list()` answers; none unless a test sets some.
+let liveAgents: { id: string; type: string; description: string; status: string }[] = []
 
 const answerEngine = (on: On) => {
   const clock = mock.clock(on)
@@ -33,7 +37,7 @@ const answerEngine = (on: On) => {
   on('session.version', () => ({ value: { version: '2.1.296', base: '2.1.296' } }) as never)
   on('session.usage', () => ({ value: { startedAt: 0 } }) as never)
   on('tool.list', () => ({ value: [] }) as never)
-  on('agent.list', () => ({ value: [] }) as never)
+  on('agent.list', () => ({ value: liveAgents }) as never)
   on('fs.read', () => {
     throw new Error('no such file')
   })
@@ -226,4 +230,220 @@ test('an inline Pane keeps the plain flow: no fixed height, no viewport', async 
   expect(all(root, 'Box').some(b => b.props?.overflow === 'hidden')).toBe(false)
   expect(textOf(root)).toContain('mono-repo')
   expect(textOf(root)).toContain('2.1.296')
+})
+
+// ── List windows ─────────────────────────────────────────────────────────
+// Long Subagents and Todo lists draw in fixed windows of their own: a wheel
+// tick over a list's rows scrolls the list, any other tick the Pane.
+
+
+const answerLists = (on: On) => {
+  const clock = answerEngine(on)
+  mock.store(on, {})
+  on('tool.call', { tool: 'TodoWrite' }, () => ({ result: {} }) as never)
+  return clock
+}
+
+type Status = 'pending' | 'in_progress' | 'completed'
+// `n` todos, `active` in progress, those before it done, the rest pending.
+const todoList = (n: number, active: number, text = (i: number) => `task ${i}`) =>
+  Array.from({ length: n }, (_, i) => ({
+    content: text(i),
+    activeForm: text(i),
+    status: (i < active ? 'completed' : i === active ? 'in_progress' : 'pending') as Status,
+  }))
+const writeTodos = ($: Engine, list: ReturnType<typeof todoList>) =>
+  $.tool.call({ tool: 'TodoWrite', todos: list } as never)
+
+const listProps = (bodyColumns: number, bodyRows: number) =>
+  ({ title: 'Agent HUD', isFocused: false, bodyColumns, placement: 'dock', scroll: { offset: 0, bodyRows } }) as never
+
+// Only `keep` drawn: every other section hidden through the settings block.
+const showOnly = async (pane: { press: (t: { key: string }) => Promise<unknown> }, keep: string) => {
+  await pane.press({ key: SETTINGS_KEY })
+  for (const id of ['session', 'context', 'mcp', 'subagents', 'todos', 'gentle'])
+    if (id !== keep) await pane.press({ key: sectionKey(id as SectionId) })
+  await pane.press({ key: 'settings-close' })
+}
+
+// A wheel tick over a body row, as the engine raises it.
+const wheelAt = ($: Engine, by: number, row: number, bodyRows: number) =>
+  $.ui.scroll({
+    component: 'Pane',
+    requestId: 'hud',
+    offset: 0,
+    by,
+    bodyRows,
+    contentRows: bodyRows,
+    origin: { kind: 'person' },
+    pointer: { column: 3, row },
+  } as never)
+
+// The window of a list: the clipped Box holding its items, and the
+// indicator lines right before and after it.
+const listWindow = (tree: unknown, height: number) => {
+  // The last match: the Pane's own viewport (first in draw order) can share the height.
+  const box = all(tree, 'Box').filter(b => b.props?.overflow === 'hidden' && b.props?.height === height).at(-1)
+  if (!box) return null
+  const parent = all(tree, 'Box').find(b => elements(b).includes(box)) as Node
+  const kids = elements(parent)
+  const i = kids.indexOf(box)
+  return { box, items: elements(box).map(textOf), up: textOf(kids[i - 1]), down: textOf(kids[i + 1]) }
+}
+
+const startLists = async ($: Engine, on: On, bodyColumns: number, bodyRows: number, keep: string) => {
+  const clock = answerLists(on)
+  await $.session.start({ cwd: CWD, surface: 'terminal', isInteractive: true } as never)
+  await clock.settle()
+  const pane = await $.ui.mount({
+    plugin: 'agent-hud',
+    surface: 'terminal',
+    component: 'Pane',
+    requestId: 'hud',
+    props: listProps(bodyColumns, bodyRows),
+  })
+  await showOnly(pane, keep)
+  return { clock, pane }
+}
+
+test('a short todo list draws as before: no window, no indicators', async ($, on) => {
+  const { pane } = await startLists($, on, 60, 40, 'todos')
+  await writeTodos($, todoList(3, 1))
+  const tree = await pane.drawn()
+  expect(listWindow(tree, TODO_WINDOW)).toBe(null)
+  expect(textOf(tree)).not.toContain('more')
+  const section = all(tree, 'Box')
+    .filter(b => JSON.stringify(b).includes('toggle-todos') && b.props?.flexDirection === 'column')
+    .at(-1) as Node
+  // The header row, then one Text per todo, as it always drew.
+  expect(elements(section).slice(1).map(n => n.type)).toEqual(['Text', 'Text', 'Text'])
+})
+
+test('a long todo list draws in a window of TODO_WINDOW rows with the hidden items named', async ($, on) => {
+  const { pane } = await startLists($, on, 60, 40, 'todos')
+  await writeTodos($, todoList(20, -1))
+  const w = listWindow(await pane.drawn(), TODO_WINDOW)
+  expect(w?.items).toEqual(Array.from({ length: TODO_WINDOW }, (_, i) => `[ ] task ${i}`))
+  expect(w?.up.trim()).toBe('')
+  expect(w?.down).toBe(`↓ ${20 - TODO_WINDOW} more`)
+})
+
+test('the wheel over the todo list moves the list, not the Pane; elsewhere it moves the Pane', async ($, on) => {
+  // 12 body rows: an 8-row viewport under the header, the list's 11 rows overflow it.
+  const { pane } = await startLists($, on, 60, 12, 'todos')
+  await writeTodos($, todoList(20, -1))
+  await pane.drawn() // the engine draws before the person can wheel over it
+  const listTop = HEADER_ROWS + 1 // under the Todo header
+  await wheelAt($, 2, listTop + 4, 12)
+  let p = await parts(pane)
+  expect(listWindow(p.root, TODO_WINDOW)?.up).toBe('↑ 2 more')
+  expect(p.content.props?.marginTop).toBe(0)
+  // Over the section header: the Pane moves, the list stays.
+  await wheelAt($, 1, HEADER_ROWS, 12)
+  p = await parts(pane)
+  expect(p.content.props?.marginTop).toBe(-1)
+  expect(listWindow(p.root, TODO_WINDOW)?.up).toBe('↑ 2 more')
+  // The list moved up a row with the Pane: its top indicator is now on the
+  // header's old row, and a tick there moves the list again.
+  await wheelAt($, 1, HEADER_ROWS, 12)
+  p = await parts(pane)
+  expect(p.content.props?.marginTop).toBe(-1)
+  expect(listWindow(p.root, TODO_WINDOW)?.up).toBe('↑ 3 more')
+  // A scroll key (no pointer) moves the Pane.
+  await scroll($, 1, 12)
+  expect((await parts(pane)).content.props?.marginTop).toBe(-2)
+})
+
+test('the todo window follows the item in progress', async ($, on) => {
+  const { pane } = await startLists($, on, 60, 40, 'todos')
+  await writeTodos($, todoList(20, 12))
+  let w = listWindow(await pane.drawn(), TODO_WINDOW)
+  expect(w?.items.at(-1)).toBe('[ ] task 12')
+  expect(w?.up).toBe('↑ 5 more')
+  await writeTodos($, todoList(20, 13))
+  w = listWindow(await pane.drawn(), TODO_WINDOW)
+  expect(w?.items.at(-1)).toBe('[ ] task 13')
+  expect(w?.up).toBe('↑ 6 more')
+})
+
+test('a wheel move stops the follow until another item is in progress', async ($, on) => {
+  const { pane } = await startLists($, on, 60, 40, 'todos')
+  await writeTodos($, todoList(20, 13))
+  expect(listWindow(await pane.drawn(), TODO_WINDOW)?.up).toBe('↑ 6 more')
+  await wheelAt($, -3, HEADER_ROWS + 3, 40)
+  expect(listWindow(await pane.drawn(), TODO_WINDOW)?.up).toBe('↑ 3 more')
+  // The same item in progress: the window stays where the wheel left it.
+  await writeTodos($, todoList(20, 13))
+  expect(listWindow(await pane.drawn(), TODO_WINDOW)?.up).toBe('↑ 3 more')
+  // The next one: the follow is back, with the least move.
+  await writeTodos($, todoList(20, 14))
+  const w = listWindow(await pane.drawn(), TODO_WINDOW)
+  expect(w?.items.at(-1)).toBe('[ ] task 14')
+  expect(w?.up).toBe('↑ 7 more')
+})
+
+test('a long subagent list draws in a window of SUBAGENT_WINDOW rows, whole cards only', async ($, on) => {
+  liveAgents = Array.from({ length: 5 }, (_, i) => ({ id: `win-a${i}`, type: 'Explore', description: `job ${i}`, status: 'running' }))
+  try {
+    const { pane, clock } = await startLists($, on, 60, 40, 'subagents')
+    await clock.advance(1000)
+    const w = listWindow(await pane.drawn(), SUBAGENT_WINDOW)
+    // Cards with no model are 3 rows: four fit in 12.
+    expect(w?.items.map(s => s.slice(0, 7))).toEqual(['● job 0', '● job 1', '● job 2', '● job 3'])
+    expect(w?.down).toBe('↓ 1 more')
+    await wheelAt($, 1, HEADER_ROWS + 2 + 3, 40) // header, tally, then the list
+    expect(listWindow(await pane.drawn(), SUBAGENT_WINDOW)?.up).toBe('↑ 1 more')
+  } finally {
+    liveAgents = []
+  }
+})
+
+// The section's rows as counted: collapsing it drops its body, so the end
+// offset falls by exactly the rows the body draws.
+for (const [cols, rows] of [
+  [60, 12],
+  [20, 14],
+  [100, 10],
+] as const) {
+  test(`at ${cols}x${rows}, the windowed todo list is counted as drawn`, async ($, on) => {
+    const { pane } = await startLists($, on, cols, rows, 'todos')
+    await writeTodos($, todoList(20, -1, i => `a todo long enough to wrap ${i}`))
+    const tree = await pane.drawn()
+    const w = listWindow(tree, TODO_WINDOW)
+    expect(w).not.toBe(null)
+    await scroll($, 10_000, rows)
+    const open = 0 - Number((await parts(pane)).content.props?.marginTop)
+    await pane.press({ key: 'toggle-todos' } as never)
+    const shut = 0 - Number((await parts(pane)).content.props?.marginTop)
+    const viewport = rows - HEADER_ROWS - FOOTER_ROWS
+    // Header plus window plus indicators, against the viewport and margin.
+    expect(open).toBe(1 + TODO_WINDOW + 2 - viewport + 1)
+    expect(shut).toBe(0)
+  })
+}
+
+test('a new session puts the list windows back at the top, following', async ($, on) => {
+  const { pane, clock } = await startLists($, on, 60, 40, 'todos')
+  await writeTodos($, todoList(20, -1))
+  await pane.drawn()
+  await wheelAt($, 5, HEADER_ROWS + 3, 40)
+  expect(listWindow(await pane.drawn(), TODO_WINDOW)?.up).toBe('↑ 5 more')
+  await $.session.start({ cwd: CWD, surface: 'terminal', isInteractive: true } as never)
+  await clock.settle()
+  expect(listWindow(await pane.drawn(), TODO_WINDOW)?.up.trim()).toBe('')
+})
+
+test('in demo mode the wheel scrolls the subagent window too', async ($, on) => {
+  const { pane, clock } = await startLists($, on, 60, 40, 'subagents')
+  await $.command.run({ command: 'hud-demo', args: '' } as never)
+  try {
+    await clock.advance(6000)
+    expect(listWindow(await pane.drawn(), SUBAGENT_WINDOW)?.down).toBe('↓ 1 more')
+    await wheelAt($, 1, HEADER_ROWS + 2 + 1, 40)
+    const w = listWindow(await pane.drawn(), SUBAGENT_WINDOW)
+    expect(w?.up).toBe('↑ 1 more')
+    expect(w?.down.trim()).toBe('')
+  } finally {
+    await leaveDemo($)
+  }
 })
