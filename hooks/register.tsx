@@ -75,6 +75,7 @@ import type { SectionId } from './settings'
 import { clean } from './text'
 import {
   DEFAULT_THEME,
+  fg,
   isThemeName,
   parseThemeArg,
   PICKER_CANCEL,
@@ -1634,7 +1635,7 @@ export const register: Register = on => {
     // 🤖 Opus 5.5 · medium — the same line for the session and each subagent.
     const modelLine = (m: ModelInfo | undefined, indent = '') =>
       m && (
-        <Text wrap="truncate-end">
+        <Text wrap="truncate-end" {...fg(t)}>
           {indent}🤖 <Text bold color={t.warning}>{prettyModel(m.model)}</Text>
           {m.effort !== undefined && <Text color={t.subtle}> · {String(m.effort)}</Text>}
         </Text>
@@ -1750,7 +1751,7 @@ export const register: Register = on => {
                   </Text>
                 </Box>
                 {r.summary && (
-                  <Text wrap="truncate-end" color={r.summary.tone && t[r.summary.tone]}>
+                  <Text wrap="truncate-end" color={r.summary.tone ? t[r.summary.tone] : t.foreground}>
                     {r.summary.text}
                   </Text>
                 )}
@@ -1761,10 +1762,10 @@ export const register: Register = on => {
                   <Text color={t.subtle}>{`${' '.repeat(ITEM_INDENT)}${r.label}`.padEnd(grid.label)}</Text>
                 </Box>
                 <Box flexShrink={0}>
-                  <Text color={r.value.tone && t[r.value.tone]}>{r.value.text.padEnd(grid.value)}</Text>
+                  <Text color={r.value.tone ? t[r.value.tone] : t.foreground}>{r.value.text.padEnd(grid.value)}</Text>
                 </Box>
                 {r.detail && (
-                  <Text wrap="truncate-end" color={r.detail.tone && t[r.detail.tone]}>
+                  <Text wrap="truncate-end" color={r.detail.tone ? t[r.detail.tone] : t.foreground}>
                     {r.detail.text}
                   </Text>
                 )}
@@ -1854,10 +1855,10 @@ export const register: Register = on => {
     // Sticky footer: the Claude Code version the session runs on.
     const footerRow = versionCache ? (
       <Box flexDirection="column" flexShrink={0} marginTop={1}>
-        <Text wrap="truncate-end">
+        <Text wrap="truncate-end" {...fg(t)}>
           <Text color={t.success}>● </Text>
           <Text color={t.subtle}>Claude</Text>
-          <Text bold>Code</Text>
+          <Text bold {...fg(t)}>Code</Text>
           <Text color={t.subtle}>{` ${versionCache}`}</Text>
         </Text>
       </Box>
@@ -1927,7 +1928,7 @@ export const register: Register = on => {
           'Theme',
           [
             <Box>
-              <Text wrap="truncate-end">{shownName}</Text>
+              <Text wrap="truncate-end" {...fg(t)}>{shownName}</Text>
             </Box>,
             <Box>
               <Button key={SETTINGS_CHANGE} plain onPress={() => void startPicker($)}>
@@ -1984,8 +1985,8 @@ export const register: Register = on => {
               {rule(headerWidth('session', 'Session'))}
             </Box>
             {!c.session && (
-              <Text wrap="truncate-end">
-                {view.title && <Text bold>{view.title}</Text>}
+              <Text wrap="truncate-end" {...fg(t)}>
+                {view.title && <Text bold {...fg(t)}>{view.title}</Text>}
                 <Text color={t.subtle}>
                   {view.title && view.sessionId && ' · '}
                   {view.sessionId.slice(0, 8)}
@@ -1993,29 +1994,29 @@ export const register: Register = on => {
               </Text>
             )}
             {!c.session && view.account && (
-              <Text wrap="truncate-end">
-                👤 <Text bold>{view.account}</Text>
+              <Text wrap="truncate-end" {...fg(t)}>
+                👤 <Text bold {...fg(t)}>{view.account}</Text>
               </Text>
             )}
             {!c.session && modelLine(view.mainModel)}
             {!c.session && view.outputStyle && (
-              <Text wrap="truncate-end">
+              <Text wrap="truncate-end" {...fg(t)}>
                 🎭 <Text color={t.accent}>{view.outputStyle}</Text>
               </Text>
             )}
             {!c.session && branch && (
               <Box flexWrap="wrap">
                 <Box>
-                  <Text wrap="truncate-end">
+                  <Text wrap="truncate-end" {...fg(t)}>
                     <Text bold color={t.accent}>
                       {BRANCH_ICON}
                     </Text>{' '}
-                    <Text bold>{branch}</Text>
+                    <Text bold {...fg(t)}>{branch}</Text>
                   </Text>
                 </Box>
                 {changeText ? (
                   <Box flexShrink={0}>
-                    <Text>
+                    <Text {...fg(t)}>
                       {view.changes && view.changes.added > 0 && <Text color={t.success}>{` +${view.changes.added}`}</Text>}
                       {view.changes && view.changes.removed > 0 && <Text color={t.error}>{` -${view.changes.removed}`}</Text>}
                     </Text>
@@ -2028,9 +2029,9 @@ export const register: Register = on => {
                 // The drawable width less the 📁 glyph (two cells + space).
                 const { parent, leaf } = shortPath(view.cwd, view.home, W - 3)
                 return (
-                  <Text wrap="truncate-start">
+                  <Text wrap="truncate-start" {...fg(t)}>
                     📁 <Text color={t.subtle}>{parent}</Text>
-                    <Text bold>{leaf}</Text>
+                    <Text bold {...fg(t)}>{leaf}</Text>
                   </Text>
                 )
               })()}
@@ -2059,7 +2060,7 @@ export const register: Register = on => {
                 return (
                   <Box flexWrap="wrap">
                     <Box flexShrink={0}>
-                      <Text>
+                      <Text {...fg(t)}>
                         <Text color={t.subtle}>{m.label.padEnd(4)}</Text>
                         <Text color={t[meterColor(m.percent)]}>{'━'.repeat(filled)}</Text>
                         <Text color={t.subtle} dimColor>
@@ -2109,7 +2110,7 @@ export const register: Register = on => {
             {!c.mcp && mcp.shown.length === 0 && <Text color={t.subtle}>{mcpEmptyText(mcp.hidden)}</Text>}
             {!c.mcp &&
               mcp.shown.map(s => (
-                <Text wrap="truncate-end" dimColor={!s.connected}>
+                <Text wrap="truncate-end" dimColor={!s.connected} {...fg(t)}>
                   <Text color={t[s.connected ? 'success' : 'subtle']}>{s.connected ? '●' : '○'}</Text>{' '}
                   {s.name}
                   {!s.connected && <Text color={t.subtle}> · auth</Text>}
@@ -2150,13 +2151,13 @@ export const register: Register = on => {
                 : rule(headerWidth('subagents', 'Subagents'))}
             </Box>
             {!c.subagents && L.compact && (
-              <Text wrap="truncate-end">
+              <Text wrap="truncate-end" {...fg(t)}>
                 <Text color={t.accent}>●{counts.run}</Text> <Text color={t.success}>✓{counts.done}</Text>{' '}
                 <Text color={t.error}>✕{counts.err}</Text>
               </Text>
             )}
             {!c.subagents && !L.compact && (
-              <Text wrap="truncate-end">
+              <Text wrap="truncate-end" {...fg(t)}>
                 <Text color={t.accent}>● {counts.run} running</Text>
                 <Text color={t.subtle}> · </Text>
                 <Text color={t.success}>✓ {counts.done} done</Text>
@@ -2167,8 +2168,8 @@ export const register: Register = on => {
             {!c.subagents &&
               cardList.map(r => (
                 <Box flexDirection="column">
-                  <Text wrap="truncate-end">
-                    <Text color={t[color(r.status)]}>{icon(r.status)}</Text> <Text bold>{r.description}</Text>
+                  <Text wrap="truncate-end" {...fg(t)}>
+                    <Text color={t[color(r.status)]}>{icon(r.status)}</Text> <Text bold {...fg(t)}>{r.description}</Text>
                   </Text>
                   <Text wrap="truncate-end" color={t.subtle}>
                     {'  '}(@{r.type} subagent)
@@ -2222,7 +2223,7 @@ export const register: Register = on => {
                     [ ] {todo.content}
                   </Text>
                 ) : (
-                  <Text wrap="wrap">[ ] {todo.content}</Text>
+                  <Text wrap="wrap" {...fg(t)}>[ ] {todo.content}</Text>
                 ),
               )}
           </Box>

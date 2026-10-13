@@ -2,6 +2,7 @@ import { expect, test } from 'claude-code/testing'
 
 import {
   DEFAULT_THEME,
+  fg,
   parseThemeArg,
   pickerOrder,
   pickerRows,
@@ -148,4 +149,15 @@ test('wrapFocus leaves every other move alone', () => {
   expect(wrapFocus('theme-cancel', 'theme:monokai', order)).toBeNull() // back up from Cancel
   expect(wrapFocus(null, 'theme-cancel', order)).toBeNull()
   expect(wrapFocus('theme:monokai', undefined, order)).toBeNull()
+})
+
+test('fg adds the theme foreground as a color, and nothing for a theme without one', () => {
+  expect(fg(THEMES.default)).toEqual({})
+  expect('color' in fg(THEMES.nord)).toBe(false)
+  expect(fg({ ...THEMES.nord, foreground: '#eceff4' })).toEqual({ color: '#eceff4' })
+})
+
+test('default and the first ten presets have no foreground, so their trees stay as they were', () => {
+  expect('foreground' in THEMES.default).toBe(false)
+  for (const name of PRESETS) expect('foreground' in THEMES[name]).toBe(false)
 })

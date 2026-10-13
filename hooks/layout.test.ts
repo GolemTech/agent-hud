@@ -381,3 +381,15 @@ test('the path is shortened to the drawable width', async ($, on) => {
     expect(textOf(path).length - 2).toBeLessThanOrEqual(layoutFor(20, 60).columns - 1)
   })
 })
+
+// The Text a theme without a foreground draws with no color at all, so the
+// terminal's own foreground shows, as before the foreground role existed.
+const uncolored = (tree: unknown): string[] => all(tree, 'Text').filter(n => !('color' in (n.props ?? {}))).map(textOf)
+
+test('default draws its role-less text with no color prop, as before the foreground role', async ($, on) => {
+  await inDemo($, on, 60, 200, async pane => {
+    const plain = uncolored(await pane.drawn())
+    expect(plain).toContain('checkout-refactor') // the session title
+    expect(plain.some(s => s.startsWith('[ ] '))).toBe(true) // a pending todo
+  })
+})

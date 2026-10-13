@@ -10,8 +10,13 @@
 export const ROLES = ['accent', 'subtle', 'success', 'warning', 'error'] as const
 export type Role = (typeof ROLES)[number]
 // `background` fills the sidebar and the band; a theme without one (default)
-// leaves the terminal's own background.
-export type Palette = Readonly<Record<Role, string>> & { readonly background?: string }
+// leaves the terminal's own background. `foreground` colors every Text that
+// takes no role; a theme without one leaves the terminal's own foreground,
+// which on a light background under a dark terminal would be unreadable.
+export type Palette = Readonly<Record<Role, string>> & {
+  readonly background?: string
+  readonly foreground?: string
+}
 
 export const DEFAULT_THEME = 'default'
 
@@ -28,6 +33,10 @@ export const THEMES = {
   kanagawa: { accent: '#7e9cd8', subtle: '#727169', success: '#98bb6c', warning: '#e6c384', error: '#e82424', background: '#1f1f28' },
   monokai: { accent: '#66d9ef', subtle: '#75715e', success: '#a6e22e', warning: '#e6db74', error: '#f92672', background: '#272822' },
 } as const satisfies Record<string, Palette>
+
+// The color of a Text that takes no role: the theme's foreground, or no prop
+// at all, so a theme without one (default) draws exactly as before.
+export const fg = (t: Palette): { color?: string } => (t.foreground ? { color: t.foreground } : {})
 
 export type ThemeName = keyof typeof THEMES
 export const THEME_NAMES = Object.keys(THEMES) as ThemeName[]
