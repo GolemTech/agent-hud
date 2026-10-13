@@ -2,7 +2,7 @@ import type { On } from 'claude-code'
 import { expect, mock, test } from 'claude-code/testing'
 import type { Engine } from 'claude-code/testing'
 
-import { layoutFor, textRows } from './layout'
+import { ITEM_INDENT, layoutFor, textRows } from './layout'
 import { summaryLine } from './register'
 import {
   ALL_HIDDEN_TEXT,
@@ -26,6 +26,7 @@ import {
   SETTINGS_TITLE,
   settingsLabel,
   settingsRows,
+  settingsValueCells,
 } from './settings'
 import { PICKER_CANCEL, PICKER_FOCUS_RETRY_MS, THEME_NAMES, THEMES } from './themes'
 
@@ -38,25 +39,27 @@ test('the settings button is U+22EE padded by three spaces each side: seven cell
   expect(SETTINGS_BUTTON.length).toBe(SETTINGS_BUTTON_CELLS)
 })
 
-test('settingsLabel pads a label to the shared label column', () => {
-  expect(SETTINGS_LABEL_CELLS).toBe(10)
-  expect(settingsLabel('Theme')).toBe('  Theme   ')
-  expect(settingsLabel('Sections')).toBe('  Sections')
+test('settingsLabel pads a label to the shared label column, gap included', () => {
+  expect(SETTINGS_LABEL_CELLS).toBe(12)
+  expect(settingsLabel('Theme')).toBe('  Theme     ')
+  expect(settingsLabel('Sections')).toBe('  Sections  ')
+  expect(settingsLabel('')).toBe(' '.repeat(SETTINGS_LABEL_CELLS))
+  expect(settingsValueCells(43)).toBe(31)
+  expect(settingsValueCells(5)).toBe(1)
   expect(CHANGE_TEXT).toBe('[change]')
   expect(CLOSE_TEXT).toBe('[close]')
 })
 
-test('settingsRows: the title, the Theme and Sections rows as they wrap, [close] and the blank row', () => {
-  // 100 columns (98 drawable): each row on one line.
-  expect(settingsRows(98, 'default')).toBe(5)
-  // 28 columns (26 drawable): [change] below the name; the checks on four lines.
-  expect(settingsRows(26, 'default')).toBe(9)
-  // A long name wraps the Theme row where a short one fits (34 columns, 32 drawable).
-  expect(settingsRows(32, 'default')).toBe(8)
-  expect(settingsRows(32, 'catppuccin-mocha')).toBe(9)
-  // 20 columns (18 drawable): three Theme lines, seven Sections lines (every
-  // check alone: none of them fits beside another in 18 cells).
-  expect(settingsRows(18, 'catppuccin-mocha')).toBe(13)
+test('settingsRows: the title, the Theme row as its value wraps, one row per check, [close] and the blank row', () => {
+  // 100 columns (98 drawable): name and [change] on one line.
+  expect(settingsRows(98, 'default')).toBe(4 + SECTION_IDS.length)
+  // 28 columns (26 drawable, 14 for the value): [change] below the name.
+  expect(settingsRows(26, 'default')).toBe(5 + SECTION_IDS.length)
+  // A long name wraps the Theme value where a short one fits (34 columns, 20 for the value).
+  expect(settingsRows(32, 'default')).toBe(4 + SECTION_IDS.length)
+  expect(settingsRows(32, 'catppuccin-mocha')).toBe(5 + SECTION_IDS.length)
+  // 20 columns (18 drawable, 6 for the value): each part alone, cut to fit.
+  expect(settingsRows(18, 'catppuccin-mocha')).toBe(5 + SECTION_IDS.length)
 })
 
 test('SECTION_IDS lists the six sections in draw order, each with its label', () => {
@@ -257,8 +260,8 @@ test('opening the block scrolls the sections back to the top (demo mode)', async
   })
 })
 
-for (const cols of [28, 100]) {
-  test(`at ${cols} columns the block's counted rows match the drawn tree (demo mode)`, async ($, on) => {
+for (const cols of [28, 30, 45, 80, 100]) {
+  test(`at ${cols} columns the block's counted rows match the drawn tree, one check per row in one column (demo mode)`, async ($, on) => {
     const clock = answerEngine(on)
     await startSession($)
     await clock.settle()
@@ -270,22 +273,55 @@ for (const cols of [28, 100]) {
       const openEnd = await endOffset(pane, $, 24)
       expect(openEnd - closedEnd).toBe(settingsRows(W, 'default'))
 
-      // The block is the first item of the content; its rows hold the widths
-      // settingsRows counts.
+      // The block is the first item of the content: title, Theme row, one row
+      // per check, [close].
       await scroll($, -10_000, 24)
       const block = elements(contentBox(await pane.drawn()))[0] as Node
       expect(block.props?.marginBottom).toBe(1)
-      expect(textOf(elements(block)[0])).toBe(SETTINGS_TITLE)
-      const themeRow = elements(block)[1] as Node
-      expect(themeRow.props?.flexWrap).toBe('wrap')
-      expect(elements(themeRow).map(i => textOf(i).length)).toEqual([SETTINGS_LABEL_CELLS, 'default'.length, CHANGE_TEXT.length])
-      const sectionsRow = elements(block)[2] as Node
-      expect(sectionsRow.props?.flexWrap).toBe('wrap')
-      expect(elements(sectionsRow).map(i => textOf(i).length)).toEqual([
-        SETTINGS_LABEL_CELLS,
-        ...SECTION_IDS.map(id => checkText(id, true).length),
+      const rows = elements(block)
+      expect(rows.length).toBe(3 + SECTION_IDS.length)
+      expect(textOf(rows[0])).toBe(SETTINGS_TITLE)
+
+      // Every row's label cell is one fixed width that never shrinks, so the
+      // Theme value and every check start at the same column.
+      const labelCell = (row: Node) => elements(row)[0] as Node
+      for (const row of rows.slice(1, -1)) {
+        const cell = labelCell(row)
+        expect(cell.props?.flexShrink).toBe(0)
+        expect(cell.props?.width).toBe(SETTINGS_LABEL_CELLS)
+        expect(textOf(cell).length).toBe(SETTINGS_LABEL_CELLS)
+        // No row gap anywhere in the block: a gap on a wrapping row is a blank
+        // row between its lines that settingsRows would not count.
+        expect(row.props?.gap).toBeUndefined()
+        expect(row.props?.rowGap).toBeUndefined()
+        // The value cell holds exactly the rest of the line, so the row never
+        // wraps the value below the label.
+        expect(row.props?.flexWrap).toBe('wrap')
+        const value = elements(row)[1] as Node
+        expect(value.props?.flexShrink).toBe(0)
+        expect(value.props?.width).toBe(settingsValueCells(W))
+        expect(SETTINGS_LABEL_CELLS + settingsValueCells(W)).toBe(W)
+      }
+
+      const themeRow = rows[1] as Node
+      expect(textOf(labelCell(themeRow))).toBe(settingsLabel('Theme'))
+      const value = elements(themeRow)[1] as Node
+      expect(value.props?.flexWrap).toBe('wrap')
+      expect(value.props?.columnGap).toBe(1)
+      expect(value.props?.gap).toBeUndefined()
+      expect(elements(value).map(i => textOf(i))).toEqual(['default', CHANGE_TEXT])
+
+      const checkRows = rows.slice(2, -1)
+      expect(checkRows.map(r => textOf(labelCell(r)))).toEqual([
+        settingsLabel('Sections'),
+        ...SECTION_IDS.slice(1).map(() => settingsLabel('')),
       ])
-      expect(textOf(elements(block).at(-1))).toBe(CLOSE_TEXT)
+      expect(checkRows.map(r => textOf(elements(r)[1]))).toEqual(SECTION_IDS.map(id => checkText(id, true)))
+      expect(checkRows.map(r => elements(r).length)).toEqual(SECTION_IDS.map(() => 2))
+
+      const close = rows.at(-1) as Node
+      expect(textOf(close)).toBe(CLOSE_TEXT)
+      expect(close.props?.paddingLeft).toBe(ITEM_INDENT)
     })
   })
 }

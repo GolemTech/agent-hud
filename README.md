@@ -64,8 +64,8 @@ To add the marketplace first and install separately:
   `'   ⋮   '`) opens the settings block at the top of the sidebar: the current theme with `[change]` (opens the theme picker) and
   `[close]`. `⋮` again closes it; it opens scrolled to the top, and it never
   shows together with the theme picker (`⋮` closes the picker without saving).
-  `Sections` has one check per section (`[✓ Todo]` shown, `[  Todo]`
-  hidden): an unchecked section is not drawn at all, collapsed or not (showing
+  `Sections` lists one check per line, aligned under the theme name
+  (`[✓ Todo]` shown, `[  Todo]` hidden): an unchecked section is not drawn at all, collapsed or not (showing
   it again restores its collapsed state) and drops its part from the band's summary; hiding Context,
   MCP and Subagents leaves the band with only `▸ Agent HUD`. With every
   section hidden the sidebar reads `all sections hidden · ⋮ to show`. The

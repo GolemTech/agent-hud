@@ -22,22 +22,29 @@ export const SETTINGS_TITLE = 'Settings'
 export const CHANGE_TEXT = buttonText('change')
 export const CLOSE_TEXT = buttonText('close')
 
-// The label column: the item indent plus the longest label (`Sections`), so
-// the Theme and Sections rows line up.
-export const SETTINGS_LABEL_CELLS = ITEM_INDENT + 'Sections'.length
+// The label column: the item indent, the longest label (`Sections`) and a
+// two-cell gap, one fixed width on every row, so the Theme value and every
+// check start at the same column.
+export const SETTINGS_LABEL_CELLS = ITEM_INDENT + 'Sections'.length + 2
+
+// The value cell: the rest of the line after the label column (at least one
+// cell), so a label row fills `columns` exactly and never wraps.
+export const settingsValueCells = (columns: number): number => Math.max(1, columns - SETTINGS_LABEL_CELLS)
 
 export const settingsLabel = (label: string): string =>
-  `${' '.repeat(ITEM_INDENT)}${label}`.padEnd(SETTINGS_LABEL_CELLS)
+  (label ? `${' '.repeat(ITEM_INDENT)}${label}` : '').padEnd(SETTINGS_LABEL_CELLS)
 
-// Rows the block draws at `columns`: the title, the Theme row (label, name
-// and `[change]`) and the Sections row (label and one check per section),
-// each wrapping as a flex row does, `[close]`, and the blank row under the
-// block. A check has one width checked or not, so the hidden list never
-// changes it.
+// Rows the block draws at `columns`: the title, the Theme row (its value, the
+// name and `[change]`, wraps inside the cells right of the label column), one
+// row per section check (the first carries the `Sections` label; a check too
+// wide for its cells is cut, never wrapped), `[close]`, and the blank row
+// under the block. No row of the block has a row gap, which would add a blank
+// row between wrapped lines. A check has one width checked or not, so the
+// hidden list never changes the count.
 export const settingsRows = (columns: number, themeName: string): number =>
   1 +
-  flowRows([SETTINGS_LABEL_CELLS, themeName.length, CHANGE_TEXT.length], columns) +
-  flowRows([SETTINGS_LABEL_CELLS, ...SECTION_IDS.map(id => checkText(id, true).length)], columns) +
+  flowRows([themeName.length, CHANGE_TEXT.length], settingsValueCells(columns)) +
+  SECTION_IDS.length +
   1 +
   1
 

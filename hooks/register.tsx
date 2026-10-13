@@ -62,9 +62,11 @@ import {
   SETTINGS_CHANGE,
   SETTINGS_CLOSE,
   SETTINGS_KEY,
+  SETTINGS_LABEL_CELLS,
   SETTINGS_TITLE,
   settingsLabel,
   settingsRows,
+  settingsValueCells,
   summaryParts,
   toggleHidden,
   visibleSections,
@@ -1898,46 +1900,59 @@ export const register: Register = on => {
     )
 
     // `⋮` settings block: above the sections, which stay drawn below it; never
-    // with the picker (`settingsShown`). Its rows are counted by
-    // `settingsRows`: keep the two in step.
+    // with the picker (`settingsShown`). Every row is a label cell of one
+    // fixed width (`SETTINGS_LABEL_CELLS`) and a value cell holding exactly
+    // the rest of the line, both `flexShrink={0}`, so the row (`flexWrap`, as
+    // every label row) never wraps and the Theme value and each check start in
+    // one column. Only the Theme value wraps, inside its cell and with
+    // `columnGap` (never `gap`, whose row gap is a blank row between wrapped
+    // lines). Its rows are counted by `settingsRows`: keep the two in step.
+    const valueCells = settingsValueCells(W)
+    const settingsRow = (label: string, value: JSX.Element | JSX.Element[], wrap = false) => (
+      <Box flexWrap="wrap">
+        <Box flexShrink={0} width={SETTINGS_LABEL_CELLS}>
+          <Text color={t.subtle}>{settingsLabel(label)}</Text>
+        </Box>
+        <Box flexShrink={0} width={valueCells} {...(wrap ? { flexWrap: 'wrap', columnGap: 1 } : {})}>
+          {value}
+        </Box>
+      </Box>
+    )
     const settingsBlock = (
       <Box flexDirection="column" flexShrink={0} marginBottom={1}>
         <Text bold color={t.accent}>
           {SETTINGS_TITLE}
         </Text>
-        <Box flexWrap="wrap" gap={1}>
-          <Box flexShrink={0}>
-            <Text color={t.subtle}>{settingsLabel('Theme')}</Text>
-          </Box>
-          <Box flexShrink={0}>
-            <Text>{shownName}</Text>
-          </Box>
-          <Box flexShrink={0}>
-            <Button key={SETTINGS_CHANGE} plain onPress={() => void startPicker($)}>
-              <Text color={t.accent}>{CHANGE_TEXT}</Text>
-            </Button>
-          </Box>
-        </Box>
-        <Box flexWrap="wrap" gap={1}>
-          <Box flexShrink={0}>
-            <Text color={t.subtle}>{settingsLabel('Sections')}</Text>
-          </Box>
-          {/* onPress returns toggleSection's promise (no `void`), so a press
-              that awaits it sees a failure toggleSection did not catch. */}
-          {SECTION_IDS.map(id => {
-            const shown = !hidden.includes(id)
-            return (
-              <Box flexShrink={0}>
-                <Button key={sectionKey(id)} plain onPress={() => toggleSection($, id)}>
-                  <Text bold={shown} color={shown ? t.success : t.accent}>
-                    {checkText(id, shown)}
-                  </Text>
-                </Button>
-              </Box>
-            )
-          })}
-        </Box>
-        <Box flexShrink={0}>
+        {settingsRow(
+          'Theme',
+          [
+            <Box>
+              <Text wrap="truncate-end">{shownName}</Text>
+            </Box>,
+            <Box>
+              <Button key={SETTINGS_CHANGE} plain onPress={() => void startPicker($)}>
+                <Text wrap="truncate-end" color={t.accent}>
+                  {CHANGE_TEXT}
+                </Text>
+              </Button>
+            </Box>,
+          ],
+          true,
+        )}
+        {/* onPress returns toggleSection's promise (no `void`), so a press
+            that awaits it sees a failure toggleSection did not catch. */}
+        {SECTION_IDS.map((id, i) => {
+          const shown = !hidden.includes(id)
+          return settingsRow(
+            i === 0 ? 'Sections' : '',
+            <Button key={sectionKey(id)} plain onPress={() => toggleSection($, id)}>
+              <Text wrap="truncate-end" bold={shown} color={shown ? t.success : t.accent}>
+                {checkText(id, shown)}
+              </Text>
+            </Button>,
+          )
+        })}
+        <Box flexShrink={0} paddingLeft={ITEM_INDENT}>
           <Button key={SETTINGS_CLOSE} plain onPress={() => void update($, settingsOpen, () => false)}>
             <Text color={t.accent}>{CLOSE_TEXT}</Text>
           </Button>
