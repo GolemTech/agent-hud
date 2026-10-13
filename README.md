@@ -212,7 +212,7 @@ rest, and the limits that come with them:
   `gentle-ai --version`. **Update status** comes from
   `brew outdated --json=v2` run with `HOMEBREW_NO_AUTO_UPDATE=1`: it compares
   against your local tap metadata, so it is only as fresh as your last
-  `brew update`; `last updated <age> ago` beside **Tools** is when the tap was last fetched, and `brew update` refreshes it. Tools not
+  `brew update`; `last updated <age> ago` beside **Tools** is when the tap was last fetched, and `brew update` refreshes it; a tap a day or more old turns the line to a warning ending in `· brew update`. Tools not
   installed through brew show no update status.
 - **gga** is detected by reading files, never by running gga (its commands
   check GitHub for updates, and `gga config` executes the project's `.gga`):

@@ -5,6 +5,7 @@ import type { Engine, MockClock } from 'claude-code/testing'
 import {
   ACTION_TIMEOUT_MS,
   ageText,
+  tapSummary,
   checkMark,
   GENTLE_JOIN_DEADLINE_MS,
   gentleGrid,
@@ -221,7 +222,7 @@ const VIEW: GentleView = {
 test('gentleGrid: headings Tools, gga, RDD, TDD, each with its item rows', () => {
   const unset = { text: '—', tone: 'subtle' }
   expect(gentleGrid(VIEW)).toEqual([
-    { kind: 'heading', label: 'Tools', summary: { text: 'last updated 4d ago', tone: 'subtle' } },
+    { kind: 'heading', label: 'Tools', summary: { text: 'last updated 4d ago · brew update', tone: 'warning' } },
     { kind: 'item', label: 'gentle-ai', value: { text: '4.0.0' }, detail: { text: '✓', tone: 'success' }, buttons: [] },
     { kind: 'item', label: 'gga', value: { text: '2.10.1' }, detail: { text: '✓', tone: 'success' }, buttons: [] },
     { kind: 'item', label: 'engram', value: { text: '3.3.0' }, detail: { text: '↑ 3.4.0', tone: 'warning' }, buttons: [] },
@@ -538,7 +539,7 @@ test('the Gentle AI section is one grid: headings Tools, gga, RDD, TDD and align
   const tree = await (await mountPane($)).drawn()
   expect(JSON.stringify(tree)).toContain('Gentle AI')
   expect(headingsOf(tree)).toEqual(HEADINGS)
-  expect(cellsOf(tree, 'Tools')).toEqual(['Tools', 'last updated 4d ago'])
+  expect(cellsOf(tree, 'Tools')).toEqual(['Tools', 'last updated 4d ago · brew update'])
   expect(cellsOf(tree, 'gentle-ai')).toEqual(['gentle-ai', '4.0.0', '✓'])
   expect(cellsOf(tree, 'gga')).toEqual(['gga', '2.10.1', '✓'])
   expect(cellsOf(tree, 'engram')).toEqual(['engram', '2.2.1', '↑ 3.3.0'])
@@ -813,4 +814,10 @@ test('ageText: just now, then minutes, hours and days', () => {
   expect(ageText(24 * 60 * MIN)).toBe('1d ago')
   expect(ageText(4 * 24 * 60 * MIN)).toBe('4d ago')
   expect(ageText(-5 * MIN)).toBe('just now')
+})
+
+test('tapSummary: a tap a day or more old adds a brew update hint', () => {
+  expect(tapSummary('just now')).toEqual({ text: 'last updated just now', tone: 'subtle' })
+  expect(tapSummary('23h ago')).toEqual({ text: 'last updated 23h ago', tone: 'subtle' })
+  expect(tapSummary('1d ago')).toEqual({ text: 'last updated 1d ago · brew update', tone: 'warning' })
 })

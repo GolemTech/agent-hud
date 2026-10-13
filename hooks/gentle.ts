@@ -207,6 +207,13 @@ export const ageText = (elapsedMs: number): string => {
   return h < 24 ? `${h}h ago` : `${Math.floor(h / 24)}d ago`
 }
 
+// The Tools heading's summary: a tap a day or more old (an age in days) is
+// likely to hide updates, so it names the command that refreshes it.
+export const tapSummary = (updatedAgo: string): Mark =>
+  /d ago$/.test(updatedAgo)
+    ? { text: `last updated ${updatedAgo} · brew update`, tone: 'warning' }
+    : { text: `last updated ${updatedAgo}`, tone: 'subtle' }
+
 // ── Actions ──────────────────────────────────────────────────────────────
 
 export type GentleAction =
@@ -340,7 +347,7 @@ export const gentleGrid = (g: GentleView): GentleRow[] => {
   rows.push({
     kind: 'heading',
     label: 'Tools',
-    summary: g.updatesKnown && g.updatedAgo ? { text: `last updated ${g.updatedAgo}`, tone: 'subtle' } : null,
+    summary: g.updatesKnown && g.updatedAgo ? tapSummary(g.updatedAgo) : null,
   })
   for (const t of g.tools) item(t.name, t.version ? { text: t.version } : UNSET, toolMark(t, g.updatesKnown))
 
