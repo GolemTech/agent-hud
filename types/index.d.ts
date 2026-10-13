@@ -49,6 +49,8 @@ declare module 'claude-code' {
       settingsOpen: boolean
       /** Sections hidden from the Pane and the band (the settings button, `⋮`), in draw order. */
       hiddenSections: ('session' | 'context' | 'mcp' | 'subagents' | 'todos' | 'gentle')[]
+      /** The glyph the Context meters are drawn with: `line` (━, the default) or `block` (▬). */
+      meterStyle: 'line' | 'block'
     }
   }
 }

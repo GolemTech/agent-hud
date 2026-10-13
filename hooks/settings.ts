@@ -36,17 +36,43 @@ export const settingsLabel = (label: string): string =>
 
 // Rows the block draws at `columns`: the title, the Theme row (its value, the
 // name and `[change]`, wraps inside the cells right of the label column), one
-// row per section check (the first carries the `Sections` label; a check too
-// wide for its cells is cut, never wrapped), `[close]`, and the blank row
+// row per meter style (the first carries the `Meters` label), one row per
+// section check (the first carries the `Sections` label; a choice or check
+// too wide for its cells is cut, never wrapped), `[close]`, and the blank row
 // under the block. No row of the block has a row gap, which would add a blank
-// row between wrapped lines. A check has one width checked or not, so the
-// hidden list never changes the count.
+// row between wrapped lines. A choice or check has one width selected or not,
+// so neither the meter style nor the hidden list changes the count.
 export const settingsRows = (columns: number, themeName: string): number =>
   1 +
   flowRows([themeName.length, CHANGE_TEXT.length], settingsValueCells(columns)) +
+  METER_STYLES.length +
   SECTION_IDS.length +
   1 +
   1
+
+// ── Meter style ──────────────────────────────────────────────────────────
+// The glyph the Context meters are drawn with: `line` (━, the default) or
+// `block` (▬, which some fonts draw with a gap between cells). A view choice;
+// `register.tsx` keeps it in the `meterStyle` atom and its `$.store` copy.
+
+export type MeterStyle = 'line' | 'block'
+
+export const METER_STYLES: readonly MeterStyle[] = ['line', 'block']
+export const DEFAULT_METER_STYLE: MeterStyle = 'line'
+
+// Both glyphs are one cell and one UTF-16 code unit.
+export const METER_GLYPH: Record<MeterStyle, string> = { line: '\u2501', block: '\u25AC' }
+
+// A stored style: a known one, anything else (missing included) the default.
+export const parseMeterStyle = (stored: unknown): MeterStyle =>
+  METER_STYLES.find(s => s === stored) ?? DEFAULT_METER_STYLE
+
+// A style's choice: `[✓ line ━━━]` chosen, `[  block ▬▬▬]` not, the same
+// width either way (as a section check).
+export const meterText = (style: MeterStyle, chosen: boolean): string =>
+  buttonText(`${chosen ? '✓' : ' '} ${style} ${METER_GLYPH[style].repeat(3)}`)
+
+export const meterKey = (style: MeterStyle): string => `meter-${style}`
 
 // ── Hidden sections ──────────────────────────────────────────────────────
 // A hidden section is not drawn at all, collapsed or not (showing it

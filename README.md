@@ -8,7 +8,7 @@ rate limit is left, which MCP servers are connected, what your subagents are
 doing, and the main loop's todo list.
 
 <p align="center">
-  <img src="docs/assets/demo.gif" width="420" alt="Agent HUD sidebar in demo mode: the project header, a Session section with account, model, output style, branch and change counts, context and rate-limit meters, connected MCP servers, subagent cards moving from running to done or failed with their token counts, a todo list ticking off, the Gentle AI tools grid, and the Claude Code version pinned in the footer.">
+  <img src="docs/assets/demo.gif" width="420" alt="Agent HUD sidebar in demo mode: the project header, a Session section with account, model, output style, branch and change counts, context and rate-limit meters, connected MCP servers, subagent cards moving from running to done or failed with their token counts, a todo list ticking off, the Gentle AI tools grid, and the Claude Code version pinned in the footer; then /hud-theme opens the theme picker at the top and the whole sidebar previews nord-light, default and a few dark themes before c cancels back to the saved theme.">
 </p>
 
 The recording uses `/hud-demo` (fictional sample data, no tokens spent) on a
@@ -21,7 +21,7 @@ from the repository root (needs `vhs`, `ffmpeg` and `gifsicle`).
 | --------- | -------- |
 | Header    | Always at the top: the project's name (`📂`, the repository root's folder, else the working directory's, after `🔒` in privacy mode), centered in a full-width band that ends in the `⋮` settings button. |
 | Session   | Session title (or short id), signed-in account, model and effort, output style (when not the default), git branch (`⑂`) with working-tree changes (`+N` added, `-M` removed lines, shown only when there are any), working directory shortened to fit. |
-| Context   | Meters for the context window and each rate-limit window, with time to reset and the local reset time; a footer with total tokens and cost. |
+| Context   | `━` meters (`▬` if chosen in the settings block) for the context window and each rate-limit window, with time to reset and the local reset time; a footer with total tokens and cost. |
 | MCP       | MCP servers, connected first; servers waiting for authentication are dimmed. `[active]` / `[all]` in its header filters the list. |
 | Subagents | Running / done / error counts, then one card per subagent: description, type, model, elapsed time and context tokens. |
 | Todo      | The main loop's task list: done first, then in progress, then pending. |
@@ -64,6 +64,10 @@ To add the marketplace first and install separately:
   `'   ⋮   '`) opens the settings block at the top of the sidebar: the current theme with `[change]` (opens the theme picker) and
   `[close]`. `⋮` again closes it; it opens scrolled to the top, and it never
   shows together with the theme picker (`⋮` closes the picker without saving).
+  `Meters` picks the meter glyph, one choice per line, aligned under the
+  theme name: `[✓ line ━━━]` (the default) or `[  block ▬▬▬]`, for fonts
+  where one draws better than the other; the choice is saved for later
+  sessions and applies to demo mode too.
   `Sections` lists one check per line, aligned under the theme name
   (`[✓ Todo]` shown, `[  Todo]` hidden): an unchecked section is not drawn at all, collapsed or not (showing
   it again restores its collapsed state) and drops its part from the band's summary; hiding Context,
