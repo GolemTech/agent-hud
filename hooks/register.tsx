@@ -25,8 +25,6 @@ import {
   rulesFileOverridden,
   rulesPrompt,
   STRICT_TDD_PROMPT,
-  TAP,
-  ageText,
   TOOLS,
 } from './gentle'
 import type { GentleAction, GentleButton, GentleInfo, GentleRow, GentleView, RddStatus, StrictTdd } from './gentle'
@@ -810,7 +808,6 @@ const readOr = async ($: EngineInterface, path: string): Promise<string | null> 
 const detectGentle = async ($: EngineInterface): Promise<GentleInfo> => {
   const versions: Record<string, string> = {}
   let updates: Record<string, string> | null = null
-  let updatesAsOf: number | null = null
   let root: string | null = null
 
   try {
@@ -843,15 +840,6 @@ const detectGentle = async ($: EngineInterface): Promise<GentleInfo> => {
     updates = parseBrewOutdated(r.stdout)
   } catch {
     updates = null
-  }
-  if (updates) {
-    try {
-      const r = await $.process.run(['brew', '--repository', TAP], { env: BREW_ENV, timeoutMs: BREW_TIMEOUT_MS })
-      const tap = clean(r.stdout).trim()
-      if (r.exitCode === 0 && tap.startsWith('/')) updatesAsOf = (await $.fs.stat(`${tap}/.git/FETCH_HEAD`)).mtimeMs
-    } catch {
-      updatesAsOf = null
-    }
   }
 
   const gga: GentleInfo['gga'] = { hook: null, projectConfig: false, rulesFile: 'AGENTS.md', rules: null }
@@ -919,7 +907,6 @@ const detectGentle = async ($: EngineInterface): Promise<GentleInfo> => {
       update: updates?.[name] ?? null,
     })),
     updatesKnown: updates !== null,
-    updatesAsOf,
     root,
     gga,
     rdd,
@@ -998,14 +985,6 @@ const refreshGentle = async ($: EngineInterface, fresh = false): Promise<void> =
   })()
   gentleRun = run
   return run
-}
-
-export const gentleView = (info: GentleInfo, now: number): GentleView => {
-  const { updatesAsOf, ...rest } = info
-  return {
-    ...rest,
-    updatedAgo: updatesAsOf === null ? null : ageText(now - updatesAsOf),
-  }
 }
 
 // The release (`2.1.296`, `2.1.296-dev`) over a development build's long
@@ -1093,7 +1072,7 @@ const liveView = async ($: EngineInterface, list: AgentRow[]): Promise<HudView> 
     agents: list,
     models: loopModel,
     todos: todoList,
-    gentle: gentleCache && gentleView(gentleCache, now),
+    gentle: gentleCache,
   }
   return masked ? maskView(view) : view
 }
