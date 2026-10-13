@@ -26,6 +26,7 @@ import {
   rulesPrompt,
   STRICT_TDD_PROMPT,
   TAP,
+  ageText,
   TOOLS,
 } from './gentle'
 import type { GentleAction, GentleButton, GentleInfo, GentleRow, GentleView, RddStatus, StrictTdd } from './gentle'
@@ -999,11 +1000,11 @@ const refreshGentle = async ($: EngineInterface, fresh = false): Promise<void> =
   return run
 }
 
-export const gentleView = (info: GentleInfo, now: number, offsetMin: number | null): GentleView => {
+export const gentleView = (info: GentleInfo, now: number): GentleView => {
   const { updatesAsOf, ...rest } = info
   return {
     ...rest,
-    asOf: updatesAsOf === null || offsetMin === null ? null : localClock(updatesAsOf, offsetMin, now),
+    updatedAgo: updatesAsOf === null ? null : ageText(now - updatesAsOf),
   }
 }
 
@@ -1092,7 +1093,7 @@ const liveView = async ($: EngineInterface, list: AgentRow[]): Promise<HudView> 
     agents: list,
     models: loopModel,
     todos: todoList,
-    gentle: gentleCache && gentleView(gentleCache, now, utcOffsetMin),
+    gentle: gentleCache && gentleView(gentleCache, now),
   }
   return masked ? maskView(view) : view
 }
