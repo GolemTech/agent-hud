@@ -15,7 +15,9 @@ let localSettings = LEARNING
 // The engine's bottom for the poller and the Pane. `git diff --shortstat HEAD`
 // reports changes, the project's local settings name an output style, and
 // `prompt.compose` answers an empty section list.
-const answerEngine = (on: On, diff: string) => {
+// `revList` answers `git rev-list --left-right --count HEAD...@{upstream}`;
+// exit code 128 is git's answer for a branch with no upstream.
+const answerEngine = (on: On, diff: string, revList: { stdout: string; exitCode: number } = { stdout: '', exitCode: 128 }) => {
   const clock = mock.clock(on)
   mock.env(on, { HOME })
   on('command.register', () => ({ value: undefined }) as never)
@@ -40,6 +42,8 @@ const answerEngine = (on: On, diff: string) => {
   })
   on('process.run', (_$, e) => {
     const argv = (e as { argv: readonly string[] }).argv.join(' ')
+    if (argv === 'git rev-list --left-right --count HEAD...@{upstream}')
+      return { value: { stdout: revList.stdout, stderr: '', exitCode: revList.exitCode } } as never
     const stdout = argv === 'git branch --show-current' ? `${BRANCH}\n` : argv === 'git diff --shortstat HEAD' ? diff : '+0000\n'
     return { value: { stdout, stderr: '', exitCode: 0 } } as never
   })
@@ -150,5 +154,52 @@ test('a style switch in the settings mid-session shows, back to the default incl
     expect(await text()).toContain('Learning')
   } finally {
     localSettings = LEARNING
+  }
+})
+
+test('the branch row shows commits ahead and behind the upstream, in their roles', async ($, on) => {
+  const clock = answerEngine(on, ' 2 files changed, 63 insertions(+), 55 deletions(-)\n', { stdout: '156\t2\n', exitCode: 0 })
+  await $.session.start({ cwd: CWD, surface: 'terminal', isInteractive: true } as never)
+  await clock.settle()
+  const text = JSON.stringify(await (await mountPane($)).drawn())
+  expect(text).toContain('{"type":"Text","props":{"color":"warning"},"children":[" ↑156"]}')
+  expect(text).toContain('{"type":"Text","props":{"color":"claude"},"children":[" ↓2"]}')
+  // Upstream counts come before the working-tree counts.
+  expect(text.indexOf('↓2')).toBeLessThan(text.indexOf('+63'))
+})
+
+test('only counts above zero show', async ($, on) => {
+  const clock = answerEngine(on, '', { stdout: '0\t4\n', exitCode: 0 })
+  await $.session.start({ cwd: CWD, surface: 'terminal', isInteractive: true } as never)
+  await clock.settle()
+  const text = JSON.stringify(await (await mountPane($)).drawn())
+  expect(text).toContain(' ↓4')
+  expect(text).not.toContain('↑')
+})
+
+test('a branch with no upstream (exit 128) shows no ahead or behind counts', async ($, on) => {
+  const clock = answerEngine(on, '', { stdout: '', exitCode: 128 })
+  await $.session.start({ cwd: CWD, surface: 'terminal', isInteractive: true } as never)
+  await clock.settle()
+  const text = JSON.stringify(await (await mountPane($)).drawn())
+  expect(text).toContain(BRANCH)
+  expect(text).not.toContain('↑')
+  expect(text).not.toContain('↓')
+})
+
+test('demo mode shows the sample branch with its ahead and behind counts', async ($, on) => {
+  const clock = answerEngine(on, '')
+  await $.session.start({ cwd: CWD, surface: 'terminal', isInteractive: true } as never)
+  await clock.settle()
+  const pane = await mountPane($)
+  await $.command.run({ command: 'hud-demo', args: '' } as never)
+  try {
+    await clock.advance(1000)
+    const text = JSON.stringify(await pane.drawn())
+    expect(text).toContain('feat/checkout-v2')
+    expect(text).toContain(' ↑3')
+    expect(text).toContain(' ↓1')
+  } finally {
+    await $.command.run({ command: 'hud-demo', args: '' } as never)
   }
 })
