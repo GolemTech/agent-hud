@@ -31,6 +31,7 @@ const answerEngine = (on: On) => {
   on('session.id', () => ({ value: '0a1b2c3d-4e5f-4a6b-8c7d-9e0f1a2b3c4d' }) as never)
   on('session.model', () => ({ value: 'claude-opus-5-5' }) as never)
   on('session.cwd', () => ({ value: '/home/myuser' }) as never)
+  return open
 }
 
 const mountBand = ($: Engine) =>
@@ -50,20 +51,13 @@ test('isSidebarShown: only an open, placed pane counts', () => {
   expect(isSidebarShown([])).toBe(false)
 })
 
-// Regression: → used to close the pane without the band ever appearing.
-test('→ hides the sidebar, the band shows, and its button brings it back', async ($, on) => {
-  answerEngine(on)
+// Regression: closing the sidebar used to leave no band. The engine's close
+// mark on the Pane frame (or ctrl+x x) closes it: 'hud' leaves the open set.
+test('closing the sidebar shows the band, and its button brings it back', async ($, on) => {
+  const open = answerEngine(on)
   expect(await bandText($)).not.toContain('Agent HUD')
 
-  const pane = await $.ui.mount({
-    plugin: 'agent-hud',
-    surface: 'terminal',
-    component: 'Pane',
-    requestId: 'hud',
-    props: { title: 'Agent HUD', isFocused: false, bodyColumns: 40, placement: 'dock' } as never,
-  })
-  await pane.press({ key: 'hide-sidebar' })
-
+  open.delete('hud')
   const band = await mountBand($)
   const shown = JSON.stringify(await band.drawn())
   expect(shown).toContain('Agent HUD')

@@ -19,10 +19,10 @@ from the repository root (needs `vhs`, `ffmpeg` and `gifsicle`).
 
 | Section   | Contents |
 | --------- | -------- |
-| Header    | Always at the top: the project's name (`📂`, the repository root's folder, else the working directory's), centered in a full-width band that ends in the `►` hide button. |
+| Header    | Always at the top: the project's name (`📂`, the repository root's folder, else the working directory's, after `🔒` in privacy mode), centered in a full-width band that ends in the `⋮` settings button. |
 | Session   | Session title (or short id), signed-in account, model and effort, output style (when not the default), git branch (`⑂`) with working-tree changes (`+N` added, `-M` removed lines, shown only when there are any), working directory shortened to fit. |
 | Context   | Meters for the context window and each rate-limit window, with time to reset and the local reset time; a footer with total tokens and cost. |
-| MCP       | MCP servers, connected first; servers waiting for authentication are dimmed. |
+| MCP       | MCP servers, connected first; servers waiting for authentication are dimmed. `[active]` / `[all]` in its header filters the list. |
 | Subagents | Running / done / error counts, then one card per subagent: description, type, model, elapsed time and context tokens. |
 | Todo      | The main loop's task list: done first, then in progress, then pending. |
 | Gentle AI | The [gentle-ai](https://github.com/Gentleman-Programming/gentle-ai) toolset: one aligned grid in four groups. **Tools**: `gentle-ai`, `gga` and `engram` versions with `✓` up to date or `↑ <newer>` (as fresh as your local brew tap, "as of" its last fetch); **gga**: the review hook and its rules file; **RDD**: receipt-driven development on or off and which scope decides it, then each scope's own setting; **TDD**: test-first by default under ODD, and strict TDD. One status vocabulary throughout: `✓` ok, `✗` missing, `↑` update, `●` on, `○` off, `—` unset, `?` unknown. Shows "gentle-ai not installed" when it is not. |
@@ -60,14 +60,25 @@ To add the marketplace first and install separately:
 ## Usage
 
 - The sidebar opens on session start. `/hud` opens it again at any time.
-- `►` (right end of the header band) hides it. A band above the prompt then shows
-  a one-line summary (`▸ Agent HUD  55% · MCP 3/4 · 2 agents`); click it to
-  reopen the sidebar.
+- `⋮` (right end of the header band, padded to a fixed 7-cell click target,
+  `'   ⋮   '`) opens the settings block at the top of the sidebar: the current theme with `[change]` (opens the theme picker) and
+  `[close]`. `⋮` again closes it; it opens scrolled to the top, and it never
+  shows together with the theme picker (`⋮` closes the picker without saving).
+  `Sections` lists one check per line, aligned under the theme name
+  (`[✓ Todo]` shown, `[  Todo]` hidden): an unchecked section is not drawn at all, collapsed or not (showing
+  it again restores its collapsed state) and drops its part from the band's summary; hiding Context,
+  MCP and Subagents leaves the band with only `▸ Agent HUD`. With every
+  section hidden the sidebar reads `all sections hidden · ⋮ to show`. The
+  choice is saved for later sessions; hidden sections keep being polled, so
+  showing one again is instant.
+- The close mark Claude Code draws on the sidebar's frame (or `ctrl+x x`)
+  hides it. A band above the prompt then shows a one-line summary
+  (`▸ Agent HUD  55% · MCP 3/4 · 2 agents`); click it to reopen the sidebar.
 - Claude Code can collapse that band itself, showing
   `plugin panel hidden · ctrl+x ctrl+a or click to show`. Click it or press
   `ctrl+x ctrl+a` to expand it.
 
-  <img src="docs/assets/hide-reopen.svg" width="760" alt="Hide and reopen loop: one, the sidebar is docked beside the transcript with the hide button at the right end of its header band; two, pressing the hide button closes the sidebar and a one-line band appears above the prompt reading Agent HUD 42% · MCP 3/4 · 2 agents; three, clicking the band or running /hud opens the sidebar again. If Claude Code collapses the band, press ctrl+x ctrl+a.">
+  <img src="docs/assets/hide-reopen.svg" width="760" alt="Hide and reopen loop: one, the sidebar is docked beside the transcript; two, closing it with the close mark on its frame closes the sidebar and a one-line band appears above the prompt reading Agent HUD 42% · MCP 3/4 · 2 agents; three, clicking the band or running /hud opens the sidebar again. If Claude Code collapses the band, press ctrl+x ctrl+a.">
 - `▾` / `▸` on each section header collapses or expands that section.
 - The sidebar adapts to the dock's width and height on every resize: labels
   keep their width and buttons wrap below them, meter bars scale, the
@@ -79,6 +90,10 @@ To add the marketplace first and install separately:
   pulls the scroll back so it never points past the end. In an inline frame
   the sidebar is drawn as one plain flow.
 - `✕ clear done` on Subagents and Todo removes finished entries.
+- `[active]` / `[all]` on the MCP header show only connected servers or every
+  server (the default). Under `active`, a line counts the hidden ones
+  (`1 hidden`), or reads `no active servers · 2 hidden` when none is
+  connected. The choice is saved for later sessions.
 - `/hud-demo` toggles a sample session (fixed data, progressing subagents
   and todos) for demos and screenshots. It spends no tokens and shows no
   personal data; run it again to return to the live session.
@@ -86,7 +101,7 @@ To add the marketplace first and install separately:
   sidebar stays live (model, context, rate limits, cost, MCP, subagents,
   todos), but the account shows as `you@example`, the session title as
   `private session`, the session id is hidden, the branch shows as `••••` and
-  the path and the header's project name as `~/…` and `…`; `🔒 private` next to the Session header shows it is on.
+  the path and the header's project name as `~/…` and `…`; a `🔒` before the project name in the header band shows it is on.
   It persists across plugin reloads until you run it again. MCP server names,
   subagent descriptions and todo text are **not** masked, and can contain
   project or client names. Claude Code's own welcome header and status line are
@@ -110,7 +125,7 @@ To add the marketplace first and install separately:
 
 `/hud-theme` without a name opens a picker at the top of the sidebar, like
 Claude Code's `/theme`, at any terminal width: each theme is listed in its own
-accent color, the saved one marked `●`, and the sections stay drawn below it.
+accent color, the saved one marked `●`, and the sections stay drawn below it. The dark themes come first, then a `light` line, then the light themes. The list shows ten rows at a time, with `↑ N more` / `↓ N more` lines naming the rest; it follows the highlighted theme, and the mouse wheel over the sidebar scrolls it while the picker is open, so the sections below stay in view. `[change]` in the `⋮` settings block opens the same picker.
 Moving through the list previews each theme on the sidebar itself, and it
 wraps around: down from the last theme lands on the first, up from the first
 on the last. Enter (or a click) applies and saves it; `c` (or clicking
@@ -125,13 +140,21 @@ spaces or underscores work for hyphens (`/hud-theme tokyo night`).
 | Theme | Notes |
 | --- | --- |
 | `default` | Claude Code's own theme colors; follows `/theme`, light or dark |
-| `one-dark-pro`, `catppuccin-mocha`, `gruvbox-dark`, `dracula`, `nord`, `tokyo-night`, `solarized-dark`, `rose-pine`, `kanagawa`, `monokai` | Fixed colors from each theme's palette |
+| `one-dark-pro`, `catppuccin-mocha`, `gruvbox-dark`, `dracula`, `nord`, `tokyo-night`, `solarized-dark`, `rose-pine`, `kanagawa`, `monokai` | Dark: fixed colors from each theme's palette |
+| `everforest-dark`, `ayu-dark`, `github-dark`, `catppuccin-macchiato`, `material-ocean`, `night-owl`, `nightfox`, `oceanic-next`, `horizon`, `synthwave-84` | Dark: fixed colors from each theme's palette |
+| `catppuccin-latte`, `solarized-light`, `github-light`, `gruvbox-light`, `one-light`, `rose-pine-dawn`, `ayu-light`, `everforest-light`, `tokyo-night-day`, `nord-light` | Light: fixed colors and the theme's own text color |
 
 The choice is saved and applies to every later session until you change it.
 Each preset also fills the sidebar and the band above the prompt with its
 editor background (for example `#282a36` for `dracula`), and a preview changes
-it too; `default` keeps your terminal's own background. The presets are tuned
-for dark terminals; on a light terminal, use `default`.
+it too; `default` keeps your terminal's own background. A light preset also
+draws plain text in its own text color (for example `#1f2328` for
+`github-light`), so it stays readable whatever your terminal's text color is;
+`default` and the dark presets keep your terminal's text color. Every color
+reads at least 3:1 against its background, and a light theme's text 4.5:1. To
+get there, a few light themes use a darker shade of an upstream color (for
+example `catppuccin-latte`'s yellow); `nord-light` is built from the Nord
+palette, which has no official light variant.
 
 ## How it gets its data
 

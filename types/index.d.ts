@@ -41,6 +41,14 @@ declare module 'claude-code' {
       picker: boolean
       /** The theme the picker's focus ring rests on, drawn over `theme`; null when none. */
       preview: string | null
+      /** The offset of the picker's fixed theme window, in list rows; 0 while it is closed. */
+      pickerScroll: number
+      /** The MCP section's filter: every server, or only the connected ones. */
+      mcpFilter: 'all' | 'active'
+      /** The `⋮` settings block is open at the top of the Pane. */
+      settingsOpen: boolean
+      /** Sections hidden from the Pane and the band (the settings button, `⋮`), in draw order. */
+      hiddenSections: ('session' | 'context' | 'mcp' | 'subagents' | 'todos' | 'gentle')[]
     }
   }
 }

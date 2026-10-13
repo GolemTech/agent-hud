@@ -1,7 +1,7 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <svg xmlns="http://www.w3.org/2000/svg" version="1.1" width="1000" height="500" viewBox="0 0 1000 500" role="img" aria-labelledby="hr-title hr-desc">
   <title id="hr-title">Hide and reopen the Agent HUD sidebar</title>
-  <desc id="hr-desc">A loop of three steps. One: the sidebar is docked beside the transcript, and its header band ends in the hide button. Two: pressing the hide button closes the sidebar, and a one-line band appears above the prompt reading Agent HUD 42% · MCP 3/4 · 2 agents. Three: clicking the band, or running /hud, reopens the sidebar and returns to step one. Side note: if Claude Code collapses the band, press ctrl+x ctrl+a.</desc>
+  <desc id="hr-desc">A loop of three steps. One: the sidebar is docked beside the transcript, and its header band ends in the settings button ⋮. Two: closing the sidebar with the close mark ✕ on its frame, or ctrl+x x, hides it, and a one-line band appears above the prompt reading Agent HUD 42% · MCP 3/4 · 2 agents. Three: clicking the band, or running /hud, reopens the sidebar and returns to step one. Side note: if Claude Code collapses the band, press ctrl+x ctrl+a.</desc>
   <defs>
     <marker id="hr-arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="9" markerHeight="9" orient="auto" markerUnits="userSpaceOnUse">
       <path d="M 0 0 L 10 5 L 0 10 z" fill="#3DD6D0"/>
@@ -46,8 +46,7 @@
   <rect x="246" y="128" width="146" height="186" rx="6" fill="#0B1420" stroke="#2A8C9A" stroke-width="1"/>
   <rect x="252" y="134" width="134" height="22" rx="4" fill="#3DD6D0"/>
   <text class="s" x="260" y="149" style="fill:#0B1420; font-weight:bold;">project</text>
-  <text class="t" x="378" y="150" text-anchor="end" style="fill:#0B1420; font-weight:bold;">►</text>
-  <circle cx="373" cy="145" r="12" fill="none" stroke="#E6EEF5" stroke-width="1.4" stroke-dasharray="3 2"/>
+  <text class="t" x="378" y="150" text-anchor="end" style="fill:#0B1420; font-weight:bold;">⋮</text>
   <text class="s" x="258" y="178">▾ Session</text>
   <text class="s" x="258" y="198">▾ Context</text>
   <rect x="332" y="191" width="50" height="6" rx="3" fill="#22364A"/>
@@ -77,9 +76,9 @@
   <rect x="612" y="282" width="336" height="26" rx="5" fill="#0B1420" stroke="#22364A"/>
   <text class="d" x="622" y="300">&gt; prompt</text>
 
-  <!-- 1 -> 2: press the hide button -->
+  <!-- 1 -> 2: close with the frame's ✕ or ctrl+x x -->
   <path class="flow" d="M 404 170 L 594 170" marker-end="url(#hr-arrow)"/>
-  <text class="lbl" x="499" y="158" text-anchor="middle">press ►</text>
+  <text class="lbl" x="499" y="158" text-anchor="middle">close ✕ / ctrl+x x</text>
   <text class="d" x="499" y="192" text-anchor="middle">the sidebar closes</text>
 
   <!-- 2 -> 1: click the band or /hud -->

@@ -38,7 +38,6 @@ import {
   flowRows,
   gridFor,
   HEADING_INDENT,
-  HIDE_BUTTON,
   ITEM_INDENT,
   layoutFor,
   maxScrollOffset,
@@ -48,17 +47,51 @@ import {
   textRows,
   viewportRowsFor,
 } from './layout'
+import { DEFAULT_MCP_FILTER, filterServers, isMcpFilter, MCP_FILTERS, mcpBodyRows, mcpEmptyText, mcpHiddenText } from './mcp'
+import type { McpFilter } from './mcp'
+import {
+  ALL_HIDDEN_TEXT,
+  CHANGE_TEXT,
+  checkText,
+  CLOSE_TEXT,
+  parseHidden,
+  SECTION_IDS,
+  sectionKey,
+  SETTINGS_BUTTON,
+  SETTINGS_BUTTON_CELLS,
+  SETTINGS_CHANGE,
+  SETTINGS_CLOSE,
+  SETTINGS_KEY,
+  SETTINGS_LABEL_CELLS,
+  SETTINGS_TITLE,
+  settingsLabel,
+  settingsRows,
+  settingsValueCells,
+  summaryParts,
+  toggleHidden,
+  visibleSections,
+} from './settings'
+import type { SectionId } from './settings'
 import { clean } from './text'
 import {
   DEFAULT_THEME,
+  clampPickerScroll,
+  fg,
   isThemeName,
+  LIGHT_SEPARATOR,
+  moreText,
   parseThemeArg,
   PICKER_CANCEL,
   PICKER_FOCUS_RETRY_MS,
+  PICKER_LIST,
+  PICKER_LIST_ROWS,
+  PICKER_WINDOW,
+  pickerMore,
   pickerOrder,
+  pickerRowOf,
   pickerRows,
+  scrollToRow,
   shownTheme,
-  THEME_NAMES,
   themeFromKey,
   themeKey,
   themeList,
@@ -72,8 +105,6 @@ import { isSupportedVersion, unsupportedMessage } from './version'
 export { clean }
 
 const PANE = 'hud'
-
-type SectionId = 'session' | 'context' | 'mcp' | 'subagents' | 'todos' | 'gentle'
 
 // ── Todos ────────────────────────────────────────────────────────────────
 // No `$` accessor holds the task list, so the pane mirrors it from the
@@ -345,10 +376,26 @@ const scrollOffset = atom({ plugin: 'agent-hud', key: 'scroll' } as const, 0)
 // and loaded at session start; both surfaces read it to color their roles.
 const themeName = atom({ plugin: 'agent-hud', key: 'theme' } as const, DEFAULT_THEME as string)
 const THEME_KEY = 'theme'
-// `/hud-theme` with no name: the picker replaces the Pane's sections, and the
-// theme its focus ring rests on (`ui.focus`) is drawn until a press or Cancel.
+// The MCP section's `active` / `all` filter, kept in `$.store` under
+// MCP_FILTER_KEY and loaded at session start; `all` until one is chosen.
+const mcpFilter = atom({ plugin: 'agent-hud', key: 'mcpFilter' } as const, DEFAULT_MCP_FILTER as McpFilter)
+const MCP_FILTER_KEY = 'mcpFilter'
+// `/hud-theme` with no name: the picker is drawn above the Pane's sections
+// (never with the settings block), and the theme its focus ring rests on
+// (`ui.focus`) is drawn until a press or Cancel.
 const pickerOpen = atom({ plugin: 'agent-hud', key: 'picker' } as const, false)
 const previewName = atom({ plugin: 'agent-hud', key: 'preview' } as const, null as string | null)
+// The offset of the picker's fixed theme window, in list rows: the focus ring
+// and the wheel move it while the picker is open; 0 once it closes.
+const pickerScroll = atom({ plugin: 'agent-hud', key: 'pickerScroll' } as const, 0)
+// `⋮` in the header: the settings block is open at the top of the Pane. Not
+// kept in `$.store`; `session.start` closes it.
+const settingsOpen = atom({ plugin: 'agent-hud', key: 'settingsOpen' } as const, false)
+// Sections hidden from the Pane and the band, kept in `$.store` under
+// HIDDEN_KEY and loaded at session start; none until one is chosen. A view
+// choice: hidden sections are still polled.
+const hiddenSections = atom({ plugin: 'agent-hud', key: 'hiddenSections' } as const, [] as SectionId[])
+const HIDDEN_KEY = 'hiddenSections'
 // The last offset the latest sticky render allowed; null while the Pane is
 // drawn in the plain flow (inline, or no body height), where the engine scrolls.
 let scrollMax: number | null = null
@@ -643,14 +690,15 @@ export const agentCounts = (list: readonly { status: string }[]): AgentCounts =>
   return { run, done, err, total: list.length }
 }
 
-// One-line digest shown in the collapsed-sidebar band above the prompt.
+// One-line digest shown in the collapsed-sidebar band above the prompt; the
+// parts of hidden sections are left out, and '' when all three are.
 export const summaryLine = (
   percent: number | undefined,
   connected: number,
   total: number,
   agents: number,
-): string =>
-  `${percent === undefined ? '–' : Math.round(percent)}% · MCP ${connected}/${total} · ${agents} agents`
+  hidden: readonly SectionId[] = [],
+): string => summaryParts(percent, connected, total, agents, hidden).join(' · ')
 
 // ── View ─────────────────────────────────────────────────────────────────
 // Everything the Pane and the band display, assembled from the live sources
@@ -1024,18 +1072,29 @@ const activePalette = async ($: EngineInterface, hasKeys = true) => {
 // without one (default) draws exactly as before, on the terminal's own.
 const fill = (t: Palette): { backgroundColor?: string } => (t.background ? { backgroundColor: t.background } : {})
 
-// The sidebar header's hide Button: the element drawn right before the
-// picker, so the carousel's ring order starts there.
-const HIDE_KEY = 'hide-sidebar'
-const PICKER_ORDER = pickerOrder(HIDE_KEY)
+// The sidebar header's ⋮ Button is its only Button: the element drawn right
+// before the picker, so the carousel's ring order starts there.
+const PICKER_ORDER = pickerOrder(SETTINGS_KEY)
 // The picker element the ring last rested on (`ui.focus`), for the carousel.
 // Module-level: a reload forgets it, and the next move is then a plain one.
 let pickerLastFocus: string | null = null
+
+// Sets the MCP filter at once and keeps it for later sessions; a failed save
+// still applies it to this session.
+const setMcpFilter = async ($: EngineInterface, mode: McpFilter): Promise<void> => {
+  await update($, mcpFilter, () => mode)
+  try {
+    await $.store.set(MCP_FILTER_KEY, mode)
+  } catch {
+    // this session keeps it
+  }
+}
 
 // Leaves the picker: no preview, the sections back.
 const closePicker = async ($: EngineInterface): Promise<void> => {
   pickerLastFocus = null
   await update($, previewName, () => null)
+  await update($, pickerScroll, () => 0)
   await update($, pickerOpen, () => false)
 }
 
@@ -1053,6 +1112,53 @@ const refocusPicker = async ($: EngineInterface): Promise<void> => {
     if (await read($, pickerOpen)) await openForPicker($)
   } catch {
     // the person can still take the keys with ctrl+x tab or a click
+  }
+}
+
+// Opens the picker above the sections: no settings block (the two are never
+// drawn together), no preview, the scroll at the top so the block is in
+// view, and the HUD's own Pane asked for the keys now and again once the
+// command returned. `/hud-theme` and the block's `[change]` both start here.
+const startPicker = async ($: EngineInterface): Promise<void> => {
+  await update($, settingsOpen, () => false)
+  await update($, previewName, () => null)
+  await update($, scrollOffset, () => 0)
+  // The window opens with the saved theme in view.
+  const saved = await read($, themeName)
+  const row = pickerRowOf(isThemeName(saved) ? saved : DEFAULT_THEME)
+  await update($, pickerScroll, () => scrollToRow(0, row, PICKER_LIST_ROWS, PICKER_WINDOW))
+  pickerLastFocus = null
+  await update($, pickerOpen, () => true)
+  try {
+    await openForPicker($)
+  } catch {
+    // refused now: the retry below asks again
+  }
+  $.clock.after(PICKER_FOCUS_RETRY_MS, () => void refocusPicker($))
+}
+
+// `⋮`: closes the settings block, or opens it with the scroll at the top
+// (drawn above the sections, it is otherwise out of view when scrolled),
+// first closing the picker without saving.
+const toggleSettings = async ($: EngineInterface): Promise<void> => {
+  if (await read($, settingsOpen)) {
+    await update($, settingsOpen, () => false)
+    return
+  }
+  if (await read($, pickerOpen)) await closePicker($)
+  await update($, scrollOffset, () => 0)
+  await update($, settingsOpen, () => true)
+}
+
+// A section check: hides or shows one section at once and keeps the choice
+// for later sessions; a failed save still applies it to this session. Never
+// touches `collapsed`, so a section shown again comes back as it was.
+const toggleSection = async ($: EngineInterface, id: SectionId): Promise<void> => {
+  const next = await update($, hiddenSections, prev => toggleHidden(parseHidden(prev), id))
+  try {
+    await $.store.set(HIDDEN_KEY, next)
+  } catch {
+    // this session keeps it
   }
 }
 
@@ -1113,11 +1219,31 @@ export const register: Register = on => {
     } catch {
       // keep the theme this session already has
     }
+    // The MCP filter chosen in an earlier session; missing or unknown is `all`.
+    try {
+      const stored = await $.store.get(MCP_FILTER_KEY)
+      await update($, mcpFilter, () => (isMcpFilter(stored) ? stored : DEFAULT_MCP_FILTER))
+    } catch {
+      // keep the filter this session already has
+    }
+    // The sections hidden in an earlier session; missing or invalid is none.
+    try {
+      const stored = await $.store.get(HIDDEN_KEY)
+      await update($, hiddenSections, () => parseHidden(stored))
+    } catch {
+      // keep the sections this session already hides
+    }
     // A new session starts with no picker and no preview.
     try {
       await closePicker($)
     } catch {
       // the next press or Cancel clears them
+    }
+    // ... and with the settings block closed.
+    try {
+      await update($, settingsOpen, () => false)
+    } catch {
+      // the next ⋮ or [close] closes it
     }
     await $.command.register({
       name: 'hud-theme',
@@ -1381,12 +1507,7 @@ export const register: Register = on => {
       // runs: the keys are asked for again once it returned. The text list
       // stays for a session that places no panes.
       try {
-        await update($, previewName, () => null)
-        await update($, scrollOffset, () => 0)
-        pickerLastFocus = null
-        await update($, pickerOpen, () => true)
-        await openForPicker($)
-        $.clock.after(PICKER_FOCUS_RETRY_MS, () => void refocusPicker($))
+        await startPicker($)
       } catch {
         // the list below still answers
       }
@@ -1422,6 +1543,12 @@ export const register: Register = on => {
       }
       const name = open && ours ? themeFromKey(target) : null
       if (name !== current) await update($, previewName, () => name)
+      // The fixed window follows the ring: the focused theme is kept in view
+      // with the least move, so a wrap lands the window at that end.
+      if (name) {
+        const row = pickerRowOf(name)
+        await update($, pickerScroll, prev => scrollToRow(prev, row, PICKER_LIST_ROWS, PICKER_WINDOW))
+      }
     } catch {
       target = e.element // any failure: the move stands as it is
     }
@@ -1429,7 +1556,7 @@ export const register: Register = on => {
   }).catch((_$, e, next) => next(e))
 
   // Hidden-sidebar band: shown above the prompt whenever the pane is not on
-  // screen (closed by → or its ✕, or open but unplaced on a narrow terminal),
+  // screen (closed by its ✕ or ctrl+x x, or open but unplaced on a narrow terminal),
   // with a button that reopens it. It asks the engine itself through
   // `$.ui.panes()` rather than tracking opens and closes: a plugin's own
   // `$.ui.close` is not seen by its own `ui.close` hook, and a state write
@@ -1451,6 +1578,15 @@ export const register: Register = on => {
     }
     const view = await hudView($, list)
     const connected = view.servers.filter(s => s.connected).length
+    // Hidden sections leave their part out; with none left, no summary Text
+    // (an empty one would still take a gap).
+    const summary = summaryLine(
+      view.contextPercent,
+      connected,
+      view.servers.length,
+      view.agents.length,
+      parseHidden(await read($, hiddenSections)),
+    )
 
     return (
       <Box flexWrap="wrap" gap={1} {...fill(t)}>
@@ -1464,9 +1600,11 @@ export const register: Register = on => {
             </Text>
           </Button>
         </Box>
-        <Text wrap="truncate-end" color={t.subtle}>
-          {summaryLine(view.contextPercent, connected, view.servers.length, view.agents.length)}
-        </Text>
+        {summary !== '' && (
+          <Text wrap="truncate-end" color={t.subtle}>
+            {summary}
+          </Text>
+        )}
       </Box>
     )
   })
@@ -1476,6 +1614,12 @@ export const register: Register = on => {
   // (raised at its edges too) shift the content box by `e.by` instead. An
   // observer: the engine's move is forwarded untouched.
   on('ui.scroll', { component: 'Pane', requestId: PANE }, async ($, e, next) => {
+    // While the picker is open the wheel moves its theme window instead.
+    if (await read($, pickerOpen)) {
+      const by = e.by
+      await update($, pickerScroll, prev => clampPickerScroll(prev + by, PICKER_LIST_ROWS, PICKER_WINDOW))
+      return next(e)
+    }
     const max = scrollMax
     if (max !== null) {
       const by = e.by
@@ -1503,6 +1647,10 @@ export const register: Register = on => {
     const c = await read($, collapsed)
     const view = await hudView($, await read($, rows))
     const { servers, footer, agents: list } = view
+    // MCP filter: `active` hides servers waiting on auth (`mcp.ts`).
+    const mcpMode = await read($, mcpFilter)
+    const mcp = filterServers(servers, isMcpFilter(mcpMode) ? mcpMode : DEFAULT_MCP_FILTER)
+    const mcpButtons = MCP_FILTERS.map(mode => ({ mode, text: buttonText(mode, mode === mcpMode) }))
     const ms = view.meters
     const counts = agentCounts(list)
     const todoList = orderTodos(view.todos)
@@ -1515,7 +1663,7 @@ export const register: Register = on => {
     // 🤖 Opus 5.5 · medium — the same line for the session and each subagent.
     const modelLine = (m: ModelInfo | undefined, indent = '') =>
       m && (
-        <Text wrap="truncate-end">
+        <Text wrap="truncate-end" {...fg(t)}>
           {indent}🤖 <Text bold color={t.warning}>{prettyModel(m.model)}</Text>
           {m.effort !== undefined && <Text color={t.subtle}> · {String(m.effort)}</Text>}
         </Text>
@@ -1542,8 +1690,6 @@ export const register: Register = on => {
       </Box>
     )
     const headerWidth = (id: SectionId, label: string) => sectionTitle(headerText(id, label)).length
-    // Header extras, measured for the rule: `🔒` is two cells and two code units.
-    const PRIVATE_BADGE = '🔒 private'
     const CLEAR_DONE = '✕ clear done'
     const REFRESH = '↻'
     // The `───` that closes a header row, sized to what its items leave.
@@ -1633,7 +1779,7 @@ export const register: Register = on => {
                   </Text>
                 </Box>
                 {r.summary && (
-                  <Text wrap="truncate-end" color={r.summary.tone && t[r.summary.tone]}>
+                  <Text wrap="truncate-end" color={r.summary.tone ? t[r.summary.tone] : t.foreground}>
                     {r.summary.text}
                   </Text>
                 )}
@@ -1644,10 +1790,10 @@ export const register: Register = on => {
                   <Text color={t.subtle}>{`${' '.repeat(ITEM_INDENT)}${r.label}`.padEnd(grid.label)}</Text>
                 </Box>
                 <Box flexShrink={0}>
-                  <Text color={r.value.tone && t[r.value.tone]}>{r.value.text.padEnd(grid.value)}</Text>
+                  <Text color={r.value.tone ? t[r.value.tone] : t.foreground}>{r.value.text.padEnd(grid.value)}</Text>
                 </Box>
                 {r.detail && (
-                  <Text wrap="truncate-end" color={r.detail.tone && t[r.detail.tone]}>
+                  <Text wrap="truncate-end" color={r.detail.tone ? t[r.detail.tone] : t.foreground}>
                     {r.detail.text}
                   </Text>
                 )}
@@ -1690,74 +1836,43 @@ export const register: Register = on => {
     const todosHeader = todoList.length > 0 ? `Todo ${todoDone}/${todoList.length}` : 'Todo'
     const CLEAR = '✕ clear done'.length
 
-    // Rows the scrolled sections take at this width: the same rows the tree
-    // below draws, measured with the wrapping helpers. Ink wraps words, so a
-    // long text can take a row more than estimated; the bottom margin of the
-    // scroll absorbs one.
-    const section = (id: SectionId, headerRows: number, bodyRows: number) => 1 + headerRows + (c[id] ? 0 : bodyRows)
+    // Rows a section draws without its margin row: its header, and its body
+    // unless collapsed.
+    const rowsOf = (id: SectionId, headerRows: number, bodyRows: number) => headerRows + (c[id] ? 0 : bodyRows)
+    // Hidden sections (the settings button, `⋮`): not drawn, not counted.
+    const hidden = parseHidden(await read($, hiddenSections))
+    const visible = visibleSections(hidden)
+    // Only the first drawn section has no blank row above it.
+    const margin = (id: SectionId): { marginTop?: number } => (id === visible[0] ? {} : { marginTop: 1 })
     const cardList = displayRows(list)
     const picking = await read($, pickerOpen)
-    const contentRows =
-      (picking ? pickerRows(hasKeys) : 0) +
-      flowRows([headerText('session', 'Session').length, ...(view.private ? [10] : [])], W) +
-      (c.session
-        ? 0
-        : 1 + // title · id
-          (view.account ? 1 : 0) +
-          1 + // model
-          (view.outputStyle ? 1 : 0) +
-          (branch ? flowRows([2 + branch.length, ...(changeText ? [changeText.length] : [])], W, 0) : 0) +
-          1) + // path
-      section(
-        'context',
-        1,
-        ms.length === 0 && !footer
-          ? 1
-          : ms.reduce((n, m) => n + flowRows([meterHead, ...(m.note ? [meterNote(m)] : [])], W, 0), 0) +
-              (footer ? textRows(footer.length, W) : 0),
-      ) +
-      section('mcp', 1, Math.max(1, servers.length)) +
-      section(
-        'subagents',
-        flowRows([headerText('subagents', 'Subagents').length, ...(counts.done + counts.err > 0 ? [CLEAR] : [])], W),
-        1, // the tally
-      ) +
-      section(
-        'todos',
-        flowRows([headerText('todos', todosHeader).length, ...(todoDone > 0 ? [CLEAR] : [])], W),
-        todoList.length === 0 ? 1 : todoList.reduce((n, t) => n + textRows(4 + t.content.length, W), 0),
-      ) +
-      section('gentle', flowRows([headerText('gentle', 'Gentle AI').length, 1], W), gentleRows(view.gentle ?? null)) +
-      // Every card is drawn (the content scrolls); one without a model line is a row shorter.
-      (c.subagents ? 0 : cardList.reduce((n, r) => n + (view.models.get(r.id) ? CARD_ROWS : CARD_ROWS - 1), 0))
+    // `⋮` settings block: never drawn with the picker.
+    const settingsShown = !picking && (await read($, settingsOpen))
+    const savedTheme = await read($, themeName)
+    const shownName: ThemeName = isThemeName(savedTheme) ? savedTheme : DEFAULT_THEME
 
-    // Sticky header: the project's name, and → which hides the sidebar,
-    // right under the pane's ✕ (the frame row itself is the engine's). The
-    // dock cannot be forced narrower (a width the person set wins over
-    // `columns`), so hiding goes to the band above the prompt, which reopens
-    // it. The name's Box takes the line less the button and its gap, so the
-    // row never wraps and a long name truncates.
-    // One band: the centered name and, at its right end, a solid ► that hides
-    // the sidebar, drawn inverse too and with no gap so both read as one bar.
-    // (The pane's ✕ is the engine's frame and cannot move into it.) A blank
-    // row below keeps the band apart from the first section.
-    const bandWidth = Math.max(1, W - HIDE_BUTTON.length)
+    // Sticky header: the project's name in a full-width inverse band that
+    // ends in ⋮, the settings button (the glyph padded by three spaces each
+    // side, a fixed 7-cell click target), drawn
+    // inverse too with no gap so both read as one bar. Closing the sidebar is the engine's own close mark on
+    // the frame (or ctrl+x x); the band above the prompt then reopens it.
+    // The name's Box takes the line less the button (SETTINGS_BUTTON_CELLS), so
+    // the row never wraps and a long name truncates. A blank row below keeps
+    // the band apart from the first section.
+    // Privacy mode prefixes 🔒 to the name, so it is seen whatever is hidden.
+    const bandWidth = Math.max(1, W - SETTINGS_BUTTON_CELLS)
     const headerRow = (
       <Box flexDirection="column" flexShrink={0} marginBottom={1}>
         <Box flexWrap="wrap">
           <Box width={bandWidth} flexShrink={0}>
             <Text bold inverse color={t.accent} wrap="truncate-end">
-              {centerBand(`📂 ${view.project ?? projectName(view.cwd)}`, bandWidth)}
+              {centerBand(`${view.private ? '🔒 ' : ''}📂 ${view.project ?? projectName(view.cwd)}`, bandWidth)}
             </Text>
           </Box>
           <Box flexShrink={0}>
-            <Button
-              key={HIDE_KEY}
-              plain
-              onPress={() => void $.ui.close({ id: PANE })}
-            >
+            <Button key={SETTINGS_KEY} plain onPress={() => void toggleSettings($)}>
               <Text bold inverse color={t.accent}>
-                {HIDE_BUTTON}
+                {SETTINGS_BUTTON}
               </Text>
             </Button>
           </Box>
@@ -1768,10 +1883,10 @@ export const register: Register = on => {
     // Sticky footer: the Claude Code version the session runs on.
     const footerRow = versionCache ? (
       <Box flexDirection="column" flexShrink={0} marginTop={1}>
-        <Text wrap="truncate-end">
+        <Text wrap="truncate-end" {...fg(t)}>
           <Text color={t.success}>● </Text>
           <Text color={t.subtle}>Claude</Text>
-          <Text bold>Code</Text>
+          <Text bold {...fg(t)}>Code</Text>
           <Text color={t.subtle}>{` ${versionCache}`}</Text>
         </Text>
       </Box>
@@ -1781,7 +1896,35 @@ export const register: Register = on => {
     // it so they are seen recoloring. One row per theme in its own accent, the
     // saved one marked and focused first; `ui.focus` previews the theme the
     // ring rests on, a press saves it, Cancel only closes the block.
-    const savedTheme = await read($, themeName)
+    // The theme rows: every theme Button in ring order, the `light` separator
+    // a plain Text before the first light one, so the focus ring (and the
+    // carousel's order) steps from the last dark theme to the first light.
+    // Past PICKER_WINDOW rows they draw in a clipped window shifted by
+    // `pickerScroll` (the focus hook keeps the focused one in view), with an
+    // indicator row above and below naming the rows hidden on that side.
+    const themeRows = PICKER_LIST.map(name =>
+      name === null ? (
+        <Text wrap="truncate-end" color={t.subtle}>
+          {`  ${LIGHT_SEPARATOR}`}
+        </Text>
+      ) : (
+        <Box flexShrink={0}>
+          <Button
+            key={themeKey(name)}
+            plain
+            autoFocus={name === savedTheme || undefined}
+            onPress={() => void finishPicker($, name)}
+          >
+            <Text wrap="truncate-end" color={THEMES[name].accent}>
+              {`${name === savedTheme ? '●' : ' '} ${name}`}
+            </Text>
+          </Button>
+        </Box>
+      ),
+    )
+    const pickerFits = PICKER_LIST_ROWS <= PICKER_WINDOW
+    const pickerOffset = clampPickerScroll(await read($, pickerScroll), PICKER_LIST_ROWS, PICKER_WINDOW)
+    const more = pickerMore(pickerOffset, PICKER_LIST_ROWS, PICKER_WINDOW)
     const picker = (
       <Box flexDirection="column" flexShrink={0} marginBottom={1}>
         <Text wrap="truncate-end" color={t.subtle}>
@@ -1792,20 +1935,21 @@ export const register: Register = on => {
             Keys elsewhere: ctrl+x tab or a click focuses the HUD
           </Text>
         )}
-        {THEME_NAMES.map(name => (
-          <Box flexShrink={0}>
-            <Button
-              key={themeKey(name)}
-              plain
-              autoFocus={name === savedTheme || undefined}
-              onPress={() => void finishPicker($, name)}
-            >
-              <Text wrap="truncate-end" color={THEMES[name].accent}>
-                {`${name === savedTheme ? '●' : ' '} ${name}`}
-              </Text>
-            </Button>
-          </Box>
-        ))}
+        {pickerFits
+          ? themeRows
+          : [
+              <Text wrap="truncate-end" color={t.subtle}>
+                {moreText('up', more.above) || ' '}
+              </Text>,
+              <Box flexDirection="column" flexShrink={0} height={PICKER_WINDOW} overflow="hidden">
+                <Box flexDirection="column" flexShrink={0} marginTop={0 - pickerOffset}>
+                  {themeRows}
+                </Box>
+              </Box>,
+              <Text wrap="truncate-end" color={t.subtle}>
+                {moreText('down', more.below) || ' '}
+              </Text>,
+            ]}
         <Box flexShrink={0}>
           <Button key={PICKER_CANCEL} plain hotkey="c" onPress={() => void finishPicker($, null)}>
             <Text color={t.subtle}>{'  Cancel'}</Text>
@@ -1814,234 +1958,384 @@ export const register: Register = on => {
       </Box>
     )
 
-    const sections = [
-        ...(picking ? [picker] : []),
-        <Box flexDirection="column">
-          <Box gap={1} flexWrap="wrap">
-            {header('session', 'Session')}
-            {view.private && (
-              <Box flexShrink={0}>
-                <Text color={t.warning}>{PRIVATE_BADGE}</Text>
-              </Box>
-            )}
-            {view.private
-              ? rule(headerWidth('session', 'Session'), PRIVATE_BADGE.length)
-              : rule(headerWidth('session', 'Session'))}
-          </Box>
-          {!c.session && (
-            <Text wrap="truncate-end">
-              {view.title && <Text bold>{view.title}</Text>}
-              <Text color={t.subtle}>
-                {view.title && view.sessionId && ' · '}
-                {view.sessionId.slice(0, 8)}
-              </Text>
-            </Text>
-          )}
-          {!c.session && view.account && (
-            <Text wrap="truncate-end">
-              👤 <Text bold>{view.account}</Text>
-            </Text>
-          )}
-          {!c.session && modelLine(view.mainModel)}
-          {!c.session && view.outputStyle && (
-            <Text wrap="truncate-end">
-              🎭 <Text color={t.accent}>{view.outputStyle}</Text>
-            </Text>
-          )}
-          {!c.session && branch && (
-            <Box flexWrap="wrap">
-              <Box>
-                <Text wrap="truncate-end">
-                  <Text bold color={t.accent}>
-                    {BRANCH_ICON}
-                  </Text>{' '}
-                  <Text bold>{branch}</Text>
+    // `⋮` settings block: above the sections, which stay drawn below it; never
+    // with the picker (`settingsShown`). Every row is a label cell of one
+    // fixed width (`SETTINGS_LABEL_CELLS`) and a value cell holding exactly
+    // the rest of the line, both `flexShrink={0}`, so the row (`flexWrap`, as
+    // every label row) never wraps and the Theme value and each check start in
+    // one column. Only the Theme value wraps, inside its cell and with
+    // `columnGap` (never `gap`, whose row gap is a blank row between wrapped
+    // lines). Its rows are counted by `settingsRows`: keep the two in step.
+    const valueCells = settingsValueCells(W)
+    const settingsRow = (label: string, value: JSX.Element | JSX.Element[], wrap = false) => (
+      <Box flexWrap="wrap">
+        <Box flexShrink={0} width={SETTINGS_LABEL_CELLS}>
+          <Text color={t.subtle}>{settingsLabel(label)}</Text>
+        </Box>
+        <Box flexShrink={0} width={valueCells} {...(wrap ? { flexWrap: 'wrap', columnGap: 1 } : {})}>
+          {value}
+        </Box>
+      </Box>
+    )
+    const settingsBlock = (
+      <Box flexDirection="column" flexShrink={0} marginBottom={1}>
+        <Text bold color={t.accent}>
+          {SETTINGS_TITLE}
+        </Text>
+        {settingsRow(
+          'Theme',
+          [
+            <Box>
+              <Text wrap="truncate-end" {...fg(t)}>{shownName}</Text>
+            </Box>,
+            <Box>
+              <Button key={SETTINGS_CHANGE} plain onPress={() => void startPicker($)}>
+                <Text wrap="truncate-end" color={t.accent}>
+                  {CHANGE_TEXT}
                 </Text>
-              </Box>
-              {changeText ? (
-                <Box flexShrink={0}>
-                  <Text>
-                    {view.changes && view.changes.added > 0 && <Text color={t.success}>{` +${view.changes.added}`}</Text>}
-                    {view.changes && view.changes.removed > 0 && <Text color={t.error}>{` -${view.changes.removed}`}</Text>}
+              </Button>
+            </Box>,
+          ],
+          true,
+        )}
+        {/* onPress returns toggleSection's promise (no `void`), so a press
+            that awaits it sees a failure toggleSection did not catch. */}
+        {SECTION_IDS.map((id, i) => {
+          const shown = !hidden.includes(id)
+          return settingsRow(
+            i === 0 ? 'Sections' : '',
+            <Button key={sectionKey(id)} plain onPress={() => toggleSection($, id)}>
+              <Text wrap="truncate-end" bold={shown} color={shown ? t.success : t.accent}>
+                {checkText(id, shown)}
+              </Text>
+            </Button>,
+          )
+        })}
+        <Box flexShrink={0} paddingLeft={ITEM_INDENT}>
+          <Button key={SETTINGS_CLOSE} plain onPress={() => void update($, settingsOpen, () => false)}>
+            <Text color={t.accent}>{CLOSE_TEXT}</Text>
+          </Button>
+        </Box>
+      </Box>
+    )
+
+    // One item per section: every row it draws (subagent cards included) and
+    // its tree, so the count and the tree read the same items and cannot
+    // drift (as `gentleGrid` feeds both the Gentle AI tree and `gentleRows`).
+    // A missing section, or one missing `rows` or `node`, is a compile error.
+    const cardRows = cardList.reduce((n, r) => n + (view.models.get(r.id) ? CARD_ROWS : CARD_ROWS - 1), 0)
+    const sectionItems = {
+      session: {
+        rows: rowsOf(
+          'session',
+          flowRows([headerText('session', 'Session').length], W),
+          1 + // title · id
+            (view.account ? 1 : 0) +
+            1 + // model
+            (view.outputStyle ? 1 : 0) +
+            (branch ? flowRows([2 + branch.length, ...(changeText ? [changeText.length] : [])], W, 0) : 0) +
+            1, // path
+        ),
+        node: (
+          <Box {...margin('session')} flexDirection="column">
+            <Box gap={1} flexWrap="wrap">
+              {header('session', 'Session')}
+              {rule(headerWidth('session', 'Session'))}
+            </Box>
+            {!c.session && (
+              <Text wrap="truncate-end" {...fg(t)}>
+                {view.title && <Text bold {...fg(t)}>{view.title}</Text>}
+                <Text color={t.subtle}>
+                  {view.title && view.sessionId && ' · '}
+                  {view.sessionId.slice(0, 8)}
+                </Text>
+              </Text>
+            )}
+            {!c.session && view.account && (
+              <Text wrap="truncate-end" {...fg(t)}>
+                👤 <Text bold {...fg(t)}>{view.account}</Text>
+              </Text>
+            )}
+            {!c.session && modelLine(view.mainModel)}
+            {!c.session && view.outputStyle && (
+              <Text wrap="truncate-end" {...fg(t)}>
+                🎭 <Text color={t.accent}>{view.outputStyle}</Text>
+              </Text>
+            )}
+            {!c.session && branch && (
+              <Box flexWrap="wrap">
+                <Box>
+                  <Text wrap="truncate-end" {...fg(t)}>
+                    <Text bold color={t.accent}>
+                      {BRANCH_ICON}
+                    </Text>{' '}
+                    <Text bold {...fg(t)}>{branch}</Text>
                   </Text>
                 </Box>
-              ) : null}
-            </Box>
-          )}
-          {!c.session &&
-            (() => {
-              // The drawable width less the 📁 glyph (two cells + space).
-              const { parent, leaf } = shortPath(view.cwd, view.home, W - 3)
-              return (
-                <Text wrap="truncate-start">
-                  📁 <Text color={t.subtle}>{parent}</Text>
-                  <Text bold>{leaf}</Text>
-                </Text>
-              )
-            })()}
-        </Box>,
-
-        <Box marginTop={1} flexDirection="column">
-          <Box gap={1} flexWrap="wrap">
-            {header('context', 'Context')}
-            {rule(headerWidth('context', 'Context'))}
-          </Box>
-          {!c.context && ms.length === 0 && !footer && <Text color={t.subtle}>no usage yet</Text>}
-          {!c.context &&
-            ms.map(m => {
-              const [filled, empty] = barCells(m.percent, L.barWidth)
-              return (
-                <Box flexWrap="wrap">
+                {changeText ? (
                   <Box flexShrink={0}>
-                    <Text>
-                      <Text color={t.subtle}>{m.label.padEnd(4)}</Text>
-                      <Text color={t[meterColor(m.percent)]}>{'━'.repeat(filled)}</Text>
-                      <Text color={t.subtle} dimColor>
-                        {'━'.repeat(empty)}
-                      </Text>
-                      {` ${Math.round(m.percent)}%`.padStart(5)}
+                    <Text {...fg(t)}>
+                      {view.changes && view.changes.added > 0 && <Text color={t.success}>{` +${view.changes.added}`}</Text>}
+                      {view.changes && view.changes.removed > 0 && <Text color={t.error}>{` -${view.changes.removed}`}</Text>}
                     </Text>
                   </Box>
-                  {m.note ? (
-                    <Box>
-                      <Text wrap="truncate-end" color={t.subtle}>
-                        {m.note}
+                ) : null}
+              </Box>
+            )}
+            {!c.session &&
+              (() => {
+                // The drawable width less the 📁 glyph (two cells + space).
+                const { parent, leaf } = shortPath(view.cwd, view.home, W - 3)
+                return (
+                  <Text wrap="truncate-start" {...fg(t)}>
+                    📁 <Text color={t.subtle}>{parent}</Text>
+                    <Text bold {...fg(t)}>{leaf}</Text>
+                  </Text>
+                )
+              })()}
+          </Box>
+        ),
+      },
+      context: {
+        rows: rowsOf(
+          'context',
+          1,
+          ms.length === 0 && !footer
+            ? 1
+            : ms.reduce((n, m) => n + flowRows([meterHead, ...(m.note ? [meterNote(m)] : [])], W, 0), 0) +
+                (footer ? textRows(footer.length, W) : 0),
+        ),
+        node: (
+          <Box {...margin('context')} flexDirection="column">
+            <Box gap={1} flexWrap="wrap">
+              {header('context', 'Context')}
+              {rule(headerWidth('context', 'Context'))}
+            </Box>
+            {!c.context && ms.length === 0 && !footer && <Text color={t.subtle}>no usage yet</Text>}
+            {!c.context &&
+              ms.map(m => {
+                const [filled, empty] = barCells(m.percent, L.barWidth)
+                return (
+                  <Box flexWrap="wrap">
+                    <Box flexShrink={0}>
+                      <Text {...fg(t)}>
+                        <Text color={t.subtle}>{m.label.padEnd(4)}</Text>
+                        <Text color={t[meterColor(m.percent)]}>{'▬'.repeat(filled)}</Text>
+                        <Text color={t.subtle} dimColor>
+                          {'▬'.repeat(empty)}
+                        </Text>
+                        {` ${Math.round(m.percent)}%`.padStart(5)}
                       </Text>
                     </Box>
-                  ) : null}
-                </Box>
-              )
-            })}
-          {!c.context && footer ? <Text color={t.subtle}>{footer}</Text> : null}
-        </Box>,
-
-        <Box marginTop={1} flexDirection="column">
-          <Box gap={1} flexWrap="wrap">
-            {header('mcp', 'MCP')}
-            {rule(headerWidth('mcp', 'MCP'))}
+                    {m.note ? (
+                      <Box>
+                        <Text wrap="truncate-end" color={t.subtle}>
+                          {m.note}
+                        </Text>
+                      </Box>
+                    ) : null}
+                  </Box>
+                )
+              })}
+            {!c.context && footer ? <Text color={t.subtle}>{footer}</Text> : null}
           </Box>
-          {!c.mcp && servers.length === 0 && <Text color={t.subtle}>none connected</Text>}
-          {!c.mcp &&
-            servers.map(s => (
-              <Text wrap="truncate-end" dimColor={!s.connected}>
-                <Text color={t[s.connected ? 'success' : 'subtle']}>{s.connected ? '●' : '○'}</Text>{' '}
-                {s.name}
-                {!s.connected && <Text color={t.subtle}> · auth</Text>}
+        ),
+      },
+      mcp: {
+        rows: rowsOf(
+          'mcp',
+          flowRows([headerText('mcp', 'MCP').length, ...(c.mcp ? [] : mcpButtons.map(b => b.text.length))], W),
+          mcpBodyRows(mcp.shown.length, mcp.hidden),
+        ),
+        node: (
+          <Box {...margin('mcp')} flexDirection="column">
+            <Box gap={1} flexWrap="wrap">
+              {header('mcp', 'MCP')}
+              {!c.mcp &&
+                mcpButtons.map(b => (
+                  <Box flexShrink={0}>
+                    <Button key={`mcp-filter-${b.mode}`} plain onPress={() => void setMcpFilter($, b.mode)}>
+                      <Text bold={b.mode === mcpMode} color={b.mode === mcpMode ? t.success : t.accent}>
+                        {b.text}
+                      </Text>
+                    </Button>
+                  </Box>
+                ))}
+              {c.mcp
+                ? rule(headerWidth('mcp', 'MCP'))
+                : rule(headerWidth('mcp', 'MCP'), ...mcpButtons.map(b => b.text.length))}
+            </Box>
+            {!c.mcp && mcp.shown.length === 0 && <Text color={t.subtle}>{mcpEmptyText(mcp.hidden)}</Text>}
+            {!c.mcp &&
+              mcp.shown.map(s => (
+                <Text wrap="truncate-end" dimColor={!s.connected} {...fg(t)}>
+                  <Text color={t[s.connected ? 'success' : 'subtle']}>{s.connected ? '●' : '○'}</Text>{' '}
+                  {s.name}
+                  {!s.connected && <Text color={t.subtle}> · auth</Text>}
+                </Text>
+              ))}
+            {!c.mcp && mcp.shown.length > 0 && mcp.hidden > 0 && (
+              <Text color={t.subtle}>{mcpHiddenText(mcp.hidden)}</Text>
+            )}
+          </Box>
+        ),
+      },
+      subagents: {
+        // The tally, then every card (the content scrolls).
+        rows: rowsOf(
+          'subagents',
+          flowRows([headerText('subagents', 'Subagents').length, ...(counts.done + counts.err > 0 ? [CLEAR] : [])], W),
+          1 + cardRows,
+        ),
+        node: (
+          <Box {...margin('subagents')} flexDirection="column">
+            <Box gap={1} flexWrap="wrap">
+              {header('subagents', 'Subagents')}
+              {!c.subagents && counts.done + counts.err > 0 && (
+                <Button
+                  key="clear-subagents"
+                  plain
+                  onPress={() => {
+                    if (view.demo) return // sample data: nothing real to clear
+                    for (const r of list) if (r.done) clearedAgents.add(r.id)
+                    void update($, rows, prev => prev.filter(r => !r.done))
+                  }}
+                >
+                  <Text color={t.subtle}>{CLEAR_DONE}</Text>
+                </Button>
+              )}
+              {!c.subagents && counts.done + counts.err > 0
+                ? rule(headerWidth('subagents', 'Subagents'), CLEAR_DONE.length)
+                : rule(headerWidth('subagents', 'Subagents'))}
+            </Box>
+            {!c.subagents && L.compact && (
+              <Text wrap="truncate-end" {...fg(t)}>
+                <Text color={t.accent}>●{counts.run}</Text> <Text color={t.success}>✓{counts.done}</Text>{' '}
+                <Text color={t.error}>✕{counts.err}</Text>
               </Text>
-            ))}
-        </Box>,
-
-        <Box marginTop={1} flexDirection="column">
-          <Box gap={1} flexWrap="wrap">
-            {header('subagents', 'Subagents')}
-            {!c.subagents && counts.done + counts.err > 0 && (
-              <Button
-                key="clear-subagents"
-                plain
-                onPress={() => {
-                  if (view.demo) return // sample data: nothing real to clear
-                  for (const r of list) if (r.done) clearedAgents.add(r.id)
-                  void update($, rows, prev => prev.filter(r => !r.done))
-                }}
-              >
-                <Text color={t.subtle}>{CLEAR_DONE}</Text>
-              </Button>
             )}
-            {!c.subagents && counts.done + counts.err > 0
-              ? rule(headerWidth('subagents', 'Subagents'), CLEAR_DONE.length)
-              : rule(headerWidth('subagents', 'Subagents'))}
+            {!c.subagents && !L.compact && (
+              <Text wrap="truncate-end" {...fg(t)}>
+                <Text color={t.accent}>● {counts.run} running</Text>
+                <Text color={t.subtle}> · </Text>
+                <Text color={t.success}>✓ {counts.done} done</Text>
+                <Text color={t.subtle}> · </Text>
+                <Text color={t.error}>✕ {counts.err} error</Text>
+              </Text>
+            )}
+            {!c.subagents &&
+              cardList.map(r => (
+                <Box flexDirection="column">
+                  <Text wrap="truncate-end" {...fg(t)}>
+                    <Text color={t[color(r.status)]}>{icon(r.status)}</Text> <Text bold {...fg(t)}>{r.description}</Text>
+                  </Text>
+                  <Text wrap="truncate-end" color={t.subtle}>
+                    {'  '}(@{r.type} subagent)
+                  </Text>
+                  {modelLine(view.models.get(r.id), '  ')}
+                  <Text wrap="truncate-end" color={t.subtle}>
+                    {'  '}◷ {fmt(r.elapsedMs)}
+                    {r.tokens !== undefined && `  ≋ ${fmtTokens(r.tokens)} tok`}
+                  </Text>
+                </Box>
+              ))}
           </Box>
-          {!c.subagents && L.compact && (
-            <Text wrap="truncate-end">
-              <Text color={t.accent}>●{counts.run}</Text> <Text color={t.success}>✓{counts.done}</Text>{' '}
-              <Text color={t.error}>✕{counts.err}</Text>
-            </Text>
-          )}
-          {!c.subagents && !L.compact && (
-            <Text wrap="truncate-end">
-              <Text color={t.accent}>● {counts.run} running</Text>
-              <Text color={t.subtle}> · </Text>
-              <Text color={t.success}>✓ {counts.done} done</Text>
-              <Text color={t.subtle}> · </Text>
-              <Text color={t.error}>✕ {counts.err} error</Text>
-            </Text>
-          )}
-          {!c.subagents &&
-            cardList.map(r => (
-              <Box flexDirection="column">
-                <Text wrap="truncate-end">
-                  <Text color={t[color(r.status)]}>{icon(r.status)}</Text> <Text bold>{r.description}</Text>
-                </Text>
-                <Text wrap="truncate-end" color={t.subtle}>
-                  {'  '}(@{r.type} subagent)
-                </Text>
-                {modelLine(view.models.get(r.id), '  ')}
-                <Text wrap="truncate-end" color={t.subtle}>
-                  {'  '}◷ {fmt(r.elapsedMs)}
-                  {r.tokens !== undefined && `  ≋ ${fmtTokens(r.tokens)} tok`}
-                </Text>
-              </Box>
-            ))}
-        </Box>,
-
-        <Box marginTop={1} flexDirection="column">
-          <Box gap={1} flexWrap="wrap">
-            {header('todos', todosHeader)}
-            {!c.todos && todoDone > 0 && (
-              <Button
-                key="clear-todos"
-                plain
-                onPress={() => {
-                  if (view.demo) return // sample data: nothing real to clear
-                  for (const t of todoList) if (t.status === 'completed') clearedTodos.add(t.content)
-                  void update($, todos, prev => prev.filter(t => t.status !== 'completed'))
-                }}
-              >
-                <Text color={t.subtle}>{CLEAR_DONE}</Text>
-              </Button>
-            )}
-            {!c.todos && todoDone > 0
-              ? rule(headerWidth('todos', todosHeader), CLEAR_DONE.length)
-              : rule(headerWidth('todos', todosHeader))}
+        ),
+      },
+      todos: {
+        rows: rowsOf(
+          'todos',
+          flowRows([headerText('todos', todosHeader).length, ...(todoDone > 0 ? [CLEAR] : [])], W),
+          todoList.length === 0 ? 1 : todoList.reduce((n, t) => n + textRows(4 + t.content.length, W), 0),
+        ),
+        node: (
+          <Box {...margin('todos')} flexDirection="column">
+            <Box gap={1} flexWrap="wrap">
+              {header('todos', todosHeader)}
+              {!c.todos && todoDone > 0 && (
+                <Button
+                  key="clear-todos"
+                  plain
+                  onPress={() => {
+                    if (view.demo) return // sample data: nothing real to clear
+                    for (const t of todoList) if (t.status === 'completed') clearedTodos.add(t.content)
+                    void update($, todos, prev => prev.filter(t => t.status !== 'completed'))
+                  }}
+                >
+                  <Text color={t.subtle}>{CLEAR_DONE}</Text>
+                </Button>
+              )}
+              {!c.todos && todoDone > 0
+                ? rule(headerWidth('todos', todosHeader), CLEAR_DONE.length)
+                : rule(headerWidth('todos', todosHeader))}
+            </Box>
+            {!c.todos && todoList.length === 0 && <Text color={t.subtle}>no todos</Text>}
+            {!c.todos &&
+              todoList.map(todo =>
+                todo.status === 'completed' ? (
+                  <Text wrap="wrap" color={t.subtle}>
+                    [✓] {todo.content}
+                  </Text>
+                ) : todo.status === 'in_progress' ? (
+                  <Text wrap="wrap" bold color={t.success}>
+                    [ ] {todo.content}
+                  </Text>
+                ) : (
+                  <Text wrap="wrap" {...fg(t)}>[ ] {todo.content}</Text>
+                ),
+              )}
           </Box>
-          {!c.todos && todoList.length === 0 && <Text color={t.subtle}>no todos</Text>}
-          {!c.todos &&
-            todoList.map(todo =>
-              todo.status === 'completed' ? (
-                <Text wrap="wrap" color={t.subtle}>
-                  [✓] {todo.content}
-                </Text>
-              ) : todo.status === 'in_progress' ? (
-                <Text wrap="wrap" bold color={t.success}>
-                  [ ] {todo.content}
-                </Text>
-              ) : (
-                <Text wrap="wrap">[ ] {todo.content}</Text>
-              ),
-            )}
-        </Box>,
-
-        <Box marginTop={1} flexDirection="column">
-          <Box gap={1} flexWrap="wrap">
-            {header('gentle', 'Gentle AI')}
-            {!c.gentle && (
-              <Button
-                key="gentle-refresh"
-                plain
-                onPress={() => {
-                  if (view.demo) return $.ui.toast('demo mode')
-                  void refreshGentle($)
-                }}
-              >
-                <Text color={t.subtle}>{REFRESH}</Text>
-              </Button>
-            )}
-            {!c.gentle
-              ? rule(headerWidth('gentle', 'Gentle AI'), REFRESH.length)
-              : rule(headerWidth('gentle', 'Gentle AI'))}
+        ),
+      },
+      gentle: {
+        rows: rowsOf('gentle', flowRows([headerText('gentle', 'Gentle AI').length, 1], W), gentleRows(view.gentle ?? null)),
+        node: (
+          <Box {...margin('gentle')} flexDirection="column">
+            <Box gap={1} flexWrap="wrap">
+              {header('gentle', 'Gentle AI')}
+              {!c.gentle && (
+                <Button
+                  key="gentle-refresh"
+                  plain
+                  onPress={() => {
+                    if (view.demo) return $.ui.toast('demo mode')
+                    void refreshGentle($)
+                  }}
+                >
+                  <Text color={t.subtle}>{REFRESH}</Text>
+                </Button>
+              )}
+              {!c.gentle
+                ? rule(headerWidth('gentle', 'Gentle AI'), REFRESH.length)
+                : rule(headerWidth('gentle', 'Gentle AI'))}
+            </Box>
+            {!c.gentle && gentleSection(view.gentle ?? null)}
           </Box>
-          {!c.gentle && gentleSection(view.gentle ?? null)}
-        </Box>,
+        ),
+      },
+    } satisfies Record<SectionId, { rows: number; node: JSX.Element }>
+    const shownSections = visible.map(id => ({ id, ...sectionItems[id] }))
+
+    // Rows the scrolled content takes at this width: the block on top, then
+    // each drawn section plus the margin row above all but the first, or the
+    // all-hidden line when every section is hidden. Ink wraps words, so a
+    // long text can take a row more than estimated; the bottom margin of the
+    // scroll absorbs one.
+    const contentRows =
+      (picking ? pickerRows(hasKeys) : settingsShown ? settingsRows(W, shownName) : 0) +
+      shownSections.reduce((n, s, i) => n + (i > 0 ? 1 : 0) + s.rows, 0) +
+      (shownSections.length === 0 ? textRows(ALL_HIDDEN_TEXT.length, W) : 0)
+
+    const sections = [
+      ...(picking ? [picker] : settingsShown ? [settingsBlock] : []),
+      ...shownSections.map(s => s.node),
+      ...(shownSections.length === 0
+        ? [
+            <Text wrap="wrap" color={t.subtle}>
+              {ALL_HIDDEN_TEXT}
+            </Text>,
+          ]
+        : []),
     ]
 
     // Inline frames fit the tree, and without the body's height there is no

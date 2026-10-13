@@ -23,6 +23,8 @@ import {
   viewportRowsFor,
   FOOTER_ROWS,
 } from './layout'
+import { SETTINGS_BUTTON, SETTINGS_BUTTON_CELLS, SETTINGS_KEY } from './settings'
+import { THEMES } from './themes'
 
 // ── Pure helpers ─────────────────────────────────────────────────────────
 
@@ -168,7 +170,11 @@ const inDemo = async (
   on: On,
   bodyColumns: number,
   bodyRows: number,
-  body: (pane: { drawn: () => Promise<unknown>; redraw: (props: never) => Promise<void> }) => Promise<void>,
+  body: (pane: {
+    drawn: () => Promise<unknown>
+    redraw: (props: never) => Promise<void>
+    press: (target: { key: string }) => Promise<unknown>
+  }) => Promise<void>,
 ) => {
   const clock = answerEngine(on)
   await $.session.start({ cwd: CWD, surface: 'terminal', isInteractive: true } as never)
@@ -236,6 +242,46 @@ for (const cols of [20, 28, 40, 60, 100]) {
   })
 }
 
+// Review focus: a narrow dock with the settings block open keeps the rules,
+// and the header band is counted at exactly the drawable width (the settings button as
+// SETTINGS_BUTTON_CELLS cells with its spaces), so it never wraps past HEADER_ROWS.
+for (const cols of [20, 28, 100]) {
+  test(`at ${cols} columns, the settings block keeps the rules and the header one band`, async ($, on) => {
+    await inDemo($, on, cols, 60, async pane => {
+      await pane.press({ key: SETTINGS_KEY })
+      const tree = (await pane.drawn()) as Node
+      const W = layoutFor(cols, 60).columns
+      checkRules(tree, W)
+      expect(textOf(tree)).toContain('[close]')
+      const bandRow = elements(elements(tree)[0] as Node)[0] as Node
+      expect(textOf(bandRow).length - SETTINGS_BUTTON.length + SETTINGS_BUTTON_CELLS).toBe(W)
+      // The band's own text plus the button reach the edge, nothing unpainted.
+      const band = all(bandRow, 'Text').find(t => t.props?.inverse === true && t.props?.wrap === 'truncate-end') as Node
+      expect(textOf(band).length + SETTINGS_BUTTON_CELLS).toBe(W)
+    })
+  })
+}
+
+// The wider settings button still leaves the project-name band a column at
+// the narrowest dock, and the header draws one band row plus the blank row
+// (HEADER_ROWS): the band and the seven-cell button fit on one line.
+test('at 20 columns, the wide settings button leaves the name band a column and one header row', async ($, on) => {
+  await inDemo($, on, 20, 60, async pane => {
+    const tree = (await pane.drawn()) as Node
+    const W = layoutFor(20, 60).columns
+    expect(SETTINGS_BUTTON_CELLS).toBe(7)
+    const header = elements(tree)[0] as Node
+    const bandRow = elements(header)[0] as Node
+    const band = all(bandRow, 'Text').find(t => t.props?.inverse === true && t.props?.wrap === 'truncate-end') as Node
+    expect(textOf(band).length).toBeGreaterThanOrEqual(1)
+    expect(textOf(band).length + SETTINGS_BUTTON_CELLS).toBeLessThanOrEqual(W)
+    // One band row (it does not wrap) plus the blank row under it.
+    expect(elements(header).length).toBe(1)
+    expect(header.props?.marginBottom).toBe(1)
+    expect(1 + (header.props?.marginBottom as number)).toBe(HEADER_ROWS)
+  })
+})
+
 test('ruleWidth: the columns left after the header items, none below the minimum', () => {
   expect(ruleWidth(40, [11])).toBe(28) // 40 - 11 - 1 gap
   expect(ruleWidth(40, [13, 12])).toBe(13) // 40 - 25 - 2 gaps
@@ -290,7 +336,7 @@ for (const cols of [28, 60, 100]) {
 
 const meterBar = (tree: unknown, label: string): number => {
   const box = all(tree, 'Box').find(b => b.props?.flexShrink === 0 && textOf(b).startsWith(label))
-  return (textOf(box).match(/━/g) ?? []).length
+  return (textOf(box).match(/▬/g) ?? []).length
 }
 
 test('meter bars are wider in a wide dock than in a narrow one', async ($, on) => {
@@ -334,5 +380,30 @@ test('the path is shortened to the drawable width', async ($, on) => {
     const path = all(await pane.drawn(), 'Text').find(t => textOf(t).startsWith('📁'))
     // The glyph takes two cells and a space; the rest fits the width.
     expect(textOf(path).length - 2).toBeLessThanOrEqual(layoutFor(20, 60).columns - 1)
+  })
+})
+
+// The Text a theme without a foreground draws with no color at all, so the
+// terminal's own foreground shows, as before the foreground role existed.
+const uncolored = (tree: unknown): string[] => all(tree, 'Text').filter(n => !('color' in (n.props ?? {}))).map(textOf)
+
+test('default draws its role-less text with no color prop, as before the foreground role', async ($, on) => {
+  await inDemo($, on, 60, 200, async pane => {
+    const plain = uncolored(await pane.drawn())
+    expect(plain).toContain('checkout-refactor') // the session title
+    expect(plain.some(s => s.startsWith('[ ] '))).toBe(true) // a pending todo
+  })
+})
+
+test('a light theme draws the same role-less text in its foreground, and leaves none uncolored', async ($, on) => {
+  await inDemo($, on, 60, 200, async pane => {
+    const plain = uncolored(await pane.drawn())
+    await $.command.run({ command: 'hud-theme', args: 'github-light' } as never)
+    const tree = await pane.drawn()
+    expect(uncolored(tree)).toEqual([])
+    const inForeground = all(tree, 'Text')
+      .filter(n => n.props?.color === THEMES['github-light'].foreground)
+      .map(textOf)
+    for (const text of plain) expect(inForeground).toContain(text)
   })
 })
