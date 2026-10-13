@@ -79,9 +79,11 @@ test('/hud-theme lists the themes with the active one marked, and rejects unknow
   const list = await hudTheme($, '')
   expect(list).toContain('● tokyo-night (active)')
   for (const name of Object.keys(THEMES)) expect(list).toContain(name)
+  expect(Object.keys(THEMES)).toHaveLength(31)
+  expect(list.split('\n').filter(line => /^(● |  )\S/.test(line))).toHaveLength(31)
 
-  const unknown = await hudTheme($, 'solarized-light')
-  expect(unknown).toContain('Unknown HUD theme "solarized-light"')
+  const unknown = await hudTheme($, 'paper-white')
+  expect(unknown).toContain('Unknown HUD theme "paper-white"')
   expect(unknown).toContain('rose-pine')
   // An unknown name changes nothing.
   expect(await hudTheme($, '')).toContain('● tokyo-night (active)')

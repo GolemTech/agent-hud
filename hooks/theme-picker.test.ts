@@ -210,20 +210,25 @@ test('the picker wraps like a carousel: past the last theme to the first, before
   answerEngine(on, [], [], landed)
   const { drawn } = await openPicker($)
 
-  // Down from monokai: the ring would land on Cancel; it lands on default.
-  await focus($, 'theme:monokai')
+  // Down from the last theme: the ring would land on Cancel; it lands on default.
+  await focus($, 'theme:nord-light')
   await focus($, 'theme-cancel')
   expect(landed.at(-1)).toBe('theme:default')
   expect(accentNow(await drawn())).toBe('claude')
 
-  // Up from default: the ring would leave for the header's ⋮; it lands on monokai.
+  // Up from default: the ring would leave for the header's ⋮; it lands on the last (light) theme.
   await focus($, 'settings')
-  expect(landed.at(-1)).toBe('theme:monokai')
-  expect(accentNow(await drawn())).toBe(THEMES.monokai.accent)
+  expect(landed.at(-1)).toBe('theme:nord-light')
+  expect(accentNow(await drawn())).toBe(THEMES['nord-light'].accent)
 
-  // Up from monokai is a plain move.
-  await focus($, 'theme:kanagawa')
-  expect(landed.at(-1)).toBe('theme:kanagawa')
+  // Up from it is a plain move.
+  await focus($, 'theme:tokyo-night-day')
+  expect(landed.at(-1)).toBe('theme:tokyo-night-day')
+
+  // Down from monokai, no longer the last, is a plain move too.
+  await focus($, 'theme:monokai')
+  await focus($, 'theme:everforest-dark')
+  expect(landed.at(-1)).toBe('theme:everforest-dark')
 })
 
 test('the carousel leaves non-adjacent jumps and plugin moves untouched', async ($, on) => {
@@ -237,7 +242,7 @@ test('the carousel leaves non-adjacent jumps and plugin moves untouched', async 
   expect(landed.at(-1)).toBe('theme-cancel')
 
   // The plugin's own move (an autoFocus) is never redirected.
-  await focus($, 'theme:monokai')
+  await focus($, 'theme:nord-light')
   await focus($, 'theme-cancel', { kind: 'plugin', name: 'agent-hud' })
   expect(landed.at(-1)).toBe('theme-cancel')
 })
@@ -246,4 +251,38 @@ test('Cancel has the c hotkey', async ($, on) => {
   answerEngine(on)
   const { drawn } = await openPicker($)
   expect(await drawn()).toMatch(/"key":"theme-cancel"[^}]*"hotkey":"c"/)
+})
+
+type Node = { type?: string; props?: Record<string, unknown>; children?: unknown[] }
+const isNode = (n: unknown): n is Node => typeof n === 'object' && n !== null
+const textOf = (n: unknown): string =>
+  typeof n === 'string' || typeof n === 'number' ? String(n) : isNode(n) ? (n.children ?? []).map(textOf).join('') : ''
+// Every Button key and plain picker line, in drawing order.
+const pickerLines = (n: unknown, out: string[] = []): string[] => {
+  if (!isNode(n)) return out
+  if (n.type === 'Button') return [...out, `button:${String(n.props?.key)}`]
+  if (n.type === 'Text') return [...out, `text:${textOf(n).trim()}`]
+  return (n.children ?? []).reduce<string[]>((acc, c) => pickerLines(c, acc), out)
+}
+
+test('the picker draws the dark themes, a light separator that is no Button, then the light themes', async ($, on) => {
+  answerEngine(on)
+  const { pane } = await openPicker($)
+  const lines = pickerLines(await pane.drawn())
+  const at = (line: string) => lines.indexOf(line)
+  expect(at('text:light')).toBeGreaterThan(-1)
+  expect(at('button:theme:synthwave-84')).toBe(at('text:light') - 1)
+  expect(at('button:theme:catppuccin-latte')).toBe(at('text:light') + 1)
+  expect(at('button:theme:nord-light')).toBe(at('button:theme-cancel') - 1)
+  for (const name of Object.keys(THEMES)) expect(at(`button:theme:${name}`)).toBeGreaterThan(-1)
+})
+
+test('a light theme previews with its own foreground and background', async ($, on) => {
+  answerEngine(on)
+  const { drawn } = await openPicker($)
+  await focus($, 'theme:github-light')
+  const tree = await drawn()
+  expect(accentNow(tree)).toBe(THEMES['github-light'].accent)
+  expect(rootBackground(tree)).toBe(THEMES['github-light'].background)
+  expect(tree).toContain(`"color":"${THEMES['github-light'].foreground}"`)
 })

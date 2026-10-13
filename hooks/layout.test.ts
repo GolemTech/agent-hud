@@ -24,6 +24,7 @@ import {
   FOOTER_ROWS,
 } from './layout'
 import { SETTINGS_BUTTON, SETTINGS_BUTTON_CELLS, SETTINGS_KEY } from './settings'
+import { THEMES } from './themes'
 
 // ── Pure helpers ─────────────────────────────────────────────────────────
 
@@ -391,5 +392,18 @@ test('default draws its role-less text with no color prop, as before the foregro
     const plain = uncolored(await pane.drawn())
     expect(plain).toContain('checkout-refactor') // the session title
     expect(plain.some(s => s.startsWith('[ ] '))).toBe(true) // a pending todo
+  })
+})
+
+test('a light theme draws the same role-less text in its foreground, and leaves none uncolored', async ($, on) => {
+  await inDemo($, on, 60, 200, async pane => {
+    const plain = uncolored(await pane.drawn())
+    await $.command.run({ command: 'hud-theme', args: 'github-light' } as never)
+    const tree = await pane.drawn()
+    expect(uncolored(tree)).toEqual([])
+    const inForeground = all(tree, 'Text')
+      .filter(n => n.props?.color === THEMES['github-light'].foreground)
+      .map(textOf)
+    for (const text of plain) expect(inForeground).toContain(text)
   })
 })

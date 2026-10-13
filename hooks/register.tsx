@@ -76,7 +76,9 @@ import { clean } from './text'
 import {
   DEFAULT_THEME,
   fg,
+  isLight,
   isThemeName,
+  LIGHT_SEPARATOR,
   parseThemeArg,
   PICKER_CANCEL,
   PICKER_FOCUS_RETRY_MS,
@@ -1064,6 +1066,8 @@ const fill = (t: Palette): { backgroundColor?: string } => (t.background ? { bac
 // The sidebar header's ⋮ Button is its only Button: the element drawn right
 // before the picker, so the carousel's ring order starts there.
 const PICKER_ORDER = pickerOrder(SETTINGS_KEY)
+// The picker draws its `light` separator right before this theme.
+const FIRST_LIGHT = THEME_NAMES.find(isLight)
 // The picker element the ring last rested on (`ui.focus`), for the carousel.
 // Module-level: a reload forgets it, and the next move is then a plain one.
 let pickerLastFocus: string | null = null
@@ -1878,7 +1882,16 @@ export const register: Register = on => {
             Keys elsewhere: ctrl+x tab or a click focuses the HUD
           </Text>
         )}
-        {THEME_NAMES.map(name => (
+        {THEME_NAMES.flatMap(name => [
+          // The `light` separator: a plain Text, so the focus ring (and the
+          // carousel's order) steps from the last dark theme to the first light.
+          ...(name === FIRST_LIGHT
+            ? [
+                <Text wrap="truncate-end" color={t.subtle}>
+                  {`  ${LIGHT_SEPARATOR}`}
+                </Text>,
+              ]
+            : []),
           <Box flexShrink={0}>
             <Button
               key={themeKey(name)}
@@ -1890,8 +1903,8 @@ export const register: Register = on => {
                 {`${name === savedTheme ? '●' : ' '} ${name}`}
               </Text>
             </Button>
-          </Box>
-        ))}
+          </Box>,
+        ])}
         <Box flexShrink={0}>
           <Button key={PICKER_CANCEL} plain hotkey="c" onPress={() => void finishPicker($, null)}>
             <Text color={t.subtle}>{'  Cancel'}</Text>
