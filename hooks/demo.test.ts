@@ -72,7 +72,7 @@ test('demoSnapshot: Gentle AI section with fictional static values', () => {
     'gga 2.10.1 -',
     'engram 2.2.1 3.3.0',
   ])
-  expect(g.asOf).toBe('09:30')
+  expect(g.updatedAgo).toBe('2h ago')
   expect(g.root).toBe(demoSnapshot(0).session.cwd)
   expect(g.gga).toEqual({ hook: false, projectConfig: true, rulesFile: 'AGENTS.md', rules: true })
   expect(g.rdd?.effective).toBe('on')
