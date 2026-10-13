@@ -25,6 +25,8 @@
 //                     under Polar Night #2e3440, Frost accent; aurora green
 //                     #a3be8c -> #719353 and yellow #ebcb8b -> #b2811f
 
+import { clampFirst, moreText, scrollToItem, windowAt, windowRows } from './windows'
+
 export const ROLES = ['accent', 'subtle', 'success', 'warning', 'error'] as const
 export type Role = (typeof ROLES)[number]
 // `background` fills the sidebar and the band; a theme without one (default)
@@ -164,35 +166,32 @@ export const PICKER_WINDOW = 10
 // The row a theme draws on in the list, the separator counted.
 export const pickerRowOf = (name: ThemeName): number => PICKER_LIST.indexOf(name)
 
+// The picker's rows are its items, one row each, so its window is the shared
+// list window (`windows.ts`) over unit heights, in rows.
+const unitRows = (total: number): number[] => Array.from({ length: Math.max(0, total) }, () => 1)
+
 // The window's offset within [0, total - window]; a non-number is the top.
-export const clampPickerScroll = (offset: number, total: number, window: number): number => {
-  const max = Math.max(0, total - window)
-  return Number.isFinite(offset) ? Math.min(max, Math.max(0, Math.round(offset))) : 0
-}
+export const clampPickerScroll = (offset: number, total: number, window: number): number =>
+  clampFirst(offset, unitRows(total), window)
 
 // The offset that brings `row` into view with the least move: unchanged when
 // it is already in view, else the row at the window's top or bottom edge.
-export const scrollToRow = (offset: number, row: number, total: number, window: number): number => {
-  const from = clampPickerScroll(offset, total, window)
-  if (row < from) return clampPickerScroll(row, total, window)
-  if (row >= from + window) return clampPickerScroll(row - window + 1, total, window)
-  return from
-}
+export const scrollToRow = (offset: number, row: number, total: number, window: number): number =>
+  scrollToItem(offset, row, unitRows(total), window)
 
 // Rows hidden above and below the window at an offset.
 export const pickerMore = (offset: number, total: number, window: number): { above: number; below: number } => {
-  if (total <= window) return { above: 0, below: 0 }
-  const above = clampPickerScroll(offset, total, window)
-  return { above, below: total - window - above }
+  const { above, below } = windowAt(offset, unitRows(total), window)
+  return { above, below }
 }
 
 // An indicator line for the hidden rows; blank when there are none.
-export const moreText = (dir: 'up' | 'down', n: number): string => (n > 0 ? `${dir === 'up' ? '↑' : '↓'} ${n} more` : '')
+export { moreText }
 
 // Rows the list takes: all of it while it fits the window, else the window
 // and its two indicator rows, always drawn (blank when nothing is hidden on
 // that side) so the count never changes with the offset.
-export const pickerListRows = (total: number, window: number): number => (total <= window ? total : window + 2)
+export const pickerListRows = windowRows
 
 // Rows the picker block draws: the hint (and, without the keys, how to take
 // them), the theme list (`pickerListRows`), Cancel, and the blank row above
