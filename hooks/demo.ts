@@ -72,7 +72,6 @@ const GENTLE: GentleView = {
     { name: 'engram', version: '2.2.1', update: '3.3.0' },
   ],
   updatesKnown: true,
-  updatedAgo: '2h ago',
   root: SESSION.cwd,
   gga: { hook: false, projectConfig: true, rulesFile: 'AGENTS.md', rules: true },
   rdd: { effective: 'on', source: 'global', global: 'on', project: null },

@@ -153,8 +153,6 @@ export type GentleInfo = {
   tools: ToolStatus[]
   /** Whether brew answered the update check (else no up-to-date claim). */
   updatesKnown: boolean
-  /** When the tap's metadata was last fetched (`FETCH_HEAD` mtime). */
-  updatesAsOf: number | null
   /** The session's repository root; null outside a repository. */
   root: string | null
   gga: {
@@ -178,7 +176,6 @@ export const BREW_ENV = {
   HOMEBREW_NO_ENV_HINTS: '1',
 } as const
 
-export const TAP = 'gentleman-programming/tap'
 // How long a read-only command may run before `$.process.run` kills it and
 // rejects: git, gentle-ai and date answer at once; brew loads Ruby first.
 export const CMD_TIMEOUT_MS = 5_000
@@ -193,26 +190,8 @@ export const ACTION_TIMEOUT_MS = 30_000
 // starts; the generation number drops the stuck run's result if it ever ends.
 export const GENTLE_JOIN_DEADLINE_MS = 90_000
 
-// What the section draws: detection with the tap's age already formatted
-// (`ageText`; the demo supplies a fixed one).
-export type GentleView = Omit<GentleInfo, 'updatesAsOf'> & { updatedAgo: string | null }
-
-// How long ago, from an elapsed time: "just now" under a minute, then the
-// largest whole unit ("5m ago", "3h ago", "4d ago").
-export const ageText = (elapsedMs: number): string => {
-  const m = Math.floor(Math.max(0, elapsedMs) / 60_000)
-  if (m < 1) return 'just now'
-  if (m < 60) return `${m}m ago`
-  const h = Math.floor(m / 60)
-  return h < 24 ? `${h}h ago` : `${Math.floor(h / 24)}d ago`
-}
-
-// The Tools heading's summary: a tap a day or more old (an age in days) is
-// likely to hide updates, so it names the command that refreshes it.
-export const tapSummary = (updatedAgo: string): Mark =>
-  /d ago$/.test(updatedAgo)
-    ? { text: `last updated ${updatedAgo} · brew update`, tone: 'warning' }
-    : { text: `last updated ${updatedAgo}`, tone: 'subtle' }
+// What the section draws.
+export type GentleView = GentleInfo
 
 // ── Actions ──────────────────────────────────────────────────────────────
 
@@ -347,7 +326,7 @@ export const gentleGrid = (g: GentleView): GentleRow[] => {
   rows.push({
     kind: 'heading',
     label: 'Tools',
-    summary: g.updatesKnown && g.updatedAgo ? tapSummary(g.updatedAgo) : null,
+    summary: null,
   })
   for (const t of g.tools) item(t.name, t.version ? { text: t.version } : UNSET, toolMark(t, g.updatesKnown))
 

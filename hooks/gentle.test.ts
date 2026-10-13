@@ -4,8 +4,6 @@ import type { Engine, MockClock } from 'claude-code/testing'
 
 import {
   ACTION_TIMEOUT_MS,
-  ageText,
-  tapSummary,
   checkMark,
   GENTLE_JOIN_DEADLINE_MS,
   gentleGrid,
@@ -212,7 +210,6 @@ const VIEW: GentleView = {
     { name: 'engram', version: '3.3.0', update: '3.4.0' },
   ],
   updatesKnown: true,
-  updatedAgo: '4d ago',
   root: '/home/myuser/code/demo-proj',
   gga: { hook: false, projectConfig: false, rulesFile: 'AGENTS.md', rules: true },
   rdd: { effective: 'on', source: 'global', global: 'on', project: null },
@@ -222,7 +219,7 @@ const VIEW: GentleView = {
 test('gentleGrid: headings Tools, gga, RDD, TDD, each with its item rows', () => {
   const unset = { text: '—', tone: 'subtle' }
   expect(gentleGrid(VIEW)).toEqual([
-    { kind: 'heading', label: 'Tools', summary: { text: 'last updated 4d ago · brew update', tone: 'warning' } },
+    { kind: 'heading', label: 'Tools', summary: null },
     { kind: 'item', label: 'gentle-ai', value: { text: '4.0.0' }, detail: { text: '✓', tone: 'success' }, buttons: [] },
     { kind: 'item', label: 'gga', value: { text: '2.10.1' }, detail: { text: '✓', tone: 'success' }, buttons: [] },
     { kind: 'item', label: 'engram', value: { text: '3.3.0' }, detail: { text: '↑ 3.4.0', tone: 'warning' }, buttons: [] },
@@ -278,7 +275,7 @@ test('gentleGrid: what each state leaves out or adds', () => {
   const noGga = gentleGrid({ ...VIEW, tools: [VIEW.tools[0]!, { name: 'gga', version: null, update: null }, VIEW.tools[2]!] })
   expect(noGga[2]).toEqual({ kind: 'item', label: 'gga', value: { text: '—', tone: 'subtle' }, detail: { text: '✗', tone: 'error' }, buttons: [] })
   expect(noGga.some(r => r.kind === 'heading' && r.label === 'gga')).toBe(false)
-  // No brew answer: no "last updated"; strict TDD unknown: no strict row.
+  // Strict TDD unknown: no strict row.
   expect(gentleGrid({ ...VIEW, updatesKnown: false })[0]).toEqual({ kind: 'heading', label: 'Tools', summary: null })
   expect(labels({ ...VIEW, strictTdd: null }).slice(-1)).toEqual(['#TDD'])
   // RDD unknown: ? everywhere, no button marked.
@@ -301,7 +298,6 @@ test('gentleGrid: what each state leaves out or adds', () => {
 
 const HOME = '/home/myuser'
 const ROOT = `${HOME}/code/demo-proj`
-const TAP = `${HOME}/brew/Taps/example/homebrew-tap`
 
 type Run = { argv: readonly string[]; init?: { cwd?: string; env?: Record<string, string>; stdin?: string } }
 
@@ -379,7 +375,6 @@ const answerEngine = (
     exists.push((e as { path: string }).path)
     return { value: false } as never
   })
-  on('fs.stat', () => ({ value: { kind: 'file', size: 1, mtimeMs: clock.now() - 4 * 86_400_000, isLink: false } }) as never)
   on('process.run', (_$, e) => {
     const run = e as Run
     runs.push(run)
@@ -399,7 +394,6 @@ const answerEngine = (
         }),
         1,
       )
-    if (argv.startsWith('brew --repository')) return out(`${TAP}\n`)
     // As the engine runs git: `core.hooksPath=/dev/null` is forced, so the
     // hooks path git reports is not the repo's; its common dir and its own
     // config file are unaffected (here no core.hooksPath: exit 1).
@@ -539,7 +533,7 @@ test('the Gentle AI section is one grid: headings Tools, gga, RDD, TDD and align
   const tree = await (await mountPane($)).drawn()
   expect(JSON.stringify(tree)).toContain('Gentle AI')
   expect(headingsOf(tree)).toEqual(HEADINGS)
-  expect(cellsOf(tree, 'Tools')).toEqual(['Tools', 'last updated 4d ago · brew update'])
+  expect(JSON.stringify(tree)).not.toContain('last updated')
   expect(cellsOf(tree, 'gentle-ai')).toEqual(['gentle-ai', '4.0.0', '✓'])
   expect(cellsOf(tree, 'gga')).toEqual(['gga', '2.10.1', '✓'])
   expect(cellsOf(tree, 'engram')).toEqual(['engram', '2.2.1', '↑ 3.3.0'])
@@ -633,7 +627,7 @@ test('in demo mode the section shows sample values and its buttons only say so',
   try {
     const pane = await mountPane($)
     const text = JSON.stringify(await pane.drawn())
-    expect(text).toContain('last updated 2h ago')
+    expect(text).not.toContain('last updated')
     const before = runs.length
     await pane.press({ key: 'gga-install' })
     await pane.press({ key: 'tdd-configure' })
@@ -802,22 +796,4 @@ test('a safe RULES_FILE is the file checked and shown, with no note', async ($, 
   } finally {
     resetFixture()
   }
-})
-
-test('ageText: just now, then minutes, hours and days', () => {
-  const MIN = 60_000
-  expect(ageText(59_000)).toBe('just now')
-  expect(ageText(MIN)).toBe('1m ago')
-  expect(ageText(59 * MIN)).toBe('59m ago')
-  expect(ageText(60 * MIN)).toBe('1h ago')
-  expect(ageText(23 * 60 * MIN)).toBe('23h ago')
-  expect(ageText(24 * 60 * MIN)).toBe('1d ago')
-  expect(ageText(4 * 24 * 60 * MIN)).toBe('4d ago')
-  expect(ageText(-5 * MIN)).toBe('just now')
-})
-
-test('tapSummary: a tap a day or more old adds a brew update hint', () => {
-  expect(tapSummary('just now')).toEqual({ text: 'last updated just now', tone: 'subtle' })
-  expect(tapSummary('23h ago')).toEqual({ text: 'last updated 23h ago', tone: 'subtle' })
-  expect(tapSummary('1d ago')).toEqual({ text: 'last updated 1d ago · brew update', tone: 'warning' })
 })

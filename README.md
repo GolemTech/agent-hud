@@ -25,7 +25,7 @@ from the repository root (needs `vhs`, `ffmpeg` and `gifsicle`).
 | MCP       | MCP servers, connected first; servers waiting for authentication are dimmed. `[active]` / `[all]` in its header filters the list. |
 | Subagents | Running / done / error counts, then one card per subagent: description, type, model, elapsed time and context tokens. Past 12 rows the cards scroll in a window of their own. |
 | Todo      | The main loop's task list: done first, then in progress, then pending. Past 5 rows it scrolls in a window of its own. |
-| Gentle AI | The [gentle-ai](https://github.com/Gentleman-Programming/gentle-ai) toolset: one aligned grid in four groups. **Tools**: `gentle-ai`, `gga` and `engram` versions with `✓` up to date or `↑ <newer>` (as fresh as your local brew tap, with `last updated <age> ago` for when it was last fetched); **gga**: the review hook and its rules file; **RDD**: receipt-driven development on or off and which scope decides it, then each scope's own setting; **TDD**: test-first by default under ODD, and strict TDD. One status vocabulary throughout: `✓` ok, `✗` missing, `↑` update, `●` on, `○` off, `—` unset, `?` unknown. Shows "gentle-ai not installed" when it is not. |
+| Gentle AI | The [gentle-ai](https://github.com/Gentleman-Programming/gentle-ai) toolset: one aligned grid in four groups. **Tools**: `gentle-ai`, `gga` and `engram` versions with `✓` up to date or `↑ <newer>` (as fresh as your local brew tap); **gga**: the review hook and its rules file; **RDD**: receipt-driven development on or off and which scope decides it, then each scope's own setting; **TDD**: test-first by default under ODD, and strict TDD. One status vocabulary throughout: `✓` ok, `✗` missing, `↑` update, `●` on, `○` off, `—` unset, `?` unknown. Shows "gentle-ai not installed" when it is not. |
 | Footer    | Always at the bottom: the Claude Code version (`● ClaudeCode x.y.z`). |
 
 ## How it works
@@ -212,7 +212,7 @@ rest, and the limits that come with them:
   `gentle-ai --version`. **Update status** comes from
   `brew outdated --json=v2` run with `HOMEBREW_NO_AUTO_UPDATE=1`: it compares
   against your local tap metadata, so it is only as fresh as your last
-  `brew update`; `last updated <age> ago` beside **Tools** is when the tap was last fetched, and `brew update` refreshes it; a tap a day or more old turns the line to a warning ending in `· brew update`. Tools not
+  `brew update`, which refreshes it. Tools not
   installed through brew show no update status.
 - **gga** is detected by reading files, never by running gga (its commands
   check GitHub for updates, and `gga config` executes the project's `.gga`):
