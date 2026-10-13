@@ -9,7 +9,13 @@ import {
   CHANGE_TEXT,
   checkText,
   CLOSE_TEXT,
+  DEFAULT_METER_STYLE,
+  METER_GLYPH,
+  METER_STYLES,
+  meterKey,
+  meterText,
   parseHidden,
+  parseMeterStyle,
   SECTION_IDS,
   SECTION_LABELS,
   sectionKey,
@@ -50,16 +56,34 @@ test('settingsLabel pads a label to the shared label column, gap included', () =
   expect(CLOSE_TEXT).toBe('[close]')
 })
 
-test('settingsRows: the title, the Theme row as its value wraps, one row per check, [close] and the blank row', () => {
+test('settingsRows: the title, the Theme row as its value wraps, one row per meter style and per check, [close] and the blank row', () => {
+  const fixed = METER_STYLES.length + SECTION_IDS.length
   // 100 columns (98 drawable): name and [change] on one line.
-  expect(settingsRows(98, 'default')).toBe(4 + SECTION_IDS.length)
+  expect(settingsRows(98, 'default')).toBe(4 + fixed)
   // 28 columns (26 drawable, 14 for the value): [change] below the name.
-  expect(settingsRows(26, 'default')).toBe(5 + SECTION_IDS.length)
+  expect(settingsRows(26, 'default')).toBe(5 + fixed)
   // A long name wraps the Theme value where a short one fits (34 columns, 20 for the value).
-  expect(settingsRows(32, 'default')).toBe(4 + SECTION_IDS.length)
-  expect(settingsRows(32, 'catppuccin-mocha')).toBe(5 + SECTION_IDS.length)
+  expect(settingsRows(32, 'default')).toBe(4 + fixed)
+  expect(settingsRows(32, 'catppuccin-mocha')).toBe(5 + fixed)
   // 20 columns (18 drawable, 6 for the value): each part alone, cut to fit.
-  expect(settingsRows(18, 'catppuccin-mocha')).toBe(5 + SECTION_IDS.length)
+  expect(settingsRows(18, 'catppuccin-mocha')).toBe(5 + fixed)
+})
+
+test('meter styles: line (━) is the default, block (▬) the other; anything else is line', () => {
+  expect(METER_STYLES).toEqual(['line', 'block'])
+  expect(DEFAULT_METER_STYLE).toBe('line')
+  expect(METER_GLYPH).toEqual({ line: '\u2501', block: '\u25AC' })
+  expect(parseMeterStyle('block')).toBe('block')
+  expect(parseMeterStyle('line')).toBe('line')
+  for (const bad of [undefined, null, '', 'Block', 'bar', 3, ['block'], { block: true }]) expect(parseMeterStyle(bad)).toBe('line')
+})
+
+test('a meter choice keeps one width chosen or not and shows its glyph', () => {
+  expect(meterText('line', true)).toBe('[✓ line ━━━]')
+  expect(meterText('block', false)).toBe('[  block ▬▬▬]')
+  for (const s of METER_STYLES) expect(meterText(s, false).length).toBe(meterText(s, true).length)
+  expect(meterKey('line')).toBe('meter-line')
+  expect(meterKey('block')).toBe('meter-block')
 })
 
 test('SECTION_IDS lists the six sections in draw order, each with its label', () => {
@@ -115,16 +139,26 @@ const CWD = `${HOME}/code/example`
 
 // The engine's bottom for the poller, the Pane, the picker and the scroll.
 // `opens` collects every `$.ui.open` argument; `refuse` throws for the ones
-// it returns true for, as a refused open.
+// it returns true for, as a refused open. With `failedSaves`, `$.store.set`
+// records the key it was asked to write there and throws.
 const answerEngine = (
   on: On,
   store: Record<string, unknown> = {},
   opens: unknown[] = [],
   refuse: (e: unknown) => boolean = () => false,
+  failedSaves: string[] | null = null,
 ) => {
   const clock = mock.clock(on)
   mock.env(on, { HOME })
-  mock.store(on, store)
+  if (failedSaves) {
+    on('store.get', () => ({ value: undefined }) as never)
+    on('store.set', (_$, e) => {
+      failedSaves.push(e.key)
+      throw new Error('store unavailable')
+    })
+  } else {
+    mock.store(on, store)
+  }
   on('command.register', () => ({ value: undefined }) as never)
   on('ui.open', (_$, e) => {
     opens.push(e)
@@ -274,12 +308,12 @@ for (const cols of [28, 30, 45, 80, 100]) {
       expect(openEnd - closedEnd).toBe(settingsRows(W, 'default'))
 
       // The block is the first item of the content: title, Theme row, one row
-      // per check, [close].
+      // per meter style, one row per check, [close].
       await scroll($, -10_000, 24)
       const block = elements(contentBox(await pane.drawn()))[0] as Node
       expect(block.props?.marginBottom).toBe(1)
       const rows = elements(block)
-      expect(rows.length).toBe(3 + SECTION_IDS.length)
+      expect(rows.length).toBe(3 + METER_STYLES.length + SECTION_IDS.length)
       expect(textOf(rows[0])).toBe(SETTINGS_TITLE)
 
       // Every row's label cell is one fixed width that never shrinks, so the
@@ -311,7 +345,14 @@ for (const cols of [28, 30, 45, 80, 100]) {
       expect(value.props?.gap).toBeUndefined()
       expect(elements(value).map(i => textOf(i))).toEqual(['default', CHANGE_TEXT])
 
-      const checkRows = rows.slice(2, -1)
+      const meterRows = rows.slice(2, 2 + METER_STYLES.length)
+      expect(meterRows.map(r => textOf(labelCell(r)))).toEqual([
+        settingsLabel('Meters'),
+        ...METER_STYLES.slice(1).map(() => settingsLabel('')),
+      ])
+      expect(meterRows.map(r => textOf(elements(r)[1]))).toEqual(METER_STYLES.map(s => meterText(s, s === 'line')))
+
+      const checkRows = rows.slice(2 + METER_STYLES.length, -1)
       expect(checkRows.map(r => textOf(labelCell(r)))).toEqual([
         settingsLabel('Sections'),
         ...SECTION_IDS.slice(1).map(() => settingsLabel('')),
@@ -404,3 +445,89 @@ for (const name of ['default', 'dracula']) {
     expect(tree).toContain(SETTINGS_BUTTON)
   })
 }
+
+// ── Meter style ──────────────────────────────────────────────────────────
+
+// Cells of either meter glyph inside the Context section's meter rows.
+const glyphCount = (tree: unknown, glyph: string): number => (textOf(tree).match(new RegExp(glyph, 'g')) ?? []).length
+const meterBox = (root: unknown): Node => {
+  const find = (n: unknown): Node | undefined => {
+    if (!isNode(n)) return undefined
+    if (n.type === 'Box' && n.props?.flexShrink === 0 && /^ctx /.test(textOf(n))) return n
+    for (const c of n.children ?? []) {
+      const hit = find(c)
+      if (hit) return hit
+    }
+    return undefined
+  }
+  return find(root) as Node
+}
+
+test('meters draw with ━ by default; pressing block switches to ▬ and keeps it for a new session', async ($, on) => {
+  const clock = answerEngine(on)
+  await startSession($)
+  await clock.settle()
+  const pane = await mountPane($)
+  const meter = () => pane.drawn().then(meterBox)
+  expect(glyphCount(await meter(), '━')).toBeGreaterThan(0)
+  expect(glyphCount(await meter(), '▬')).toBe(0)
+
+  await pane.press({ key: SETTINGS_KEY })
+  expect(JSON.stringify(await pane.drawn())).toContain(meterText('line', true))
+  await pane.press({ key: meterKey('block') })
+  expect(glyphCount(await meter(), '▬')).toBeGreaterThan(0)
+  expect(glyphCount(await meter(), '━')).toBe(0)
+  expect(JSON.stringify(await pane.drawn())).toContain(meterText('block', true))
+
+  // Stored: a new session loads it back.
+  await startSession($)
+  expect(glyphCount(await meter(), '▬')).toBeGreaterThan(0)
+
+  await pane.press({ key: SETTINGS_KEY })
+  await pane.press({ key: meterKey('line') })
+  await startSession($)
+  expect(glyphCount(await meter(), '━')).toBeGreaterThan(0)
+  expect(glyphCount(await meter(), '▬')).toBe(0)
+})
+
+test('a stored block style loads at session start', async ($, on) => {
+  const clock = answerEngine(on, { meterStyle: 'block' })
+  await startSession($)
+  await clock.settle()
+  const pane = await mountPane($)
+  expect(glyphCount(await pane.drawn().then(meterBox), '▬')).toBeGreaterThan(0)
+})
+
+test('an unknown stored style draws line meters', async ($, on) => {
+  const clock = answerEngine(on, { meterStyle: 'bogus' })
+  await startSession($)
+  await clock.settle()
+  const pane = await mountPane($)
+  const box = meterBox(await pane.drawn())
+  expect(glyphCount(box, '━')).toBeGreaterThan(0)
+  expect(glyphCount(box, '▬')).toBe(0)
+})
+
+test('demo mode follows the meter style', async ($, on) => {
+  const clock = answerEngine(on, { meterStyle: 'block' })
+  await startSession($)
+  await clock.settle()
+  await inDemo($, clock, async () => {
+    const pane = await mountPane($)
+    const box = meterBox(await pane.drawn())
+    expect(glyphCount(box, '▬')).toBeGreaterThan(0)
+    expect(glyphCount(box, '━')).toBe(0)
+  })
+})
+
+test('a failed save still switches the meters for this session', async ($, on) => {
+  const failedSaves: string[] = []
+  const clock = answerEngine(on, {}, [], () => false, failedSaves)
+  await startSession($)
+  await clock.settle()
+  const pane = await mountPane($)
+  await pane.press({ key: SETTINGS_KEY })
+  await pane.press({ key: meterKey('block') })
+  expect(failedSaves).toEqual(['meterStyle'])
+  expect(glyphCount(await pane.drawn().then(meterBox), '▬')).toBeGreaterThan(0)
+})

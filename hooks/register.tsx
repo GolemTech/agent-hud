@@ -54,7 +54,13 @@ import {
   CHANGE_TEXT,
   checkText,
   CLOSE_TEXT,
+  DEFAULT_METER_STYLE,
+  METER_GLYPH,
+  METER_STYLES,
+  meterKey,
+  meterText,
   parseHidden,
+  parseMeterStyle,
   SECTION_IDS,
   sectionKey,
   SETTINGS_BUTTON,
@@ -71,7 +77,7 @@ import {
   toggleHidden,
   visibleSections,
 } from './settings'
-import type { SectionId } from './settings'
+import type { MeterStyle, SectionId } from './settings'
 import { clean } from './text'
 import {
   DEFAULT_THEME,
@@ -396,6 +402,10 @@ const settingsOpen = atom({ plugin: 'agent-hud', key: 'settingsOpen' } as const,
 // choice: hidden sections are still polled.
 const hiddenSections = atom({ plugin: 'agent-hud', key: 'hiddenSections' } as const, [] as SectionId[])
 const HIDDEN_KEY = 'hiddenSections'
+// The Context meters' glyph (`line` ━ or `block` ▬), kept in `$.store` under
+// METER_STYLE_KEY and loaded at session start; `line` until one is chosen.
+const meterStyle = atom({ plugin: 'agent-hud', key: 'meterStyle' } as const, DEFAULT_METER_STYLE as MeterStyle)
+const METER_STYLE_KEY = 'meterStyle'
 // The last offset the latest sticky render allowed; null while the Pane is
 // drawn in the plain flow (inline, or no body height), where the engine scrolls.
 let scrollMax: number | null = null
@@ -609,9 +619,10 @@ export const meters = (usage: UsageLike, now: number, offsetMin?: number | null)
   return out
 }
 
-// Filled / empty cells of a fixed-width meter, drawn as a ━ track: thin
-// strokes do not bleed into the rows above and below the way █ does, and
-// whole cells leave no partial-glyph gap. Any use shows at least one cell,
+// Filled / empty cells of a fixed-width meter, drawn as a track of the chosen
+// glyph (`METER_GLYPH`: ━ by default, ▬ in settings): thin strokes do not
+// bleed into the rows above and below the way █ does, and whole cells leave
+// no partial-glyph gap. Any use shows at least one cell,
 // and only a full window fills the track.
 export const barCells = (percent: number, width = 10): [number, number] => {
   const p = Math.max(0, Math.min(100, percent))
@@ -1162,6 +1173,17 @@ const toggleSection = async ($: EngineInterface, id: SectionId): Promise<void> =
   }
 }
 
+// A meter choice: draws the meters with `style` at once and keeps it for
+// later sessions; a failed save still applies it to this session.
+const setMeterStyle = async ($: EngineInterface, style: MeterStyle): Promise<void> => {
+  await update($, meterStyle, () => style)
+  try {
+    await $.store.set(METER_STYLE_KEY, style)
+  } catch {
+    // this session keeps it
+  }
+}
+
 // Ends the picker: saves `name`, or with null keeps the saved theme. The
 // Pane stays open.
 const finishPicker = async ($: EngineInterface, name: ThemeName | null): Promise<void> => {
@@ -1232,6 +1254,13 @@ export const register: Register = on => {
       await update($, hiddenSections, () => parseHidden(stored))
     } catch {
       // keep the sections this session already hides
+    }
+    // The meter style chosen in an earlier session; missing or unknown is `line`.
+    try {
+      const stored = await $.store.get(METER_STYLE_KEY)
+      await update($, meterStyle, () => parseMeterStyle(stored))
+    } catch {
+      // keep the style this session already has
     }
     // A new session starts with no picker and no preview.
     try {
@@ -1842,6 +1871,9 @@ export const register: Register = on => {
     // Hidden sections (the settings button, `⋮`): not drawn, not counted.
     const hidden = parseHidden(await read($, hiddenSections))
     const visible = visibleSections(hidden)
+    // The meters' glyph (the settings block's `Meters` choice), live or demo.
+    const meterStyleNow = parseMeterStyle(await read($, meterStyle))
+    const meterGlyph = METER_GLYPH[meterStyleNow]
     // Only the first drawn section has no blank row above it.
     const margin = (id: SectionId): { marginTop?: number } => (id === visible[0] ? {} : { marginTop: 1 })
     const cardList = displayRows(list)
@@ -1962,7 +1994,7 @@ export const register: Register = on => {
     // with the picker (`settingsShown`). Every row is a label cell of one
     // fixed width (`SETTINGS_LABEL_CELLS`) and a value cell holding exactly
     // the rest of the line, both `flexShrink={0}`, so the row (`flexWrap`, as
-    // every label row) never wraps and the Theme value and each check start in
+    // every label row) never wraps and the Theme value, each meter choice and each check start in
     // one column. Only the Theme value wraps, inside its cell and with
     // `columnGap` (never `gap`, whose row gap is a blank row between wrapped
     // lines). Its rows are counted by `settingsRows`: keep the two in step.
@@ -1998,6 +2030,18 @@ export const register: Register = on => {
           ],
           true,
         )}
+        {/* onPress returns setMeterStyle's promise (no `void`), as a check. */}
+        {METER_STYLES.map((style, i) => {
+          const chosen = style === meterStyleNow
+          return settingsRow(
+            i === 0 ? 'Meters' : '',
+            <Button key={meterKey(style)} plain onPress={() => setMeterStyle($, style)}>
+              <Text wrap="truncate-end" bold={chosen} color={chosen ? t.success : t.accent}>
+                {meterText(style, chosen)}
+              </Text>
+            </Button>,
+          )
+        })}
         {/* onPress returns toggleSection's promise (no `void`), so a press
             that awaits it sees a failure toggleSection did not catch. */}
         {SECTION_IDS.map((id, i) => {
@@ -2120,9 +2164,9 @@ export const register: Register = on => {
                     <Box flexShrink={0}>
                       <Text {...fg(t)}>
                         <Text color={t.subtle}>{m.label.padEnd(4)}</Text>
-                        <Text color={t[meterColor(m.percent)]}>{'▬'.repeat(filled)}</Text>
+                        <Text color={t[meterColor(m.percent)]}>{meterGlyph.repeat(filled)}</Text>
                         <Text color={t.subtle} dimColor>
-                          {'▬'.repeat(empty)}
+                          {meterGlyph.repeat(empty)}
                         </Text>
                         {` ${Math.round(m.percent)}%`.padStart(5)}
                       </Text>
