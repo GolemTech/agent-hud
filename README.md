@@ -125,7 +125,7 @@ To add the marketplace first and install separately:
 
 `/hud-theme` without a name opens a picker at the top of the sidebar, like
 Claude Code's `/theme`, at any terminal width: each theme is listed in its own
-accent color, the saved one marked `●`, and the sections stay drawn below it. The dark themes come first, then a `light` line, then the light themes. `[change]` in the `⋮` settings block opens the same picker.
+accent color, the saved one marked `●`, and the sections stay drawn below it. The dark themes come first, then a `light` line, then the light themes. The list shows ten rows at a time, with `↑ N more` / `↓ N more` lines naming the rest; it follows the highlighted theme, and the mouse wheel over the sidebar scrolls it while the picker is open, so the sections below stay in view. `[change]` in the `⋮` settings block opens the same picker.
 Moving through the list previews each theme on the sidebar itself, and it
 wraps around: down from the last theme lands on the first, up from the first
 on the last. Enter (or a click) applies and saves it; `c` (or clicking

@@ -75,17 +75,23 @@ import type { SectionId } from './settings'
 import { clean } from './text'
 import {
   DEFAULT_THEME,
+  clampPickerScroll,
   fg,
-  isLight,
   isThemeName,
   LIGHT_SEPARATOR,
+  moreText,
   parseThemeArg,
   PICKER_CANCEL,
   PICKER_FOCUS_RETRY_MS,
+  PICKER_LIST,
+  PICKER_LIST_ROWS,
+  PICKER_WINDOW,
+  pickerMore,
   pickerOrder,
+  pickerRowOf,
   pickerRows,
+  scrollToRow,
   shownTheme,
-  THEME_NAMES,
   themeFromKey,
   themeKey,
   themeList,
@@ -379,6 +385,9 @@ const MCP_FILTER_KEY = 'mcpFilter'
 // (`ui.focus`) is drawn until a press or Cancel.
 const pickerOpen = atom({ plugin: 'agent-hud', key: 'picker' } as const, false)
 const previewName = atom({ plugin: 'agent-hud', key: 'preview' } as const, null as string | null)
+// The offset of the picker's fixed theme window, in list rows: the focus ring
+// and the wheel move it while the picker is open; 0 once it closes.
+const pickerScroll = atom({ plugin: 'agent-hud', key: 'pickerScroll' } as const, 0)
 // `⋮` in the header: the settings block is open at the top of the Pane. Not
 // kept in `$.store`; `session.start` closes it.
 const settingsOpen = atom({ plugin: 'agent-hud', key: 'settingsOpen' } as const, false)
@@ -1066,8 +1075,6 @@ const fill = (t: Palette): { backgroundColor?: string } => (t.background ? { bac
 // The sidebar header's ⋮ Button is its only Button: the element drawn right
 // before the picker, so the carousel's ring order starts there.
 const PICKER_ORDER = pickerOrder(SETTINGS_KEY)
-// The picker draws its `light` separator right before this theme.
-const FIRST_LIGHT = THEME_NAMES.find(isLight)
 // The picker element the ring last rested on (`ui.focus`), for the carousel.
 // Module-level: a reload forgets it, and the next move is then a plain one.
 let pickerLastFocus: string | null = null
@@ -1087,6 +1094,7 @@ const setMcpFilter = async ($: EngineInterface, mode: McpFilter): Promise<void> 
 const closePicker = async ($: EngineInterface): Promise<void> => {
   pickerLastFocus = null
   await update($, previewName, () => null)
+  await update($, pickerScroll, () => 0)
   await update($, pickerOpen, () => false)
 }
 
@@ -1115,6 +1123,10 @@ const startPicker = async ($: EngineInterface): Promise<void> => {
   await update($, settingsOpen, () => false)
   await update($, previewName, () => null)
   await update($, scrollOffset, () => 0)
+  // The window opens with the saved theme in view.
+  const saved = await read($, themeName)
+  const row = pickerRowOf(isThemeName(saved) ? saved : DEFAULT_THEME)
+  await update($, pickerScroll, () => scrollToRow(0, row, PICKER_LIST_ROWS, PICKER_WINDOW))
   pickerLastFocus = null
   await update($, pickerOpen, () => true)
   try {
@@ -1531,6 +1543,12 @@ export const register: Register = on => {
       }
       const name = open && ours ? themeFromKey(target) : null
       if (name !== current) await update($, previewName, () => name)
+      // The fixed window follows the ring: the focused theme is kept in view
+      // with the least move, so a wrap lands the window at that end.
+      if (name) {
+        const row = pickerRowOf(name)
+        await update($, pickerScroll, prev => scrollToRow(prev, row, PICKER_LIST_ROWS, PICKER_WINDOW))
+      }
     } catch {
       target = e.element // any failure: the move stands as it is
     }
@@ -1596,6 +1614,12 @@ export const register: Register = on => {
   // (raised at its edges too) shift the content box by `e.by` instead. An
   // observer: the engine's move is forwarded untouched.
   on('ui.scroll', { component: 'Pane', requestId: PANE }, async ($, e, next) => {
+    // While the picker is open the wheel moves its theme window instead.
+    if (await read($, pickerOpen)) {
+      const by = e.by
+      await update($, pickerScroll, prev => clampPickerScroll(prev + by, PICKER_LIST_ROWS, PICKER_WINDOW))
+      return next(e)
+    }
     const max = scrollMax
     if (max !== null) {
       const by = e.by
@@ -1872,6 +1896,35 @@ export const register: Register = on => {
     // it so they are seen recoloring. One row per theme in its own accent, the
     // saved one marked and focused first; `ui.focus` previews the theme the
     // ring rests on, a press saves it, Cancel only closes the block.
+    // The theme rows: every theme Button in ring order, the `light` separator
+    // a plain Text before the first light one, so the focus ring (and the
+    // carousel's order) steps from the last dark theme to the first light.
+    // Past PICKER_WINDOW rows they draw in a clipped window shifted by
+    // `pickerScroll` (the focus hook keeps the focused one in view), with an
+    // indicator row above and below naming the rows hidden on that side.
+    const themeRows = PICKER_LIST.map(name =>
+      name === null ? (
+        <Text wrap="truncate-end" color={t.subtle}>
+          {`  ${LIGHT_SEPARATOR}`}
+        </Text>
+      ) : (
+        <Box flexShrink={0}>
+          <Button
+            key={themeKey(name)}
+            plain
+            autoFocus={name === savedTheme || undefined}
+            onPress={() => void finishPicker($, name)}
+          >
+            <Text wrap="truncate-end" color={THEMES[name].accent}>
+              {`${name === savedTheme ? '●' : ' '} ${name}`}
+            </Text>
+          </Button>
+        </Box>
+      ),
+    )
+    const pickerFits = PICKER_LIST_ROWS <= PICKER_WINDOW
+    const pickerOffset = clampPickerScroll(await read($, pickerScroll), PICKER_LIST_ROWS, PICKER_WINDOW)
+    const more = pickerMore(pickerOffset, PICKER_LIST_ROWS, PICKER_WINDOW)
     const picker = (
       <Box flexDirection="column" flexShrink={0} marginBottom={1}>
         <Text wrap="truncate-end" color={t.subtle}>
@@ -1882,29 +1935,21 @@ export const register: Register = on => {
             Keys elsewhere: ctrl+x tab or a click focuses the HUD
           </Text>
         )}
-        {THEME_NAMES.flatMap(name => [
-          // The `light` separator: a plain Text, so the focus ring (and the
-          // carousel's order) steps from the last dark theme to the first light.
-          ...(name === FIRST_LIGHT
-            ? [
-                <Text wrap="truncate-end" color={t.subtle}>
-                  {`  ${LIGHT_SEPARATOR}`}
-                </Text>,
-              ]
-            : []),
-          <Box flexShrink={0}>
-            <Button
-              key={themeKey(name)}
-              plain
-              autoFocus={name === savedTheme || undefined}
-              onPress={() => void finishPicker($, name)}
-            >
-              <Text wrap="truncate-end" color={THEMES[name].accent}>
-                {`${name === savedTheme ? '●' : ' '} ${name}`}
-              </Text>
-            </Button>
-          </Box>,
-        ])}
+        {pickerFits
+          ? themeRows
+          : [
+              <Text wrap="truncate-end" color={t.subtle}>
+                {moreText('up', more.above) || ' '}
+              </Text>,
+              <Box flexDirection="column" flexShrink={0} height={PICKER_WINDOW} overflow="hidden">
+                <Box flexDirection="column" flexShrink={0} marginTop={0 - pickerOffset}>
+                  {themeRows}
+                </Box>
+              </Box>,
+              <Text wrap="truncate-end" color={t.subtle}>
+                {moreText('down', more.below) || ' '}
+              </Text>,
+            ]}
         <Box flexShrink={0}>
           <Button key={PICKER_CANCEL} plain hotkey="c" onPress={() => void finishPicker($, null)}>
             <Text color={t.subtle}>{'  Cancel'}</Text>

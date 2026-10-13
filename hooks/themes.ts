@@ -147,11 +147,58 @@ export const themeFromKey = (key: string | undefined): ThemeName | null => {
 export const shownTheme = (saved: unknown, preview: unknown): Palette =>
   resolveTheme(isThemeName(preview) ? preview : saved)
 
+// The first light theme: the picker draws its `light` separator right before it.
+export const FIRST_LIGHT = THEME_NAMES.find(isLight)
+
+// The picker's theme list, one entry per row: every theme in list order, and
+// null for the `light` separator right before the first light one.
+export const PICKER_LIST: readonly (ThemeName | null)[] = THEME_NAMES.flatMap(name =>
+  name === FIRST_LIGHT ? [null, name] : [name],
+)
+export const PICKER_LIST_ROWS = PICKER_LIST.length
+
+// The list draws in a fixed window of this many rows (the separator counts as
+// one), so the sections below stay in view while a theme is previewed.
+export const PICKER_WINDOW = 10
+
+// The row a theme draws on in the list, the separator counted.
+export const pickerRowOf = (name: ThemeName): number => PICKER_LIST.indexOf(name)
+
+// The window's offset within [0, total - window]; a non-number is the top.
+export const clampPickerScroll = (offset: number, total: number, window: number): number => {
+  const max = Math.max(0, total - window)
+  return Number.isFinite(offset) ? Math.min(max, Math.max(0, Math.round(offset))) : 0
+}
+
+// The offset that brings `row` into view with the least move: unchanged when
+// it is already in view, else the row at the window's top or bottom edge.
+export const scrollToRow = (offset: number, row: number, total: number, window: number): number => {
+  const from = clampPickerScroll(offset, total, window)
+  if (row < from) return clampPickerScroll(row, total, window)
+  if (row >= from + window) return clampPickerScroll(row - window + 1, total, window)
+  return from
+}
+
+// Rows hidden above and below the window at an offset.
+export const pickerMore = (offset: number, total: number, window: number): { above: number; below: number } => {
+  if (total <= window) return { above: 0, below: 0 }
+  const above = clampPickerScroll(offset, total, window)
+  return { above, below: total - window - above }
+}
+
+// An indicator line for the hidden rows; blank when there are none.
+export const moreText = (dir: 'up' | 'down', n: number): string => (n > 0 ? `${dir === 'up' ? '↑' : '↓'} ${n} more` : '')
+
+// Rows the list takes: all of it while it fits the window, else the window
+// and its two indicator rows, always drawn (blank when nothing is hidden on
+// that side) so the count never changes with the offset.
+export const pickerListRows = (total: number, window: number): number => (total <= window ? total : window + 2)
+
 // Rows the picker block draws: the hint (and, without the keys, how to take
-// them), one Button per theme, the `light` separator, Cancel, and the blank
-// row above the sections.
+// them), the theme list (`pickerListRows`), Cancel, and the blank row above
+// the sections.
 export const pickerRows = (hasKeys: boolean): number =>
-  THEME_NAMES.length + (LIGHT_THEMES.size > 0 ? 1 : 0) + (hasKeys ? 1 : 2) + 2
+  pickerListRows(PICKER_LIST_ROWS, PICKER_WINDOW) + (hasKeys ? 1 : 2) + 2
 
 // The picker's focus ring order: the element the Pane draws right before the
 // picker (`before`), every theme Button in list order, then Cancel. The render

@@ -2,7 +2,7 @@ import type { On } from 'claude-code'
 import { expect, mock, test } from 'claude-code/testing'
 import type { Engine } from 'claude-code/testing'
 
-import { PICKER_FOCUS_RETRY_MS, THEMES } from './themes'
+import { PICKER_FOCUS_RETRY_MS, PICKER_LIST_ROWS, PICKER_WINDOW, pickerRows, THEMES } from './themes'
 
 const HOME = '/home/myuser'
 const CWD = `${HOME}/code/example`
@@ -44,6 +44,8 @@ const answerEngine = (on: On, opens: unknown[] = [], closes: unknown[] = [], lan
   on('fs.stat', () => ({ value: { kind: 'file', size: 1, mtimeMs: 0, isLink: false } }) as never)
   on('process.run', () => ({ value: { stdout: 'main\n', stderr: '', exitCode: 0 } }) as never)
   on('ui.toast', () => ({ value: undefined }) as never)
+  // The engine's own scroll move, beneath the plugin's observer.
+  on('ui.scroll', () => ({}) as never)
   return clock
 }
 
@@ -273,7 +275,8 @@ test('the picker draws the dark themes, a light separator that is no Button, the
   expect(at('text:light')).toBeGreaterThan(-1)
   expect(at('button:theme:synthwave-84')).toBe(at('text:light') - 1)
   expect(at('button:theme:catppuccin-latte')).toBe(at('text:light') + 1)
-  expect(at('button:theme:nord-light')).toBe(at('button:theme-cancel') - 1)
+  // The last theme, then the window's bottom indicator, then Cancel.
+  expect(at('button:theme:nord-light')).toBe(at('button:theme-cancel') - 2)
   for (const name of Object.keys(THEMES)) expect(at(`button:theme:${name}`)).toBeGreaterThan(-1)
 })
 
@@ -285,4 +288,126 @@ test('a light theme previews with its own foreground and background', async ($, 
   expect(accentNow(tree)).toBe(THEMES['github-light'].accent)
   expect(rootBackground(tree)).toBe(THEMES['github-light'].background)
   expect(tree).toContain(`"color":"${THEMES['github-light'].foreground}"`)
+})
+
+// ── Fixed window ────────────────────────────────────────────────────────
+
+const all = (n: unknown, pick: (n: Node) => boolean, out: Node[] = []): Node[] => {
+  if (!isNode(n)) return out
+  if (pick(n)) out.push(n)
+  for (const c of n.children ?? []) all(c, pick, out)
+  return out
+}
+// The picker block: the column that holds Cancel and the clipped theme window.
+const pickerBlock = (tree: unknown): Node => {
+  const blocks = all(tree, n => n.type === 'Box' && n.props?.marginBottom === 1 && JSON.stringify(n).includes('theme-cancel'))
+  return blocks.at(-1) as Node
+}
+// The clipped window and the shift of the list inside it.
+const pickerWindow = (tree: unknown) => {
+  const box = all(pickerBlock(tree), n => n.type === 'Box' && n.props?.overflow === 'hidden')[0] as Node
+  const list = (box.children ?? []).filter(isNode)[0] as Node
+  return { box, offset: 0 - Number(list.props?.marginTop ?? 0) }
+}
+const moreLines = (tree: unknown) =>
+  (pickerBlock(tree).children ?? []).filter(isNode).filter(n => n.type === 'Text').map(n => textOf(n))
+
+// A wheel or scroll key over the Pane.
+const wheel = ($: Engine, by: number) =>
+  $.ui.scroll({ component: 'Pane', requestId: 'hud', offset: 0, by, bodyRows: 40, contentRows: 40, origin: { kind: 'person' } } as never)
+
+const STICKY = { ...SIDEBAR, isFocused: true, scroll: { offset: 0, bodyRows: 40 } }
+
+test('the theme list draws in a clipped window of PICKER_WINDOW rows, with the hidden rows named', async ($, on) => {
+  answerEngine(on)
+  const { pane } = await openPicker($)
+  const tree = await pane.drawn()
+  const w = pickerWindow(tree)
+  expect(w.box.props?.height).toBe(PICKER_WINDOW)
+  expect(w.offset).toBe(0) // default, the saved theme, is the first row
+  // Every theme Button is still drawn (the ring keeps its order), clipped by the window.
+  for (const name of Object.keys(THEMES)) expect(JSON.stringify(w.box)).toContain(`theme:${name}`)
+  const lines = moreLines(tree)
+  expect(lines).toContain(`↓ ${PICKER_LIST_ROWS - PICKER_WINDOW} more`)
+  expect(lines.some(l => /^↑ \d+ more$/.test(l))).toBe(false)
+})
+
+test('pickerRows equals the rows the picker block draws', async ($, on) => {
+  answerEngine(on)
+  const { pane } = await openPicker($)
+  for (const isFocused of [true, false]) {
+    await pane.redraw({ ...SIDEBAR, isFocused } as never)
+    const block = pickerBlock(await pane.drawn())
+    const drawnRows =
+      (block.children ?? []).filter(isNode).reduce((n, c) => n + (typeof c.props?.height === 'number' ? Number(c.props.height) : 1), 0) +
+      Number(block.props?.marginBottom ?? 0)
+    expect(drawnRows).toBe(pickerRows(isFocused))
+  }
+})
+
+test('a focus move past the bottom of the window shifts it by the least', async ($, on) => {
+  answerEngine(on)
+  const { pane } = await openPicker($)
+  await focus($, 'theme:monokai') // row 10, one past the window
+  const tree = await pane.drawn()
+  expect(pickerWindow(tree).offset).toBe(1)
+  expect(moreLines(tree)).toContain('↑ 1 more')
+  expect(moreLines(tree)).toContain(`↓ ${PICKER_LIST_ROWS - PICKER_WINDOW - 1} more`)
+  // Back up inside the window: no move.
+  await focus($, 'theme:nord')
+  expect(pickerWindow(await pane.drawn()).offset).toBe(1)
+})
+
+test('a carousel wrap jumps the window to that end', async ($, on) => {
+  answerEngine(on)
+  const { pane } = await openPicker($)
+  await focus($, 'theme:nord-light')
+  expect(pickerWindow(await pane.drawn()).offset).toBe(PICKER_LIST_ROWS - PICKER_WINDOW)
+  await focus($, 'theme-cancel') // wraps onto default
+  expect(pickerWindow(await pane.drawn()).offset).toBe(0)
+  await focus($, 'settings') // wraps onto nord-light
+  expect(pickerWindow(await pane.drawn()).offset).toBe(PICKER_LIST_ROWS - PICKER_WINDOW)
+})
+
+test('the picker opens with the saved theme in view', async ($, on) => {
+  answerEngine(on)
+  await startSession($)
+  const pane = await mountSidebar($)
+  await $.command.run({ command: 'hud-theme', args: 'nord-light' } as never)
+  await $.command.run({ command: 'hud-theme', args: '' } as never)
+  expect(pickerWindow(await pane.drawn()).offset).toBe(PICKER_LIST_ROWS - PICKER_WINDOW)
+})
+
+test('a scroll while the picker is open moves its window, not the sections, clamped to the list', async ($, on) => {
+  answerEngine(on)
+  const { pane } = await openPicker($)
+  await pane.redraw(STICKY as never)
+  await wheel($, 3)
+  let tree = (await pane.drawn()) as Node
+  expect(pickerWindow(tree).offset).toBe(3)
+  // The sections' own shift (the viewport's content box) did not move.
+  const content = all(tree, n => n.type === 'Box' && n.props?.overflow === 'hidden' && n.props?.height !== PICKER_WINDOW)[0] as Node
+  expect((content.children ?? []).filter(isNode)[0]?.props?.marginTop).toBe(0)
+  await wheel($, 100)
+  expect(pickerWindow(await pane.drawn()).offset).toBe(PICKER_LIST_ROWS - PICKER_WINDOW)
+  await wheel($, -100)
+  expect(pickerWindow(await pane.drawn()).offset).toBe(0)
+
+  // Closed, the scroll moves the sections again (a shorter body, so they overflow).
+  await pane.press({ key: 'theme-cancel' })
+  await pane.redraw({ ...STICKY, scroll: { offset: 0, bodyRows: 12 } } as never)
+  await wheel($, 2)
+  tree = (await pane.drawn()) as Node
+  const viewport = all(tree, n => n.type === 'Box' && n.props?.overflow === 'hidden')[0] as Node
+  expect((viewport.children ?? []).filter(isNode)[0]?.props?.marginTop).toBe(-2)
+})
+
+test('closing the picker resets its window', async ($, on) => {
+  answerEngine(on)
+  const { pane } = await openPicker($)
+  await wheel($, 5)
+  expect(pickerWindow(await pane.drawn()).offset).toBe(5)
+  await pane.press({ key: 'theme-cancel' })
+  await $.command.run({ command: 'hud-theme', args: '' } as never)
+  expect(pickerWindow(await pane.drawn()).offset).toBe(0)
 })

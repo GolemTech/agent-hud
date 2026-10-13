@@ -6,8 +6,17 @@ import {
   isLight,
   LIGHT_THEMES,
   parseThemeArg,
+  clampPickerScroll,
+  moreText,
+  PICKER_LIST,
+  PICKER_LIST_ROWS,
+  PICKER_WINDOW,
+  pickerListRows,
+  pickerMore,
   pickerOrder,
+  pickerRowOf,
   pickerRows,
+  scrollToRow,
   resolveTheme,
   ROLES,
   shownTheme,
@@ -185,9 +194,58 @@ test('shownTheme draws the preview over the saved theme, and the saved one witho
   expect(shownTheme(undefined, undefined)).toBe(THEMES.default)
 })
 
-test('pickerRows counts the hints, one row per theme, the light separator, Cancel and the blank row under it', () => {
-  expect(pickerRows(true)).toBe(THEME_NAMES.length + 4) // one hint
-  expect(pickerRows(false)).toBe(THEME_NAMES.length + 5) // and how to take the keys
+test('pickerRows counts the hints, the fixed window and its two indicator rows, Cancel and the blank row under it', () => {
+  expect(PICKER_LIST_ROWS).toBe(THEME_NAMES.length + 1) // every theme and the light separator
+  expect(PICKER_LIST_ROWS).toBeGreaterThan(PICKER_WINDOW)
+  expect(pickerRows(true)).toBe(PICKER_WINDOW + 2 + 3) // one hint
+  expect(pickerRows(false)).toBe(PICKER_WINDOW + 2 + 4) // and how to take the keys
+})
+
+test('pickerListRows: the whole list while it fits, else the window and its two indicator rows', () => {
+  expect(pickerListRows(6, 10)).toBe(6)
+  expect(pickerListRows(10, 10)).toBe(10)
+  expect(pickerListRows(32, 10)).toBe(12)
+})
+
+test('PICKER_LIST is every theme in order with the separator (null) right before the first light one', () => {
+  expect(PICKER_LIST.filter(n => n !== null)).toEqual(THEME_NAMES)
+  const sep = PICKER_LIST.indexOf(null)
+  expect(PICKER_LIST[sep - 1]).toBe('synthwave-84')
+  expect(PICKER_LIST[sep + 1]).toBe('catppuccin-latte')
+  expect(pickerRowOf('default')).toBe(0)
+  expect(pickerRowOf('synthwave-84')).toBe(sep - 1)
+  expect(pickerRowOf('catppuccin-latte')).toBe(sep + 1)
+  expect(pickerRowOf('nord-light')).toBe(PICKER_LIST_ROWS - 1)
+})
+
+test('clampPickerScroll keeps the window inside the list', () => {
+  expect(clampPickerScroll(-3, 32, 10)).toBe(0)
+  expect(clampPickerScroll(5, 32, 10)).toBe(5)
+  expect(clampPickerScroll(40, 32, 10)).toBe(22)
+  expect(clampPickerScroll(4, 6, 10)).toBe(0) // the list fits
+  expect(clampPickerScroll(Number.NaN, 32, 10)).toBe(0)
+})
+
+test('scrollToRow moves the window the least that brings a row into view', () => {
+  expect(scrollToRow(0, 3, 32, 10)).toBe(0) // already in view
+  expect(scrollToRow(0, 10, 32, 10)).toBe(1) // one past the bottom
+  expect(scrollToRow(5, 2, 32, 10)).toBe(2) // above the top
+  expect(scrollToRow(0, 31, 32, 10)).toBe(22) // the last row: the end
+  expect(scrollToRow(22, 0, 32, 10)).toBe(0) // the first row: the top
+  expect(scrollToRow(0, 4, 6, 10)).toBe(0) // the list fits
+})
+
+test('pickerMore counts the rows hidden above and below the window', () => {
+  expect(pickerMore(0, 32, 10)).toEqual({ above: 0, below: 22 })
+  expect(pickerMore(4, 32, 10)).toEqual({ above: 4, below: 18 })
+  expect(pickerMore(22, 32, 10)).toEqual({ above: 22, below: 0 })
+  expect(pickerMore(0, 6, 10)).toEqual({ above: 0, below: 0 })
+})
+
+test('moreText names the hidden rows, blank when none', () => {
+  expect(moreText('up', 4)).toBe('↑ 4 more')
+  expect(moreText('down', 17)).toBe('↓ 17 more')
+  expect(moreText('up', 0)).toBe('')
 })
 
 const BACKGROUNDS = {
