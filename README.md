@@ -125,7 +125,7 @@ To add the marketplace first and install separately:
 
 `/hud-theme` without a name opens a picker at the top of the sidebar, like
 Claude Code's `/theme`, at any terminal width: each theme is listed in its own
-accent color, the saved one marked `●`, and the sections stay drawn below it. `[change]` in the `⋮` settings block opens the same picker.
+accent color, the saved one marked `●`, and the sections stay drawn below it. The dark themes come first, then a `light` line, then the light themes. `[change]` in the `⋮` settings block opens the same picker.
 Moving through the list previews each theme on the sidebar itself, and it
 wraps around: down from the last theme lands on the first, up from the first
 on the last. Enter (or a click) applies and saves it; `c` (or clicking
@@ -140,13 +140,21 @@ spaces or underscores work for hyphens (`/hud-theme tokyo night`).
 | Theme | Notes |
 | --- | --- |
 | `default` | Claude Code's own theme colors; follows `/theme`, light or dark |
-| `one-dark-pro`, `catppuccin-mocha`, `gruvbox-dark`, `dracula`, `nord`, `tokyo-night`, `solarized-dark`, `rose-pine`, `kanagawa`, `monokai` | Fixed colors from each theme's palette |
+| `one-dark-pro`, `catppuccin-mocha`, `gruvbox-dark`, `dracula`, `nord`, `tokyo-night`, `solarized-dark`, `rose-pine`, `kanagawa`, `monokai` | Dark: fixed colors from each theme's palette |
+| `everforest-dark`, `ayu-dark`, `github-dark`, `catppuccin-macchiato`, `material-ocean`, `night-owl`, `nightfox`, `oceanic-next`, `horizon`, `synthwave-84` | Dark: fixed colors from each theme's palette |
+| `catppuccin-latte`, `solarized-light`, `github-light`, `gruvbox-light`, `one-light`, `rose-pine-dawn`, `ayu-light`, `everforest-light`, `tokyo-night-day`, `nord-light` | Light: fixed colors and the theme's own text color |
 
 The choice is saved and applies to every later session until you change it.
 Each preset also fills the sidebar and the band above the prompt with its
 editor background (for example `#282a36` for `dracula`), and a preview changes
-it too; `default` keeps your terminal's own background. The presets are tuned
-for dark terminals; on a light terminal, use `default`.
+it too; `default` keeps your terminal's own background. A light preset also
+draws plain text in its own text color (for example `#1f2328` for
+`github-light`), so it stays readable whatever your terminal's text color is;
+`default` and the dark presets keep your terminal's text color. Every color
+reads at least 3:1 against its background, and a light theme's text 4.5:1. To
+get there, a few light themes use a darker shade of an upstream color (for
+example `catppuccin-latte`'s yellow); `nord-light` is built from the Nord
+palette, which has no official light variant.
 
 ## How it gets its data
 
