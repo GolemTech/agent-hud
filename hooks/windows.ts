@@ -13,7 +13,7 @@
 
 // The Pane's two long lists, in rows: subagent cards and todos.
 export const SUBAGENT_WINDOW = 12
-export const TODO_WINDOW = 8
+export const TODO_WINDOW = 5
 
 export const sumRows =(heights: readonly number[]): number => heights.reduce((n, h) => n + h, 0)
 

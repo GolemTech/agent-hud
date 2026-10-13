@@ -329,28 +329,28 @@ test('a long todo list draws in a window of TODO_WINDOW rows with the hidden ite
 })
 
 test('the wheel over the todo list moves the list, not the Pane; elsewhere it moves the Pane', async ($, on) => {
-  // 12 body rows: an 8-row viewport under the header, the list's 11 rows overflow it.
-  const { pane } = await startLists($, on, 60, 12, 'todos')
+  // 10 body rows: a 6-row viewport under the header, the list's 8 rows overflow it.
+  const { pane } = await startLists($, on, 60, 10, 'todos')
   await writeTodos($, todoList(20, -1))
   await pane.drawn() // the engine draws before the person can wheel over it
   const listTop = HEADER_ROWS + 1 // under the Todo header
-  await wheelAt($, 2, listTop + 4, 12)
+  await wheelAt($, 2, listTop + 4, 10)
   let p = await parts(pane)
   expect(listWindow(p.root, TODO_WINDOW)?.up).toBe('↑ 2 more')
   expect(p.content.props?.marginTop).toBe(0)
   // Over the section header: the Pane moves, the list stays.
-  await wheelAt($, 1, HEADER_ROWS, 12)
+  await wheelAt($, 1, HEADER_ROWS, 10)
   p = await parts(pane)
   expect(p.content.props?.marginTop).toBe(-1)
   expect(listWindow(p.root, TODO_WINDOW)?.up).toBe('↑ 2 more')
   // The list moved up a row with the Pane: its top indicator is now on the
   // header's old row, and a tick there moves the list again.
-  await wheelAt($, 1, HEADER_ROWS, 12)
+  await wheelAt($, 1, HEADER_ROWS, 10)
   p = await parts(pane)
   expect(p.content.props?.marginTop).toBe(-1)
   expect(listWindow(p.root, TODO_WINDOW)?.up).toBe('↑ 3 more')
   // A scroll key (no pointer) moves the Pane.
-  await scroll($, 1, 12)
+  await scroll($, 1, 10)
   expect((await parts(pane)).content.props?.marginTop).toBe(-2)
 })
 
@@ -359,27 +359,28 @@ test('the todo window follows the item in progress', async ($, on) => {
   await writeTodos($, todoList(20, 12))
   let w = listWindow(await pane.drawn(), TODO_WINDOW)
   expect(w?.items.at(-1)).toBe('[ ] task 12')
-  expect(w?.up).toBe('↑ 5 more')
+  expect(w?.up).toBe(`↑ ${12 - TODO_WINDOW + 1} more`)
   await writeTodos($, todoList(20, 13))
   w = listWindow(await pane.drawn(), TODO_WINDOW)
   expect(w?.items.at(-1)).toBe('[ ] task 13')
-  expect(w?.up).toBe('↑ 6 more')
+  expect(w?.up).toBe(`↑ ${13 - TODO_WINDOW + 1} more`)
 })
 
 test('a wheel move stops the follow until another item is in progress', async ($, on) => {
   const { pane } = await startLists($, on, 60, 40, 'todos')
+  const following = 13 - TODO_WINDOW + 1 // the least move that shows task 13
   await writeTodos($, todoList(20, 13))
-  expect(listWindow(await pane.drawn(), TODO_WINDOW)?.up).toBe('↑ 6 more')
+  expect(listWindow(await pane.drawn(), TODO_WINDOW)?.up).toBe(`↑ ${following} more`)
   await wheelAt($, -3, HEADER_ROWS + 3, 40)
-  expect(listWindow(await pane.drawn(), TODO_WINDOW)?.up).toBe('↑ 3 more')
+  expect(listWindow(await pane.drawn(), TODO_WINDOW)?.up).toBe(`↑ ${following - 3} more`)
   // The same item in progress: the window stays where the wheel left it.
   await writeTodos($, todoList(20, 13))
-  expect(listWindow(await pane.drawn(), TODO_WINDOW)?.up).toBe('↑ 3 more')
+  expect(listWindow(await pane.drawn(), TODO_WINDOW)?.up).toBe(`↑ ${following - 3} more`)
   // The next one: the follow is back, with the least move.
   await writeTodos($, todoList(20, 14))
   const w = listWindow(await pane.drawn(), TODO_WINDOW)
   expect(w?.items.at(-1)).toBe('[ ] task 14')
-  expect(w?.up).toBe('↑ 7 more')
+  expect(w?.up).toBe(`↑ ${following + 1} more`)
 })
 
 test('a long subagent list draws in a window of SUBAGENT_WINDOW rows, whole cards only', async ($, on) => {
@@ -401,9 +402,9 @@ test('a long subagent list draws in a window of SUBAGENT_WINDOW rows, whole card
 // The section's rows as counted: collapsing it drops its body, so the end
 // offset falls by exactly the rows the body draws.
 for (const [cols, rows] of [
-  [60, 12],
-  [20, 14],
-  [100, 10],
+  [60, 10],
+  [20, 10],
+  [100, 8],
 ] as const) {
   test(`at ${cols}x${rows}, the windowed todo list is counted as drawn`, async ($, on) => {
     const { pane } = await startLists($, on, cols, rows, 'todos')

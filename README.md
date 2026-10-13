@@ -24,7 +24,7 @@ from the repository root (needs `vhs`, `ffmpeg` and `gifsicle`).
 | Context   | `━` meters (`▬` if chosen in the settings block) for the context window and each rate-limit window, with time to reset and the local reset time; a footer with total tokens and cost. |
 | MCP       | MCP servers, connected first; servers waiting for authentication are dimmed. `[active]` / `[all]` in its header filters the list. |
 | Subagents | Running / done / error counts, then one card per subagent: description, type, model, elapsed time and context tokens. Past 12 rows the cards scroll in a window of their own. |
-| Todo      | The main loop's task list: done first, then in progress, then pending. Past 8 rows it scrolls in a window of its own. |
+| Todo      | The main loop's task list: done first, then in progress, then pending. Past 5 rows it scrolls in a window of its own. |
 | Gentle AI | The [gentle-ai](https://github.com/Gentleman-Programming/gentle-ai) toolset: one aligned grid in four groups. **Tools**: `gentle-ai`, `gga` and `engram` versions with `✓` up to date or `↑ <newer>` (as fresh as your local brew tap, "as of" its last fetch); **gga**: the review hook and its rules file; **RDD**: receipt-driven development on or off and which scope decides it, then each scope's own setting; **TDD**: test-first by default under ODD, and strict TDD. One status vocabulary throughout: `✓` ok, `✗` missing, `↑` update, `●` on, `○` off, `—` unset, `?` unknown. Shows "gentle-ai not installed" when it is not. |
 | Footer    | Always at the bottom: the Claude Code version (`● ClaudeCode x.y.z`). |
 
@@ -94,7 +94,7 @@ To add the marketplace first and install separately:
   pulls the scroll back so it never points past the end. In an inline frame
   the sidebar is drawn as one plain flow.
 - Long lists stay short: Subagents draws in a window of 12 rows and Todo in
-  one of 8, whole cards and todos only, with `↑ N more` / `↓ N more` lines
+  one of 5, whole cards and todos only, with `↑ N more` / `↓ N more` lines
   counting the items hidden on each side. A list that fits draws as before,
   with no window. The mouse wheel over a list scrolls that list; anywhere
   else, and with the scroll keys, it scrolls the sidebar. Each window follows
