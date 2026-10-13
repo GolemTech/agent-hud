@@ -8,7 +8,7 @@ rate limit is left, which MCP servers are connected, what your subagents are
 doing, and the main loop's todo list.
 
 <p align="center">
-  <img src="docs/assets/demo.gif" width="420" alt="Agent HUD sidebar in demo mode: the project header, a Session section with account, model, output style, branch and change counts, context and rate-limit meters, connected MCP servers, subagent cards moving from running to done or failed with their token counts, a todo list ticking off, the Gentle AI tools grid, and the Claude Code version pinned in the footer.">
+  <img src="docs/assets/demo.gif" width="420" alt="Agent HUD sidebar in demo mode: the project header, a Session section with account, model, output style, branch and change counts, context and rate-limit meters, connected MCP servers, subagent cards moving from running to done or failed with their token counts, a todo list ticking off, the Gentle AI tools grid, and the Claude Code version pinned in the footer; then /hud-theme opens the theme picker at the top and the whole sidebar previews nord-light, default and a few dark themes before c cancels back to the saved theme.">
 </p>
 
 The recording uses `/hud-demo` (fictional sample data, no tokens spent) on a

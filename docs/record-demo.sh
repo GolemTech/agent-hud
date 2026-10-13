@@ -14,6 +14,6 @@ vhs docs/demo.tape
 ffmpeg -loglevel error -y -i "$full" \
   -vf "$crop,split[a][b];[a]palettegen=max_colors=96[p];[b][p]paletteuse=dither=none" \
   "$out.tmp.gif"
-gifsicle -O3 --lossy=40 "$out.tmp.gif" -o "$out"
+gifsicle -O3 --lossy=80 "$out.tmp.gif" -o "$out"
 rm -f "$full" "$out.tmp.gif"
 echo "wrote $out ($(du -h "$out" | cut -f1))"

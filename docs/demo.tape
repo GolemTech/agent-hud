@@ -41,6 +41,24 @@ Sleep 1s
 Show
 # The sample session: subagents start, finish (one fails), todos advance.
 Sleep 20s
+# The theme picker: up from the first theme wraps to the last, a light one,
+# then down through default to a few dark ones; each step previews live.
+# `c` cancels back to the saved theme.
+Type "/hud-theme"
+Enter
+Sleep 2s
+Up
+Sleep 1.2s
+Down
+Sleep 1.2s
+Down
+Sleep 1.2s
+Down
+Sleep 1.2s
+Down
+Sleep 1.2s
+Type "c"
+Sleep 1.5s
 Hide
 Ctrl+C
 Ctrl+C
