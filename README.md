@@ -20,7 +20,7 @@ from the repository root (needs `vhs`, `ffmpeg` and `gifsicle`).
 | Section   | Contents |
 | --------- | -------- |
 | Header    | Always at the top: the project's name (`📂`, the repository root's folder, else the working directory's, after `🔒` in privacy mode), centered in a full-width band that ends in the `⋮` settings button. |
-| Session   | Session title (or short id), signed-in account, model and effort, output style (when not the default), git branch (`⑂`) with working-tree changes (`+N` added, `-M` removed lines, shown only when there are any), working directory shortened to fit. |
+| Session   | Session title (or short id), signed-in account, model and effort, output style (when not the default), git branch (`⑂`) with commits against its upstream (`↑N` to push, `↓M` to pull, each shown only when above zero) and working-tree changes (`+N` added, `-M` removed lines, shown only when there are any), working directory shortened to fit. |
 | Context   | `━` meters (`▬` if chosen in the settings block) for the context window and each rate-limit window, with time to reset and the local reset time; a footer with total tokens and cost. |
 | MCP       | MCP servers, connected first; servers waiting for authentication are dimmed. `[active]` / `[all]` in its header filters the list. |
 | Subagents | Running / done / error counts, then one card per subagent: description, type, model, elapsed time and context tokens. Past 12 rows the cards scroll in a window of their own. |
@@ -193,6 +193,11 @@ rest, and the limits that come with them:
   cadence: staged and unstaged lines added and removed against `HEAD`.
   Untracked files are not counted, and nothing shows in a repository with no
   commit yet.
+- **Commits ahead and behind** come from
+  `git rev-list --left-right --count HEAD...@{upstream}` on the same cadence.
+  The HUD never runs `git fetch`, so `↓` is as of your last fetch. Nothing
+  shows for a branch with no upstream or a detached `HEAD`. Privacy mode keeps
+  these counts, like the change counts: they name nothing.
 - **Output style** is the one Claude Code composes each request's system
   prompt with, observed on `prompt.compose` without changing the prompt.
   Before the first request it is read from the `outputStyle` setting

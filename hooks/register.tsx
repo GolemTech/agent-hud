@@ -3,6 +3,8 @@ import type { EngineInterface, Register } from 'claude-code'
 
 import type { AgentRow, TodoItem, TodoStatus } from '../types'
 import { demoSnapshot } from './demo'
+import { aheadText, behindText, parseAheadBehind, syncText } from './git'
+import type { AheadBehind } from './git'
 import {
   ACTION_TIMEOUT_MS,
   actionSpec,
@@ -223,6 +225,10 @@ let gitBranchCache: string | null = null
 // when clean, outside a repository or with no HEAD yet. Untracked files are
 // not counted by `git diff`.
 let gitChangesCache: Changes | null = null
+// Commits ahead of / behind the upstream, from `git rev-list --left-right
+// --count HEAD...@{upstream}` on the same cadence, as of the last fetch (the
+// HUD never fetches); null with no upstream, a detached HEAD or no repository.
+let gitAheadBehindCache: AheadBehind | null = null
 // The repository root the branch poll last saw; null outside a repository.
 let repoRootCache: string | null = null
 
@@ -758,6 +764,8 @@ export type HudView = {
   branch: string | null
   /** Working-tree lines added / removed against HEAD; null when clean. */
   changes: Changes | null
+  /** Commits to push / pull against the upstream; null or absent with no upstream. */
+  aheadBehind?: AheadBehind | null
   /** Active output style's name; null for the default style or unknown. */
   outputStyle: string | null
   cwd: string
@@ -1007,6 +1015,7 @@ const demoView = (elapsedMs: number): HudView => {
     mainModel: d.session.model,
     branch: d.session.branch,
     changes: d.session.changes,
+    aheadBehind: d.session.aheadBehind,
     outputStyle: d.session.outputStyle,
     cwd: d.session.cwd,
     home: d.session.home,
@@ -1061,6 +1070,7 @@ const liveView = async ($: EngineInterface, list: AgentRow[]): Promise<HudView> 
     mainModel: loopModel.get(MAIN) ?? { model },
     branch: gitBranchCache,
     changes: gitChangesCache,
+    aheadBehind: gitAheadBehindCache,
     outputStyle: composedStyle === undefined ? settingsStyle : composedStyle,
     cwd,
     home: homeCache,
@@ -1384,6 +1394,7 @@ export const register: Register = on => {
           if (!repo) {
             gitBranchCache = null
             gitChangesCache = null
+            gitAheadBehindCache = null
           } else {
             try {
               const { stdout } = await $.process.run(['git', 'branch', '--show-current'], {
@@ -1402,6 +1413,16 @@ export const register: Register = on => {
                 timeoutMs: CMD_TIMEOUT_MS,
               })
               gitChangesCache = exitCode === 0 ? parseShortstat(stdout) : null
+            } catch {
+              // keep the last known counts
+            }
+            // No upstream, or a detached HEAD, exits non-zero: no counts.
+            try {
+              const { stdout, exitCode } = await $.process.run(
+                ['git', 'rev-list', '--left-right', '--count', 'HEAD...@{upstream}'],
+                { cwd: repo.root, timeoutMs: CMD_TIMEOUT_MS },
+              )
+              gitAheadBehindCache = exitCode === 0 ? parseAheadBehind(stdout) : null
             } catch {
               // keep the last known counts
             }
@@ -1887,9 +1908,12 @@ export const register: Register = on => {
     }
 
     const branch = view.branch
-    const changeText = view.changes
-      ? `${view.changes.added > 0 ? ` +${view.changes.added}` : ''}${view.changes.removed > 0 ? ` -${view.changes.removed}` : ''}`
-      : ''
+    // Everything after the branch name: ` ↑3 ↓1 +42 -7`, one width-keeping item.
+    const changeText =
+      syncText(view.aheadBehind ?? null) +
+      (view.changes
+        ? `${view.changes.added > 0 ? ` +${view.changes.added}` : ''}${view.changes.removed > 0 ? ` -${view.changes.removed}` : ''}`
+        : '')
     const meterNote = (m: Meter) => (m.note ? m.note.length : 0)
     const meterHead = 4 + L.barWidth + 5 // label, bar, percent
     const todosHeader = todoList.length > 0 ? `Todo ${todoDone}/${todoList.length}` : 'Todo'
@@ -2210,6 +2234,12 @@ export const register: Register = on => {
                 {changeText ? (
                   <Box flexShrink={0}>
                     <Text {...fg(t)}>
+                      {view.aheadBehind && view.aheadBehind.ahead > 0 && (
+                        <Text color={t.warning}>{aheadText(view.aheadBehind)}</Text>
+                      )}
+                      {view.aheadBehind && view.aheadBehind.behind > 0 && (
+                        <Text color={t.accent}>{behindText(view.aheadBehind)}</Text>
+                      )}
                       {view.changes && view.changes.added > 0 && <Text color={t.success}>{` +${view.changes.added}`}</Text>}
                       {view.changes && view.changes.removed > 0 && <Text color={t.error}>{` -${view.changes.removed}`}</Text>}
                     </Text>
