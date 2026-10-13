@@ -73,7 +73,7 @@ export type Layout = {
   columns: number
   /** Rows the Pane's body has. */
   rows: number
-  /** Cells of a meter's ━ track. */
+  /** Cells of a meter's ▬ track. */
   barWidth: number
   /** Narrow dock: the compact subagent tally. */
   compact: boolean

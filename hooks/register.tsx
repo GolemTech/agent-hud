@@ -2075,9 +2075,9 @@ export const register: Register = on => {
                     <Box flexShrink={0}>
                       <Text {...fg(t)}>
                         <Text color={t.subtle}>{m.label.padEnd(4)}</Text>
-                        <Text color={t[meterColor(m.percent)]}>{'━'.repeat(filled)}</Text>
+                        <Text color={t[meterColor(m.percent)]}>{'▬'.repeat(filled)}</Text>
                         <Text color={t.subtle} dimColor>
-                          {'━'.repeat(empty)}
+                          {'▬'.repeat(empty)}
                         </Text>
                         {` ${Math.round(m.percent)}%`.padStart(5)}
                       </Text>

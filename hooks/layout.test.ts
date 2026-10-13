@@ -336,7 +336,7 @@ for (const cols of [28, 60, 100]) {
 
 const meterBar = (tree: unknown, label: string): number => {
   const box = all(tree, 'Box').find(b => b.props?.flexShrink === 0 && textOf(b).startsWith(label))
-  return (textOf(box).match(/━/g) ?? []).length
+  return (textOf(box).match(/▬/g) ?? []).length
 }
 
 test('meter bars are wider in a wide dock than in a narrow one', async ($, on) => {
