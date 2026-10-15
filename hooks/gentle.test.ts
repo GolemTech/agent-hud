@@ -7,6 +7,9 @@ import {
   checkMark,
   GENTLE_JOIN_DEADLINE_MS,
   gentleGrid,
+  cellLines,
+  gentleRowLines,
+  rowCells,
   ggaHookInstalled,
   hooksDir,
   isAbsolutePath,
@@ -24,7 +27,8 @@ import {
   strictMark,
   toolMark,
 } from './gentle'
-import type { GentleView } from './gentle'
+import type { GentleRow, GentleView } from './gentle'
+import { gridFor } from './layout'
 
 // ── Pure helpers ─────────────────────────────────────────────────────────
 
@@ -314,6 +318,44 @@ test('gentleGrid: what each state leaves out or adds', () => {
   expect(gentleGrid({ ...VIEW, strictTdd: 'on' }).slice(-1)[0]).toMatchObject({ value: { text: '●', tone: 'success' }, buttons: [] })
 })
 
+// ── Grid rows: a label cell and a value cell that wraps inside itself ────
+
+test('cellLines: greedy lines inside the value cell; a wider item wraps over its own lines', () => {
+  expect(cellLines([], 10)).toBe(0)
+  expect(cellLines([6, 1], 10)).toBe(1) // 6 + 1 + 1
+  expect(cellLines([6, 4, 5], 10)).toBe(2) // [6] then [4 5]
+  expect(cellLines([6, 25, 4], 10)).toBe(5) // [6], 25 over 3 lines, [4]
+})
+
+// VIEW's grid: labels up to `gentle-ai` (label cell 11), values up to 6.
+const GRID = gridFor(
+  gentleGrid(VIEW).flatMap(r => (r.kind === 'item' ? [r.label] : [])),
+  gentleGrid(VIEW).flatMap(r => (r.kind === 'item' ? [r.value.text] : [])),
+  22,
+)
+const rowNamed = (label: string, kind: GentleRow['kind'] = 'item') =>
+  gentleGrid(VIEW).find(r => r.label === label && r.kind === kind) as GentleRow
+
+test('rowCells: the value cell takes the rest of the line; a heading summary moves to the value column when the detail column is too narrow', () => {
+  expect(rowCells(rowNamed('project'), GRID, 22)).toEqual({ label: 11, cell: 10 })
+  // `● on · global` (13) does not fit after the 18-cell span at 22 columns.
+  expect(rowCells(rowNamed('RDD', 'heading'), GRID, 22)).toEqual({ label: 11, cell: 10 })
+  expect(rowCells(rowNamed('RDD', 'heading'), GRID, 40)).toEqual({ label: 18, cell: 21 })
+  // Never a cell under one column.
+  expect(rowCells(rowNamed('project'), GRID, 5).cell).toBe(1)
+})
+
+test('gentleRowLines: wrapped value-cell lines count, at the cell width', () => {
+  // `—` [on] [off] fit on one 39-cell line, but wrap once in a 10-cell cell.
+  expect(gentleRowLines(rowNamed('project'), GRID, 40)).toBe(1)
+  expect(gentleRowLines(rowNamed('project'), GRID, 22)).toBe(2)
+  // `●` [● on] [off]: each part on its own line in 10 cells.
+  expect(gentleRowLines(rowNamed('global'), GRID, 22)).toBe(3)
+  // `test-first (ODD)` (16) wraps over two lines of the 10-cell cell.
+  expect(gentleRowLines(rowNamed('TDD', 'heading'), GRID, 22)).toBe(2)
+  expect(gentleRowLines(rowNamed('Tools', 'heading'), GRID, 22)).toBe(1)
+})
+
 // ── Wiring ───────────────────────────────────────────────────────────────
 
 const HOME = '/home/myuser'
@@ -519,9 +561,16 @@ const textOf = (n: unknown): string =>
     : typeof n === 'object' && n !== null
       ? ((n as Node).children ?? []).map(textOf).join('')
       : ''
-// A grid row's cells as drawn, padding trimmed: label, value, then details.
-const cellsOf = (tree: unknown, label: string): string[] =>
-  (rowOf(tree, label)?.children ?? []).map(c => textOf(c).trim())
+// A grid row's cells as drawn: the label, then what its value cell holds
+// (value, detail, buttons).
+const cellNodes = (tree: unknown, label: string): unknown[] =>
+  (rowOf(tree, label)?.children ?? []).flatMap(c =>
+    typeof c === 'object' && c !== null && (c as Node).type === 'Box' && (c as Node).props?.flexWrap === 'wrap'
+      ? ((c as Node).children ?? [])
+      : [c],
+  )
+// The same, padding trimmed.
+const cellsOf = (tree: unknown, label: string): string[] => cellNodes(tree, label).map(c => textOf(c).trim())
 const ITEM_LABELS = ['gentle-ai', 'gga', 'engram', 'hook', 'rules', 'project', 'global', 'strict']
 const HEADINGS = ['Tools', 'gga', 'RDD', 'TDD']
 const headingsOf = (tree: unknown): string[] => {
@@ -561,6 +610,25 @@ test('narrow sidebar: RDD scope labels never shrink and sit on their own rows', 
   expect(project).not.toContain('rdd-global')
 })
 
+test('narrow sidebar: wrapped buttons and summaries stay in the value cell, under the value column', async ($, on) => {
+  await start($, on)
+  const pane = await mountPane($)
+  await pane.redraw({ title: 'Agent HUD', isFocused: false, bodyColumns: 24, placement: 'dock' } as never) // 22 drawable
+  const tree = await pane.drawn()
+  const project = rowOf(tree, 'project')
+  const [labelBox, cell] = (project?.children ?? []) as Node[]
+  expect(project?.children?.length).toBe(2)
+  expect(textOf(labelBox).length).toBe(11)
+  expect(cell?.type).toBe('Box')
+  expect(cell?.props).toMatchObject({ flexShrink: 0, flexWrap: 'wrap', columnGap: 1, width: 10 })
+  expect(JSON.stringify(cell)).toContain('"key":"rdd-project-off"')
+  // The TDD summary sits in the same column, in a cell of its own width.
+  const tdd = rowOf(tree, 'TDD')
+  expect(textOf((tdd?.children ?? [])[0]).length).toBe(11)
+  expect((tdd?.children?.[1] as Node).props).toMatchObject({ width: 10, flexWrap: 'wrap' })
+  expect(textOf(tdd?.children?.[1])).toBe('test-first (ODD)')
+})
+
 test('each RDD scope row shows its own value and marks it on its buttons; unset is —', async ($, on) => {
   await start($, on) // global on, project unset
   const tree = await (await mountPane($)).drawn()
@@ -589,7 +657,7 @@ test('the Gentle AI section is one grid: headings Tools, gga, RDD, TDD and align
   expect(cellsOf(tree, 'strict')).toEqual(['strict', '—', '[configure]'])
   // Every item's label Box is as wide as the others, and so is every value.
   const widths = (cell: number) =>
-    new Set(ITEM_LABELS.map(l => textOf((rowOf(tree, l)?.children ?? [])[cell]).length))
+    new Set(ITEM_LABELS.map(l => textOf(cellNodes(tree, l)[cell]).length))
   expect(widths(0).size).toBe(1)
   expect(widths(1).size).toBe(1)
   for (const l of ITEM_LABELS) expect((rowOf(tree, l)?.children?.[0] as Node).props?.flexShrink).toBe(0)

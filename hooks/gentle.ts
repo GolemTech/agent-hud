@@ -5,6 +5,8 @@
 // commands; gga itself is never run for it (every gga command but `run` checks
 // GitHub for updates, and `gga config` sources the repository's `.gga`).
 
+import { buttonText, flowRows, textRows } from './layout'
+import type { Grid } from './layout'
 import { clean } from './text'
 
 // ── Pure helpers ─────────────────────────────────────────────────────────
@@ -376,5 +378,57 @@ export const gentleGrid = (g: GentleView): GentleRow[] => {
   if (g.strictTdd)
     item('strict', strictMark(g.strictTdd), null, g.strictTdd === 'on' ? [] : [{ key: 'tdd-configure', label: 'configure' }])
   return rows
+}
+
+// ── Grid rows ────────────────────────────────────────────────────────────
+// A row is a label cell and a value cell holding the rest of the line. The
+// value cell wraps inside its own width, so a wrapped part (a button, a
+// detail, a summary) lines up under the value column, never at column 0.
+
+// The label and value cells of a row at `columns`. A heading's summary sits
+// in the detail column (the label spans the value column) when it fits there,
+// else in the value column; the value cell is never under one column.
+export const rowCells = (r: GentleRow, grid: Grid, columns: number): { label: number; cell: number } => {
+  const label =
+    r.kind === 'item' ? grid.label : !r.summary || grid.head + 1 + r.summary.text.length <= columns ? grid.head : grid.label
+  return { label, cell: Math.max(1, columns - label - 1) }
+}
+
+// The widths of what a row's value cell holds, in order: a heading's summary;
+// an item's padded value, detail and buttons.
+export const cellWidths = (r: GentleRow, grid: Grid): number[] =>
+  r.kind === 'heading'
+    ? r.summary
+      ? [r.summary.text.length]
+      : []
+    : [grid.value, ...(r.detail ? [r.detail.text.length] : []), ...r.buttons.map(b => buttonText(b.label, b.selected).length)]
+
+// Lines a value cell of `cell` columns takes: greedy, as flex wrapping places
+// its items; an item wider than the cell sits alone and wraps over its own
+// lines (`textRows`).
+export const cellLines = (widths: readonly number[], cell: number): number => {
+  let lines = 0
+  let used = -1 // no open line
+  for (const w of widths) {
+    if (w > cell) {
+      lines += textRows(w, cell)
+      used = -1
+    } else if (used >= 0 && used + 1 + w <= cell) {
+      used += 1 + w
+    } else {
+      lines += 1
+      used = w
+    }
+  }
+  return lines
+}
+
+// Rows one grid row draws at `columns`: its value cell's lines (one for a
+// bare heading), plus a line when the label cell alone fills the row.
+export const gentleRowLines = (r: GentleRow, grid: Grid, columns: number): number => {
+  const { label, cell } = rowCells(r, grid, columns)
+  const widths = cellWidths(r, grid)
+  if (widths.length === 0) return 1
+  return flowRows([label, cell], columns) - 1 + cellLines(widths, cell)
 }
 
