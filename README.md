@@ -213,12 +213,15 @@ rest, and the limits that come with them:
   change counts visible: they are not identity.
 - **Reset times** use the system UTC offset from `date +%z`.
 - **Dock width** cannot be forced by a plugin; a width you set wins.
-- **Gentle AI versions** come from `brew list --versions` and
-  `gentle-ai --version`. **Update status** comes from
+- **Gentle AI versions** come from `brew list --versions` when Homebrew is
+  there, else from the tools themselves: `gentle-ai --version` and
+  `engram version`. gga is never run, so without brew it is looked up on
+  `PATH` (`which gga`, or `where gga` on Windows) and shows as `installed`
+  with `?`. **Update status** comes from
   `brew outdated --json=v2` run with `HOMEBREW_NO_AUTO_UPDATE=1`: it compares
   against your local tap metadata, so it is only as fresh as your last
-  `brew update`, which refreshes it. Tools not
-  installed through brew show no update status.
+  `brew update`, which refreshes it. Without brew, or for tools not
+  installed through it, the status is `?`.
 - **gga** is detected by reading files, never by running gga (its commands
   check GitHub for updates, and `gga config` executes the project's `.gga`):
   the hook from the `pre-commit` / `commit-msg` files in the repository's
