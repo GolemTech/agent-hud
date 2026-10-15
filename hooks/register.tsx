@@ -13,6 +13,7 @@ import {
   gentleGrid,
   ggaHookInstalled,
   hooksDir,
+  isAbsolutePath,
   parseBrewList,
   parseBrewOutdated,
   parseGgaConfig,
@@ -839,7 +840,7 @@ const detectGentle = async ($: EngineInterface): Promise<GentleInfo> => {
     })
     Object.assign(versions, parseBrewList(r.stdout))
   } catch {
-    // no brew: versions come from gentle-ai itself below
+    // no brew: versions come from the tools themselves below
   }
   try {
     const r = await $.process.run(['gentle-ai', '--version'], { timeoutMs: CMD_TIMEOUT_MS })
@@ -847,6 +848,33 @@ const detectGentle = async ($: EngineInterface): Promise<GentleInfo> => {
     if (v) versions['gentle-ai'] = v
   } catch {
     // not installed
+  }
+  if (!versions.engram) {
+    try {
+      // `engram version` prints `engram 3.4.0` and has no side effects.
+      const r = await $.process.run(['engram', 'version'], { timeoutMs: CMD_TIMEOUT_MS })
+      const v = r.exitCode === 0 ? parseVersion(r.stdout) : null
+      if (v) versions.engram = v
+    } catch {
+      // not installed
+    }
+  }
+  // gga is never run (it checks GitHub and sources `.gga`): without brew it
+  // is only looked up on PATH, `which` then `where` (Windows), so it shows as
+  // installed with an unknown version.
+  let ggaOnPath = false
+  if (!versions.gga) {
+    for (const lookup of ['which', 'where']) {
+      try {
+        const r = await $.process.run([lookup, 'gga'], { timeoutMs: CMD_TIMEOUT_MS })
+        if (r.exitCode === 0 && clean(r.stdout).trim()) {
+          ggaOnPath = true
+          break
+        }
+      } catch {
+        // no such lookup command here
+      }
+    }
   }
   try {
     // Exits 1 when something is outdated: the JSON on stdout is what counts.
@@ -867,8 +895,9 @@ const detectGentle = async ($: EngineInterface): Promise<GentleInfo> => {
   let config: Record<string, string> = {}
   try {
     const xdg = await $.env.get('XDG_CONFIG_HOME')
-    const home = await $.env.get('HOME')
-    const dir = xdg ? xdg : typeof home === 'string' ? `${home}/.config` : null
+    // HOME, else USERPROFILE (Windows without Git Bash's HOME).
+    const home = (await $.env.get('HOME')) || (await $.env.get('USERPROFILE'))
+    const dir = xdg ? xdg : typeof home === 'string' && home ? `${home}/.config` : null
     const text = dir ? await readOr($, `${dir}/gga/config`) : null
     if (text) config = parseGgaConfig(text)
   } catch {
@@ -893,7 +922,7 @@ const detectGentle = async ($: EngineInterface): Promise<GentleInfo> => {
       const common = await $.process.run(['git', 'rev-parse', '--git-common-dir'], { cwd: root, timeoutMs: CMD_TIMEOUT_MS })
       const commonDir = clean(common.stdout).trim()
       if (common.exitCode === 0 && commonDir) {
-        const configFile = `${commonDir.startsWith('/') ? commonDir : `${root}/${commonDir}`}/config`
+        const configFile = `${isAbsolutePath(commonDir) ? commonDir : `${root}/${commonDir}`}/config`
         const set = await $.process.run(['git', 'config', '--file', configFile, '--get', 'core.hooksPath'], {
           cwd: root,
           timeoutMs: CMD_TIMEOUT_MS,
@@ -922,6 +951,7 @@ const detectGentle = async ($: EngineInterface): Promise<GentleInfo> => {
       name,
       version: versions[name] ?? null,
       update: updates?.[name] ?? null,
+      ...(name === 'gga' && ggaOnPath ? { installed: true } : {}),
     })),
     updatesKnown: updates !== null,
     root,
