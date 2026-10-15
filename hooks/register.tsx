@@ -49,7 +49,16 @@ import {
   viewportRowsFor,
   HEADER_ROWS,
 } from './layout'
-import { DEFAULT_MCP_FILTER, filterServers, isMcpFilter, MCP_FILTERS, mcpBodyRows, mcpEmptyText, mcpHiddenText } from './mcp'
+import {
+  DEFAULT_MCP_FILTER,
+  filterServers,
+  isMcpFilter,
+  MCP_AUTH_HINT,
+  MCP_FILTERS,
+  mcpBodyRows,
+  mcpEmptyText,
+  mcpHiddenText,
+} from './mcp'
 import type { McpFilter } from './mcp'
 import {
   ALL_HIDDEN_TEXT,
@@ -2336,7 +2345,7 @@ export const register: Register = on => {
                 <Text wrap="truncate-end" dimColor={!s.connected} {...fg(t)}>
                   <Text color={t[s.connected ? 'success' : 'subtle']}>{s.connected ? '●' : '○'}</Text>{' '}
                   {s.name}
-                  {!s.connected && <Text color={t.subtle}> · auth</Text>}
+                  {!s.connected && <Text color={t.subtle}>{MCP_AUTH_HINT}</Text>}
                 </Text>
               ))}
             {!c.mcp && mcp.shown.length > 0 && mcp.hidden > 0 && (
