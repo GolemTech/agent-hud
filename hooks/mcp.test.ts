@@ -2,7 +2,7 @@ import type { On } from 'claude-code'
 import { expect, mock, test } from 'claude-code/testing'
 import type { Engine } from 'claude-code/testing'
 
-import { filterServers, isMcpFilter, mcpBodyRows, mcpEmptyText, mcpHiddenText } from './mcp'
+import { filterServers, isMcpFilter, MCP_AUTH_HINT, mcpBodyRows, mcpEmptyText, mcpHiddenText } from './mcp'
 
 const SERVERS = [
   { name: 'engram', connected: true },
@@ -27,7 +27,8 @@ test('isMcpFilter accepts only the two modes', () => {
   for (const bad of [undefined, null, '', 'ACTIVE', 'none', 1]) expect(isMcpFilter(bad)).toBe(false)
 })
 
-test('the empty and hidden lines', () => {
+test('the empty and hidden lines, and the auth hint', () => {
+  expect(MCP_AUTH_HINT).toBe(' · auth · /mcp')
   expect(mcpEmptyText(0)).toBe('none connected')
   expect(mcpEmptyText(2)).toBe('no active servers · 2 hidden')
   expect(mcpHiddenText(1)).toBe('1 hidden')
@@ -138,4 +139,26 @@ test('an unknown stored filter falls back to all', async ($, on) => {
   await startSession($)
   const { drawn } = await mountPane($)
   expect(await drawn()).toContain('notes')
+})
+
+test('a server waiting on auth names /mcp, where to sign in, on its one truncating row', async ($, on) => {
+  answerEngine(on)
+  await startSession($)
+  const { pane } = await mountPane($)
+  type Node = { type?: string; props?: Record<string, unknown>; children?: unknown[] }
+  const textOf = (n: unknown): string =>
+    typeof n === 'string' || typeof n === 'number'
+      ? String(n)
+      : typeof n === 'object' && n !== null
+        ? ((n as Node).children ?? []).map(textOf).join('')
+        : ''
+  const rows: Node[] = []
+  const walk = (n: unknown) => {
+    if (typeof n !== 'object' || n === null) return
+    const node = n as Node
+    if (node.type === 'Text' && node.props?.wrap === 'truncate-end' && node.props && 'dimColor' in node.props) rows.push(node)
+    else for (const c of node.children ?? []) walk(c)
+  }
+  walk(await pane.drawn())
+  expect(rows.map(textOf)).toEqual(['● engram', '○ notes · auth · /mcp'])
 })

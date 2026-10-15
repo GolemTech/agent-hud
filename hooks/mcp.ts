@@ -30,3 +30,6 @@ export const mcpHiddenText = (hidden: number): string => `${hidden} hidden`
 // one empty line.
 export const mcpBodyRows = (shown: number, hidden: number): number =>
   shown === 0 ? 1 : shown + (hidden > 0 ? 1 : 0)
+
+// Drawn after a server waiting on auth: `/mcp` is where the person signs in.
+export const MCP_AUTH_HINT = ' · auth · /mcp'
