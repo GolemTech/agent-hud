@@ -242,6 +242,30 @@ for (const cols of [20, 28, 40, 60, 100]) {
   })
 }
 
+// A `gap` on a wrapping row is also its row gap: when the row wraps, a blank
+// row is drawn between its lines that `flowRows` (and so `contentRows`) never
+// counts. Wrapping rows space their items with `columnGap` only. The test kit
+// draws trees, not text, so the rule is read off the tree's props.
+const noRowGapOnWrap = (tree: unknown) => {
+  for (const box of all(tree, 'Box').filter(b => b.props?.flexWrap === 'wrap')) {
+    expect({ row: textOf(box), gap: box.props?.gap, rowGap: box.props?.rowGap }).toEqual({
+      row: textOf(box),
+      gap: undefined,
+      rowGap: undefined,
+    })
+  }
+}
+
+for (const cols of [20, 28, 60]) {
+  test(`at ${cols} columns, no wrapping row carries a row gap`, async ($, on) => {
+    await inDemo($, on, cols, 60, async pane => {
+      noRowGapOnWrap(await pane.drawn())
+      await pane.press({ key: SETTINGS_KEY })
+      noRowGapOnWrap(await pane.drawn())
+    })
+  })
+}
+
 // Review focus: a narrow dock with the settings block open keeps the rules,
 // and the header band is counted at exactly the drawable width (the settings button as
 // SETTINGS_BUTTON_CELLS cells with its spaces), so it never wraps past HEADER_ROWS.

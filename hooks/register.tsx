@@ -1655,7 +1655,7 @@ export const register: Register = on => {
     )
 
     return (
-      <Box flexWrap="wrap" gap={1} {...fill(t)}>
+      <Box flexWrap="wrap" columnGap={1} {...fill(t)}>
         <Box flexShrink={0}>
           <Button
             key="expand"
@@ -1852,7 +1852,7 @@ export const register: Register = on => {
         <Box flexDirection="column">
           {rows.map(r =>
             r.kind === 'heading' ? (
-              <Box flexWrap="wrap" gap={1}>
+              <Box flexWrap="wrap" columnGap={1}>
                 <Box flexShrink={0}>
                   <Text bold color={t.subtle}>
                     {`${' '.repeat(HEADING_INDENT)}${r.label}`.padEnd(grid.head)}
@@ -1865,7 +1865,7 @@ export const register: Register = on => {
                 )}
               </Box>
             ) : (
-              <Box flexWrap="wrap" gap={1}>
+              <Box flexWrap="wrap" columnGap={1}>
                 <Box flexShrink={0}>
                   <Text color={t.subtle}>{`${' '.repeat(ITEM_INDENT)}${r.label}`.padEnd(grid.label)}</Text>
                 </Box>
@@ -2197,7 +2197,7 @@ export const register: Register = on => {
         ),
         node: (
           <Box {...margin('session')} flexDirection="column">
-            <Box gap={1} flexWrap="wrap">
+            <Box columnGap={1} flexWrap="wrap">
               {header('session', 'Session')}
               {rule(headerWidth('session', 'Session'))}
             </Box>
@@ -2272,7 +2272,7 @@ export const register: Register = on => {
         ),
         node: (
           <Box {...margin('context')} flexDirection="column">
-            <Box gap={1} flexWrap="wrap">
+            <Box columnGap={1} flexWrap="wrap">
               {header('context', 'Context')}
               {rule(headerWidth('context', 'Context'))}
             </Box>
@@ -2314,7 +2314,7 @@ export const register: Register = on => {
         ),
         node: (
           <Box {...margin('mcp')} flexDirection="column">
-            <Box gap={1} flexWrap="wrap">
+            <Box columnGap={1} flexWrap="wrap">
               {header('mcp', 'MCP')}
               {!c.mcp &&
                 mcpButtons.map(b => (
@@ -2350,7 +2350,7 @@ export const register: Register = on => {
         rows: rowsOf('subagents', subagentsHeaderRows, 1 + windowRows(cardRows, SUBAGENT_WINDOW)),
         node: (
           <Box {...margin('subagents')} flexDirection="column">
-            <Box gap={1} flexWrap="wrap">
+            <Box columnGap={1} flexWrap="wrap">
               {header('subagents', 'Subagents')}
               {!c.subagents && counts.done + counts.err > 0 && (
                 <Button
@@ -2393,7 +2393,7 @@ export const register: Register = on => {
         rows: rowsOf('todos', todosHeaderRows, todoList.length === 0 ? 1 : windowRows(sumRows(todoHeights), TODO_WINDOW)),
         node: (
           <Box {...margin('todos')} flexDirection="column">
-            <Box gap={1} flexWrap="wrap">
+            <Box columnGap={1} flexWrap="wrap">
               {header('todos', todosHeader)}
               {!c.todos && todoDone > 0 && (
                 <Button
@@ -2421,7 +2421,7 @@ export const register: Register = on => {
         rows: rowsOf('gentle', flowRows([headerText('gentle', 'Gentle AI').length, 1], W), gentleRows(view.gentle ?? null)),
         node: (
           <Box {...margin('gentle')} flexDirection="column">
-            <Box gap={1} flexWrap="wrap">
+            <Box columnGap={1} flexWrap="wrap">
               {header('gentle', 'Gentle AI')}
               {!c.gentle && (
                 <Button

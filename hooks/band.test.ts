@@ -66,3 +66,14 @@ test('closing the sidebar shows the band, and its button brings it back', async 
   await band.press({ key: 'expand' })
   expect(await bandText($)).not.toContain('Agent HUD')
 })
+
+// The band's row wraps on a narrow terminal: a `gap` there would also be a row
+// gap, a blank line between its wrapped lines. It spaces items by columnGap.
+test('the band spaces its wrapping row with columnGap, never a row gap', async ($, on) => {
+  const open = answerEngine(on)
+  open.delete('hud')
+  const tree = (await (await mountBand($)).drawn()) as { props?: Record<string, unknown> }
+  expect(tree.props?.flexWrap).toBe('wrap')
+  expect(tree.props?.gap).toBeUndefined()
+  expect(tree.props?.columnGap).toBe(1)
+})
