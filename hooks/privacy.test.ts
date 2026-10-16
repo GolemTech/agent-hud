@@ -34,6 +34,8 @@ const liveFixture = (): HudView => ({
   ],
   models: new Map([['a1', { model: 'claude-haiku-5-5', effort: 'low' }]]),
   todos: [{ id: 'w0', content: 'Write tests', status: 'in_progress' }],
+  claudeVersion: '2.1.296',
+  claudeUpdate: '2.1.301',
 })
 
 test('maskView replaces every identity field and leaks none of them', () => {
@@ -68,6 +70,9 @@ test('maskView keeps every non-identity field as it was', () => {
   expect(masked.agents).toEqual(live.agents)
   expect(masked.models).toBe(live.models)
   expect(masked.todos).toEqual(live.todos)
+  // Not identity: the Claude Code version and a newer release stay visible.
+  expect(masked.claudeVersion).toBe('2.1.296')
+  expect(masked.claudeUpdate).toBe('2.1.301')
   expect(live.account).toBe(ACCOUNT) // the input is left untouched
 })
 

@@ -2,6 +2,7 @@ import { atom, read, update } from 'claude-code'
 import type { EngineInterface, Register } from 'claude-code'
 
 import type { AgentRow, TodoItem, TodoStatus } from '../types'
+import { CLAUDE_UPDATE_EVERY_TICKS, CLAUDE_UPDATE_TIMEOUT_MS, CLAUDE_UPDATE_URL, channelFrom, newerVersion, parseDistTags } from './claude-update'
 import { demoSnapshot } from './demo'
 import { aheadText, behindText, parseAheadBehind, syncText } from './git'
 import type { AheadBehind } from './git'
@@ -807,6 +808,10 @@ export type HudView = {
   todos: TodoItem[]
   /** The Gentle AI section; null (or absent) until the first detection finished. */
   gentle?: GentleView | null
+  /** The Claude Code version this session runs on; no footer when null or absent. */
+  claudeVersion?: string | null
+  /** A newer Claude Code on the person's update channel; null when none or unknown. */
+  claudeUpdate?: string | null
 }
 
 // The Claude Code version for the footer, read once per session start.
@@ -815,6 +820,10 @@ let versionCache: string | null = null
 // (`version.ts`): both surfaces then draw only this notice. An unknown
 // version leaves it null, so the HUD runs normally.
 let unsupportedNotice: string | null = null
+// A newer Claude Code release on the person's update channel (`claude-update.ts`),
+// or null: none, not checked yet, or the check failed. Checked at session start
+// and every CLAUDE_UPDATE_EVERY_TICKS, never on a render.
+let claudeUpdateCache: string | null = null
 
 // ── Gentle AI ────────────────────────────────────────────────────────────
 // The section's pure parsers and constants live in `gentle.ts`; everything
@@ -835,6 +844,45 @@ const readOr = async ($: EngineInterface, path: string): Promise<string | null> 
     return await $.fs.read(path)
   } catch {
     return null
+  }
+}
+
+// The settings files Claude Code layers, in its precedence order (local
+// project, project, user); each text null when missing or unreadable.
+const settingsTexts = async ($: EngineInterface): Promise<(string | null)[]> => {
+  const home = await $.env.get('HOME')
+  const configDir = await $.env.get('CLAUDE_CONFIG_DIR')
+  const root = await $.session.root()
+  const user = typeof home === 'string' ? claudePaths(home, configDir ?? undefined).settings : null
+  return [
+    await readOr($, `${root}/.claude/settings.local.json`),
+    await readOr($, `${root}/.claude/settings.json`),
+    user === null ? null : await readOr($, user),
+  ]
+}
+
+// Asks the npm registry for Claude Code's dist-tags and keeps the person's
+// channel's release when it is newer than the running one. Skipped under
+// `CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC` (the host only refuses a plugin
+// request that carries `auth`, so the opt-out is honored here). `HttpInit`
+// has no timeout: the fetch races a timer, and an answer after it is dropped.
+// Any failure (rejection, non-2xx, unparsable body, timeout) keeps the cache.
+const checkClaudeUpdate = async ($: EngineInterface): Promise<void> => {
+  try {
+    if (await $.env.get('CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC')) return
+    const running = versionCache
+    if (!running) return
+    const channel = channelFrom(...(await settingsTexts($)))
+    const timeout = { cancel: () => {} }
+    const timedOut = new Promise<null>(resolve => {
+      timeout.cancel = $.clock.after(CLAUDE_UPDATE_TIMEOUT_MS, () => resolve(null)).cancel
+    })
+    const res = await Promise.race([$.http.fetch(CLAUDE_UPDATE_URL), timedOut]).finally(() => timeout.cancel())
+    if (!res?.ok) return
+    const tags = parseDistTags(res.text)
+    if (tags) claudeUpdateCache = newerVersion(running, tags[channel])
+  } catch {
+    // keep the last known answer
   }
 }
 
@@ -1130,6 +1178,8 @@ const demoView = (elapsedMs: number): HudView => {
     models: new Map(d.agents.map(a => [a.id, { model: a.model, effort: a.effort }])),
     todos: d.todos,
     gentle: d.gentle,
+    claudeVersion: d.claude.version,
+    claudeUpdate: d.claude.update,
   }
 }
 
@@ -1185,6 +1235,8 @@ const liveView = async ($: EngineInterface, list: AgentRow[]): Promise<HudView> 
     models: loopModel,
     todos: todoList,
     gentle: gentleCache,
+    claudeVersion: versionCache,
+    claudeUpdate: claudeUpdateCache,
   }
   return masked ? maskView(view) : view
 }
@@ -1422,6 +1474,10 @@ export const register: Register = on => {
 
     void $.ui.open({ id: PANE, title: 'Agent HUD' })
 
+    // Newer Claude Code: now (not awaited: a network call), then hourly below.
+    claudeUpdateCache = null
+    void checkClaudeUpdate($)
+
     let ticks = 0
     const tick = async (): Promise<void> => {
       ticks += 1
@@ -1461,15 +1517,7 @@ export const register: Register = on => {
       // since a compose with no style cannot be told from a subagent's.
       if (ticks % 30 === 1) {
         try {
-          const home = await $.env.get('HOME')
-          const configDir = await $.env.get('CLAUDE_CONFIG_DIR')
-          const root = await $.session.root()
-          const user = typeof home === 'string' ? claudePaths(home, configDir ?? undefined).settings : null
-          const style = outputStyleFrom(
-            await readOr($, `${root}/.claude/settings.local.json`),
-            await readOr($, `${root}/.claude/settings.json`),
-            user === null ? null : await readOr($, user),
-          )
+          const style = outputStyleFrom(...(await settingsTexts($)))
           if (polledSettingsStyle !== undefined && style !== polledSettingsStyle) composedStyle = undefined
           polledSettingsStyle = style
           settingsStyle = style
@@ -1536,6 +1584,8 @@ export const register: Register = on => {
       // Gentle AI detection: now, then every ~5 min. Not awaited: it takes a
       // second or more, and the rows write below must not wait for it.
       if (ticks % 300 === 1) void refreshGentle($)
+      // Newer Claude Code: every ~hour after the session start's check.
+      if (ticks % CLAUDE_UPDATE_EVERY_TICKS === 0) void checkClaudeUpdate($)
       try {
         const built = buildRows(await $.agent.list(), seen, await $.clock.now())
         await update($, rows, prev => mergeRows(prev, built).filter(r => !clearedAgents.has(r.id)))
@@ -2060,14 +2110,16 @@ export const register: Register = on => {
       </Box>
     )
 
-    // Sticky footer: the Claude Code version the session runs on.
-    const footerRow = versionCache ? (
+    // Sticky footer: the Claude Code version the session runs on, and a
+    // newer release on the person's channel, in the same truncating line.
+    const footerRow = view.claudeVersion ? (
       <Box flexDirection="column" flexShrink={0} marginTop={1}>
         <Text wrap="truncate-end" {...fg(t)}>
           <Text color={t.success}>● </Text>
           <Text color={t.subtle}>Claude</Text>
           <Text bold {...fg(t)}>Code</Text>
-          <Text color={t.subtle}>{` ${versionCache}`}</Text>
+          <Text color={t.subtle}>{` ${view.claudeVersion}`}</Text>
+          {view.claudeUpdate ? <Text color={t.warning}>{` ↑ ${view.claudeUpdate}`}</Text> : null}
         </Text>
       </Box>
     ) : null

@@ -1,0 +1,80 @@
+// Whether a newer Claude Code exists on the person's update channel. Pure:
+// `register.tsx` fetches the registry and reads the settings files. The
+// running process never changes version, so what the footer shows is the
+// version this session runs on until it is restarted.
+
+// One request answers both channels, and it needs no npm on the machine.
+export const CLAUDE_UPDATE_URL = 'https://registry.npmjs.org/-/package/@anthropic-ai/claude-code/dist-tags'
+
+// Checked at session start, then every hour of poller ticks (one a second).
+export const CLAUDE_UPDATE_EVERY_TICKS = 3600
+
+// `HttpInit` has no timeout, so the check races the fetch against this.
+export const CLAUDE_UPDATE_TIMEOUT_MS = 10_000
+
+export type UpdateChannel = 'latest' | 'stable'
+
+export type DistTags = { latest?: string; stable?: string }
+
+const RELEASE = /^\d+\.\d+\.\d+$/
+
+// The `latest` and `stable` tags of the registry's dist-tags answer, each
+// kept only when it is a plain x.y.z release; null when the text is not a
+// JSON object (an error page, an empty body).
+export const parseDistTags = (text: string): DistTags | null => {
+  let parsed: unknown
+  try {
+    parsed = JSON.parse(text)
+  } catch {
+    return null
+  }
+  if (typeof parsed !== 'object' || parsed === null || Array.isArray(parsed)) return null
+  const tags = parsed as Record<string, unknown>
+  const out: DistTags = {}
+  for (const name of ['latest', 'stable'] as const) {
+    const v = tags[name]
+    if (typeof v === 'string' && RELEASE.test(v)) out[name] = v
+  }
+  return out
+}
+
+// Claude Code's `autoUpdatesChannel` setting from settings files given in its
+// precedence order (local project, project, user), read as `outputStyleFrom`
+// reads `outputStyle`: the first file that sets a known channel wins; a
+// missing, unparsable or unknown one is skipped. None means `latest`.
+export const channelFrom = (...texts: readonly (string | null | undefined)[]): UpdateChannel => {
+  for (const text of texts) {
+    if (!text) continue
+    try {
+      const channel = (JSON.parse(text) as { autoUpdatesChannel?: unknown } | null)?.autoUpdatesChannel
+      if (channel === 'latest' || channel === 'stable') return channel
+    } catch {
+      // not JSON: skip this file
+    }
+  }
+  return 'latest'
+}
+
+// The numeric core of `2.1.296`, `v2.1.296 (Claude Code)` or
+// `2.1.296-dev.<build>`; undefined when the text starts with anything else.
+const core = (raw: string): [number, number, number] | undefined => {
+  const m = /^v?(\d+)\.(\d+)\.(\d+)(?!\d)/.exec(raw.trim())
+  return m ? [Number(m[1]), Number(m[2]), Number(m[3])] : undefined
+}
+
+// `candidate` (a plain x.y.z release) when it is strictly newer than the
+// running version, compared on the running version's x.y.z as numbers; null
+// when it is not newer or either side is unknown or unreadable.
+export const newerVersion = (
+  running: string | null | undefined,
+  candidate: string | null | undefined,
+): string | null => {
+  if (!running || !candidate || !RELEASE.test(candidate)) return null
+  const have = core(running)
+  const next = core(candidate)
+  if (!have || !next) return null
+  for (let i = 0; i < 3; i++) {
+    if (next[i]! !== have[i]!) return next[i]! > have[i]! ? candidate : null
+  }
+  return null
+}
