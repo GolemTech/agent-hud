@@ -47,13 +47,14 @@
   <rect x="252" y="134" width="134" height="22" rx="4" fill="#3DD6D0"/>
   <text class="s" x="260" y="149" style="fill:#0B1420; font-weight:bold;">project</text>
   <text class="t" x="378" y="150" text-anchor="end" style="fill:#0B1420; font-weight:bold;">⋮</text>
-  <text class="s" x="258" y="178">▾ Session</text>
-  <text class="s" x="258" y="198">▾ Context</text>
-  <rect x="332" y="191" width="50" height="6" rx="3" fill="#22364A"/>
-  <rect x="332" y="191" width="21" height="6" rx="3" fill="#3DD6D0"/>
-  <text class="s" x="258" y="218">▾ MCP</text>
-  <text class="s" x="258" y="238">▾ Subagents</text>
-  <text class="s" x="258" y="258">▾ Todo</text>
+  <text class="s" x="258" y="174">▾ Session</text>
+  <text class="s" x="258" y="192">▾ Context</text>
+  <rect x="332" y="185" width="50" height="6" rx="3" fill="#22364A"/>
+  <rect x="332" y="185" width="21" height="6" rx="3" fill="#3DD6D0"/>
+  <text class="s" x="258" y="210">▾ MCP</text>
+  <text class="s" x="258" y="228">▾ Subagents</text>
+  <text class="s" x="258" y="246">▾ Todo</text>
+  <text class="s" x="258" y="264">▾ Gentle AI</text>
   <line x1="252" y1="282" x2="386" y2="282" stroke="#22364A"/>
   <text class="s" x="258" y="302" style="fill:#8798AA;"><tspan fill="#7FD39B">●</tspan> ClaudeCode</text>
 
