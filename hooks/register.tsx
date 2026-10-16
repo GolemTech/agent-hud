@@ -824,6 +824,8 @@ let unsupportedNotice: string | null = null
 // or null: none, not checked yet, or the check failed. Checked at session start
 // and every CLAUDE_UPDATE_EVERY_TICKS, never on a render.
 let claudeUpdateCache: string | null = null
+// Numbers each update check as it starts; only the newest may write the cache.
+let claudeUpdateGeneration = 0
 
 // ── Gentle AI ────────────────────────────────────────────────────────────
 // The section's pure parsers and constants live in `gentle.ts`; everything
@@ -866,8 +868,11 @@ const settingsTexts = async ($: EngineInterface): Promise<(string | null)[]> => 
 // `CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC` (the host only refuses a plugin
 // request that carries `auth`, so the opt-out is honored here). `HttpInit`
 // has no timeout: the fetch races a timer, and an answer after it is dropped.
-// Any failure (rejection, non-2xx, unparsable body, timeout) keeps the cache.
+// Any failure (rejection, non-2xx, unparsable body, no usable tag for the
+// channel, timeout) keeps the cache. A check that ends after a newer one
+// started (the hourly tick, a session start) is dropped.
 const checkClaudeUpdate = async ($: EngineInterface): Promise<void> => {
+  const generation = ++claudeUpdateGeneration
   try {
     if (await $.env.get('CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC')) return
     const running = versionCache
@@ -879,8 +884,8 @@ const checkClaudeUpdate = async ($: EngineInterface): Promise<void> => {
     })
     const res = await Promise.race([$.http.fetch(CLAUDE_UPDATE_URL), timedOut]).finally(() => timeout.cancel())
     if (!res?.ok) return
-    const tags = parseDistTags(res.text)
-    if (tags) claudeUpdateCache = newerVersion(running, tags[channel])
+    const tag = parseDistTags(res.text)?.[channel]
+    if (tag && generation === claudeUpdateGeneration) claudeUpdateCache = newerVersion(running, tag)
   } catch {
     // keep the last known answer
   }

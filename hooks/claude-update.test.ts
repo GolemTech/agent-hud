@@ -26,9 +26,14 @@ test('parseDistTags keeps latest and stable when they are x.y.z versions', () =>
 })
 
 test('parseDistTags drops anything that is not an x.y.z version', () => {
-  expect(parseDistTags('{"latest":"2.1.301-beta.1","stable":3}')).toEqual({})
-  expect(parseDistTags('{"latest":"\\u001b[31m2.1.301"}')).toEqual({})
-  expect(parseDistTags('{"latest":"v2.1.301"}')).toEqual({})
+  expect(parseDistTags('{"latest":"2.1.301-beta.1","stable":"2.1.292"}')).toEqual({ stable: '2.1.292' })
+})
+
+test('parseDistTags is null when no tag is a usable x.y.z version', () => {
+  expect(parseDistTags('{}')).toBeNull()
+  expect(parseDistTags('{"latest":"2.1.301-beta.1","stable":3}')).toBeNull()
+  expect(parseDistTags('{"latest":"\\u001b[31m2.1.301"}')).toBeNull()
+  expect(parseDistTags('{"latest":"v2.1.301"}')).toBeNull()
 })
 
 test('parseDistTags is null for text that is not a JSON object', () => {
@@ -85,13 +90,13 @@ const CWD = `${HOME}/code/update-proj`
 const DIST_TAGS = '{"stable":"2.1.292","latest":"2.1.301","next":"2.1.301"}'
 
 type Fetch = { url: string }
-type Answer = { status: number; text: string } | 'reject' | { lateMs: number }
+type Answer = { status: number; text: string } | 'reject' | { lateMs: number; text?: string }
 
 // The engine's bottom for the poller and the Pane: Claude Code 2.1.296, the
 // registry answering `answer`, and settings files from `files` (path → text).
 const answerEngine = (
   on: On,
-  opts: { answer?: Answer; env?: Record<string, string>; files?: Record<string, string> } = {},
+  opts: { answer?: Answer; answers?: Answer[]; env?: Record<string, string>; files?: Record<string, string> } = {},
 ) => {
   const fetches: Fetch[] = []
   const clock = mock.clock(on)
@@ -120,17 +125,26 @@ const answerEngine = (
   on('process.run', () => ({ value: { stdout: '+0000\n', stderr: '', exitCode: 0 } }) as never)
   on('http.fetch', async (_$, e) => {
     fetches.push({ url: (e as Fetch).url })
-    const answer = opts.answer ?? { status: 200, text: DIST_TAGS }
+    const answer = opts.answers?.[fetches.length - 1] ?? opts.answer ?? { status: 200, text: DIST_TAGS }
     if (answer === 'reject') throw new Error('network down')
     if ('lateMs' in answer) {
       await clock.sleep(answer.lateMs)
-      return { value: { status: 200, ok: true, headers: {}, text: DIST_TAGS } } as never
+      return { value: { status: 200, ok: true, headers: {}, text: answer.text ?? DIST_TAGS } } as never
     }
     const ok = answer.status >= 200 && answer.status < 300
     return { value: { status: answer.status, ok, headers: {}, text: answer.text } } as never
   })
   return { clock, fetches }
 }
+
+const mountPane = ($: Engine) =>
+  $.ui.mount({
+    plugin: 'agent-hud',
+    surface: 'terminal',
+    component: 'Pane',
+    requestId: 'hud',
+    props: { title: 'Agent HUD', isFocused: false, bodyColumns: 60, placement: 'dock' } as never,
+  })
 
 const footerText = async ($: Engine) => {
   const pane = await $.ui.mount({
@@ -192,6 +206,31 @@ for (const [name, answer] of [
     expect(text).not.toContain('↑')
   })
 }
+
+test('a check that ends after a newer one does not overwrite its answer', async ($, on) => {
+  const { clock, fetches } = answerEngine(on, {
+    answers: [{ lateMs: 5000, text: '{"latest":"2.1.301"}' }, { status: 200, text: '{"latest":"2.1.310"}' }],
+  })
+  await start($)
+  await start($)
+  await clock.advance(6000)
+  expect(fetches.length).toBe(2)
+  const text = await footerText($)
+  expect(text).toContain(' ↑ 2.1.310')
+  expect(text).not.toContain('2.1.301')
+})
+
+test('an answer with no usable tag for the channel keeps the last known update', { timeoutMs: 60_000 }, async ($, on) => {
+  const { clock } = answerEngine(on, {
+    answers: [{ status: 200, text: DIST_TAGS }, { status: 200, text: '{"stable":"2.1.292"}' }],
+  })
+  await start($)
+  await clock.settle()
+  const pane = await mountPane($)
+  expect(JSON.stringify(await pane.drawn())).toContain(' ↑ 2.1.301')
+  await clock.advance(CLAUDE_UPDATE_EVERY_TICKS * 1000)
+  expect(JSON.stringify(await pane.drawn())).toContain(' ↑ 2.1.301')
+})
 
 test('an answer that comes after the timeout is ignored', async ($, on) => {
   const { clock } = answerEngine(on, { answer: { lateMs: CLAUDE_UPDATE_TIMEOUT_MS + 5000 } })

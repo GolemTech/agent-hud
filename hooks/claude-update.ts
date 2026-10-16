@@ -20,7 +20,8 @@ const RELEASE = /^\d+\.\d+\.\d+$/
 
 // The `latest` and `stable` tags of the registry's dist-tags answer, each
 // kept only when it is a plain x.y.z release; null when the text is not a
-// JSON object (an error page, an empty body).
+// JSON object (an error page, an empty body) or neither tag is usable, so an
+// answer with nothing to compare reads as a failed check.
 export const parseDistTags = (text: string): DistTags | null => {
   let parsed: unknown
   try {
@@ -35,7 +36,7 @@ export const parseDistTags = (text: string): DistTags | null => {
     const v = tags[name]
     if (typeof v === 'string' && RELEASE.test(v)) out[name] = v
   }
-  return out
+  return out.latest || out.stable ? out : null
 }
 
 // Claude Code's `autoUpdatesChannel` setting from settings files given in its
@@ -65,6 +66,9 @@ const core = (raw: string): [number, number, number] | undefined => {
 // `candidate` (a plain x.y.z release) when it is strictly newer than the
 // running version, compared on the running version's x.y.z as numbers; null
 // when it is not newer or either side is unknown or unreadable.
+// Only the running version's core x.y.z is compared: a prerelease or dev
+// build of a release (`2.1.301-dev.<build>`) counts as that release, so it
+// is current once the channel's tag is its core, not older than it.
 export const newerVersion = (
   running: string | null | undefined,
   candidate: string | null | undefined,
