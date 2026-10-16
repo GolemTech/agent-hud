@@ -23,7 +23,9 @@ import {
   viewportRowsFor,
   FOOTER_ROWS,
 } from './layout'
-import { SETTINGS_BUTTON, SETTINGS_BUTTON_CELLS, SETTINGS_KEY } from './settings'
+import { demoSnapshot } from './demo'
+import { gentleGrid, gentleRowLines } from './gentle'
+import { sectionKey, SECTION_IDS, SETTINGS_BUTTON, SETTINGS_BUTTON_CELLS, SETTINGS_KEY } from './settings'
 import { THEMES } from './themes'
 
 // ── Pure helpers ─────────────────────────────────────────────────────────
@@ -150,6 +152,7 @@ const answerEngine = (on: On) => {
   })
   on('fs.exists', () => ({ value: false }) as never)
   on('process.run', () => ({ value: { stdout: '+0000\n', stderr: '', exitCode: 0 } }) as never)
+  on('ui.scroll', () => ({}) as never)
   return clock
 }
 
@@ -226,9 +229,10 @@ const checkRules = (tree: unknown, columns: number) => {
       }
     }
     // A column Box with flexShrink 0 is a container (the scrolled content,
-    // the sticky header and footer), not a width-keeping label.
+    // the sticky header and footer), not a width-keeping label. A Box with a
+    // set width (a Gentle AI value cell) wraps its text inside that width.
     if (box.props?.flexShrink === 0 && box.props?.flexDirection !== 'column') {
-      const width = textOf(box).length
+      const width = typeof box.props?.width === 'number' ? box.props.width : textOf(box).length
       expect({ fixed: textOf(box), fits: width <= columns }).toEqual({ fixed: textOf(box), fits: true })
     }
   }
@@ -354,6 +358,27 @@ for (const cols of [28, 60, 100]) {
       const labels = fixed.filter(b => /^ {2}\S/.test(textOf(b)) && GRID_LABELS.includes(textOf(b).trim()))
       expect(labels.map(b => textOf(b).trim())).toEqual(GRID_LABELS)
       expect(new Set(labels.map(b => textOf(b).length)).size).toBe(1)
+    })
+  })
+}
+
+// The row count reads the same narrower value cell the grid draws in: with
+// only Gentle AI shown, the last scroll offset is its section header plus every
+// grid row's lines, less the viewport, plus the bottom margin.
+for (const cols of [24, 60]) {
+  test(`at ${cols} columns, the Gentle AI rows counted match the wrapped grid`, async ($, on) => {
+    await inDemo($, on, cols, 8, async pane => {
+      await pane.press({ key: SETTINGS_KEY })
+      for (const id of SECTION_IDS) if (id !== 'gentle') await pane.press({ key: sectionKey(id) })
+      await pane.press({ key: 'settings-close' })
+      await $.ui.scroll({ component: 'Pane', requestId: 'hud', offset: 0, by: 10_000, bodyRows: 8, contentRows: 8, origin: { kind: 'person' } } as never)
+      const W = layoutFor(cols, 8).columns
+      const rows = gentleGrid(demoSnapshot(6000).gentle)
+      const items = rows.flatMap(r => (r.kind === 'item' ? [r] : []))
+      const grid = gridFor(items.map(r => r.label), items.map(r => r.value.text), W)
+      const content = 1 + rows.reduce((n, r) => n + gentleRowLines(r, grid, W), 0)
+      const viewport = elements(elements((await pane.drawn()) as Node)[1] as Node)[0] as Node
+      expect(-Number(viewport.props?.marginTop)).toBe(maxScrollOffset(content, viewportRowsFor(8, true)))
     })
   })
 }

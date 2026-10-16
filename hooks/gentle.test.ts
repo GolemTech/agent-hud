@@ -7,8 +7,12 @@ import {
   checkMark,
   GENTLE_JOIN_DEADLINE_MS,
   gentleGrid,
+  cellLines,
+  gentleRowLines,
+  rowCells,
   ggaHookInstalled,
   hooksDir,
+  isAbsolutePath,
   parseBrewList,
   parseBrewOutdated,
   parseGgaConfig,
@@ -23,7 +27,8 @@ import {
   strictMark,
   toolMark,
 } from './gentle'
-import type { GentleView } from './gentle'
+import type { GentleRow, GentleView } from './gentle'
+import { gridFor } from './layout'
 
 // ── Pure helpers ─────────────────────────────────────────────────────────
 
@@ -72,6 +77,16 @@ test('ggaHookInstalled: the GGA block marker, or a legacy unmarked run line', ()
   expect(ggaHookInstalled('#!/bin/sh\nmy-ai-code-review run\n')).toBe(false)
   expect(ggaHookInstalled('#!/bin/sh\ngitleaks protect --staged\n')).toBe(false)
   expect(ggaHookInstalled('')).toBe(false)
+})
+
+test('isAbsolutePath: POSIX, Windows drive and UNC paths are absolute', () => {
+  for (const p of ['/home/myuser/repo/.git', 'C:\\Users\\myuser\\repo\\.git', 'C:/Users/myuser/repo/.git', 'd:\\x', '\\\\server\\share'])
+    expect(isAbsolutePath(p)).toBe(true)
+  for (const p of ['.git', '../common/.git', 'C:relative', 'hooks']) expect(isAbsolutePath(p)).toBe(false)
+})
+
+test('hooksDir: a Windows common dir is absolute, not joined to the root', () => {
+  expect(hooksDir('C:/Users/myuser/repo', 'C:/Users/myuser/repo/.git', '', null)).toBe('C:/Users/myuser/repo/.git/hooks')
 })
 
 test('hooksDir: the repo-configured core.hooksPath, else <common dir>/hooks', () => {
@@ -180,6 +195,8 @@ test('toolMark: ↑ newer, ✓ up to date, ? when brew did not answer, ✗ not i
   expect(toolMark({ name: 'gga', version: '2.10.1', update: null }, true)).toEqual({ text: '✓', tone: 'success' })
   expect(toolMark({ name: 'gga', version: '2.10.1', update: null }, false)).toEqual({ text: '?', tone: 'subtle' })
   expect(toolMark({ name: 'gga', version: null, update: null }, true)).toEqual({ text: '✗', tone: 'error' })
+  // On PATH with no version (gga found without brew): installed, status unknown.
+  expect(toolMark({ name: 'gga', version: null, update: null, installed: true }, true)).toEqual({ text: '?', tone: 'subtle' })
 })
 
 test('scopeMark: ● on, ○ off, — unset, ? when RDD is unknown', () => {
@@ -275,6 +292,13 @@ test('gentleGrid: what each state leaves out or adds', () => {
   const noGga = gentleGrid({ ...VIEW, tools: [VIEW.tools[0]!, { name: 'gga', version: null, update: null }, VIEW.tools[2]!] })
   expect(noGga[2]).toEqual({ kind: 'item', label: 'gga', value: { text: '—', tone: 'subtle' }, detail: { text: '✗', tone: 'error' }, buttons: [] })
   expect(noGga.some(r => r.kind === 'heading' && r.label === 'gga')).toBe(false)
+  // gga on PATH with no version: `installed`, status ?, and its gga group.
+  const pathGga = gentleGrid({
+    ...VIEW,
+    tools: [VIEW.tools[0]!, { name: 'gga', version: null, update: null, installed: true }, VIEW.tools[2]!],
+  })
+  expect(pathGga[2]).toEqual({ kind: 'item', label: 'gga', value: { text: 'installed' }, detail: { text: '?', tone: 'subtle' }, buttons: [] })
+  expect(pathGga.some(r => r.kind === 'heading' && r.label === 'gga')).toBe(true)
   // Strict TDD unknown: no strict row.
   expect(gentleGrid({ ...VIEW, updatesKnown: false })[0]).toEqual({ kind: 'heading', label: 'Tools', summary: null })
   expect(labels({ ...VIEW, strictTdd: null }).slice(-1)).toEqual(['#TDD'])
@@ -292,6 +316,44 @@ test('gentleGrid: what each state leaves out or adds', () => {
   })
   // Strict TDD on: ● and nothing to configure.
   expect(gentleGrid({ ...VIEW, strictTdd: 'on' }).slice(-1)[0]).toMatchObject({ value: { text: '●', tone: 'success' }, buttons: [] })
+})
+
+// ── Grid rows: a label cell and a value cell that wraps inside itself ────
+
+test('cellLines: greedy lines inside the value cell; a wider item wraps over its own lines', () => {
+  expect(cellLines([], 10)).toBe(0)
+  expect(cellLines([6, 1], 10)).toBe(1) // 6 + 1 + 1
+  expect(cellLines([6, 4, 5], 10)).toBe(2) // [6] then [4 5]
+  expect(cellLines([6, 25, 4], 10)).toBe(5) // [6], 25 over 3 lines, [4]
+})
+
+// VIEW's grid: labels up to `gentle-ai` (label cell 11), values up to 6.
+const GRID = gridFor(
+  gentleGrid(VIEW).flatMap(r => (r.kind === 'item' ? [r.label] : [])),
+  gentleGrid(VIEW).flatMap(r => (r.kind === 'item' ? [r.value.text] : [])),
+  22,
+)
+const rowNamed = (label: string, kind: GentleRow['kind'] = 'item') =>
+  gentleGrid(VIEW).find(r => r.label === label && r.kind === kind) as GentleRow
+
+test('rowCells: the value cell takes the rest of the line; a heading summary moves to the value column when the detail column is too narrow', () => {
+  expect(rowCells(rowNamed('project'), GRID, 22)).toEqual({ label: 11, cell: 10 })
+  // `● on · global` (13) does not fit after the 18-cell span at 22 columns.
+  expect(rowCells(rowNamed('RDD', 'heading'), GRID, 22)).toEqual({ label: 11, cell: 10 })
+  expect(rowCells(rowNamed('RDD', 'heading'), GRID, 40)).toEqual({ label: 18, cell: 21 })
+  // Never a cell under one column.
+  expect(rowCells(rowNamed('project'), GRID, 5).cell).toBe(1)
+})
+
+test('gentleRowLines: wrapped value-cell lines count, at the cell width', () => {
+  // `—` [on] [off] fit on one 39-cell line, but wrap once in a 10-cell cell.
+  expect(gentleRowLines(rowNamed('project'), GRID, 40)).toBe(1)
+  expect(gentleRowLines(rowNamed('project'), GRID, 22)).toBe(2)
+  // `●` [● on] [off]: each part on its own line in 10 cells.
+  expect(gentleRowLines(rowNamed('global'), GRID, 22)).toBe(3)
+  // `test-first (ODD)` (16) wraps over two lines of the 10-cell cell.
+  expect(gentleRowLines(rowNamed('TDD', 'heading'), GRID, 22)).toBe(2)
+  expect(gentleRowLines(rowNamed('Tools', 'heading'), GRID, 22)).toBe(1)
 })
 
 // ── Wiring ───────────────────────────────────────────────────────────────
@@ -323,6 +385,15 @@ let ggaOutcome: number | Error = 0
 // `$.session.cwd()` rejects this many times before answering again.
 let cwdFailures = 0
 
+// No Homebrew (as on Windows): every brew run rejects.
+let brewMissing = false
+// What `engram version` prints; null when engram cannot start.
+let engramVersion: string | null = null
+// What `which gga` / `where gga` print; a missing key cannot start.
+let pathLookup: Record<string, string> = {}
+// The session's environment; a test drops HOME for USERPROFILE.
+let envVars: Record<string, string> = { HOME }
+
 // Puts every fixture variable back, so the tests stay order-independent.
 const resetFixture = () => {
   inRepo = true
@@ -330,6 +401,10 @@ const resetFixture = () => {
   ggaFile = GGA_FILE
   ggaOutcome = 0
   cwdFailures = 0
+  brewMissing = false
+  engramVersion = null
+  pathLookup = {}
+  envVars = { HOME }
 }
 
 const answerEngine = (
@@ -341,8 +416,9 @@ const answerEngine = (
   const fills: { text: string; mode?: string }[] = []
   const toasts: string[] = []
   const exists: string[] = []
+  const reads: string[] = []
   const clock = mock.clock(on)
-  mock.env(on, { HOME })
+  mock.env(on, envVars)
   on('command.register', () => ({ value: undefined }) as never)
   on('ui.open', () => ({ value: { isPlaced: true } }) as never)
   on('ui.panes', () =>
@@ -366,6 +442,7 @@ const answerEngine = (
   on('agent.list', () => ({ value: [] }) as never)
   on('fs.read', (_$, e) => {
     const path = (e as { path: string }).path
+    reads.push(path)
     if (path === `${ROOT}/.gga`) return { value: ggaFile } as never
     if (path === `${ROOT}/.git/hooks/pre-commit`) return { value: preCommit } as never
     if (path === `${ROOT}/openspec/config.yaml`) return { value: 'project: demo-proj\n' } as never
@@ -385,6 +462,16 @@ const answerEngine = (
       return out('', ggaOutcome)
     }
     if (argv === 'gentle-ai --version') return out('gentle-ai 4.0.0\n')
+    if (run.argv[0] === 'brew' && brewMissing) throw new Error('brew: command not found')
+    if (argv === 'engram version') {
+      if (engramVersion === null) throw new Error('engram: command not found')
+      return out(engramVersion)
+    }
+    if (argv === 'which gga' || argv === 'where gga') {
+      const found = pathLookup[argv]
+      if (found === undefined) throw new Error(`${run.argv[0]}: command not found`)
+      return out(found, found ? 0 : 1)
+    }
     if (argv.startsWith('brew list')) return out('engram 2.2.1\ngentle-ai 4.0.0\ngga 2.10.1\n')
     if (argv.startsWith('brew outdated'))
       return out(
@@ -421,7 +508,7 @@ const answerEngine = (
     return { value: undefined } as never
   })
   on('prompt.compose', () => ({ sections: [] }) as never)
-  return { clock, runs, fills, toasts, exists }
+  return { clock, runs, fills, toasts, exists, reads }
 }
 
 const mountPane = ($: Engine) =>
@@ -474,9 +561,16 @@ const textOf = (n: unknown): string =>
     : typeof n === 'object' && n !== null
       ? ((n as Node).children ?? []).map(textOf).join('')
       : ''
-// A grid row's cells as drawn, padding trimmed: label, value, then details.
-const cellsOf = (tree: unknown, label: string): string[] =>
-  (rowOf(tree, label)?.children ?? []).map(c => textOf(c).trim())
+// A grid row's cells as drawn: the label, then what its value cell holds
+// (value, detail, buttons).
+const cellNodes = (tree: unknown, label: string): unknown[] =>
+  (rowOf(tree, label)?.children ?? []).flatMap(c =>
+    typeof c === 'object' && c !== null && (c as Node).type === 'Box' && (c as Node).props?.flexWrap === 'wrap'
+      ? ((c as Node).children ?? [])
+      : [c],
+  )
+// The same, padding trimmed.
+const cellsOf = (tree: unknown, label: string): string[] => cellNodes(tree, label).map(c => textOf(c).trim())
 const ITEM_LABELS = ['gentle-ai', 'gga', 'engram', 'hook', 'rules', 'project', 'global', 'strict']
 const HEADINGS = ['Tools', 'gga', 'RDD', 'TDD']
 const headingsOf = (tree: unknown): string[] => {
@@ -516,6 +610,25 @@ test('narrow sidebar: RDD scope labels never shrink and sit on their own rows', 
   expect(project).not.toContain('rdd-global')
 })
 
+test('narrow sidebar: wrapped buttons and summaries stay in the value cell, under the value column', async ($, on) => {
+  await start($, on)
+  const pane = await mountPane($)
+  await pane.redraw({ title: 'Agent HUD', isFocused: false, bodyColumns: 24, placement: 'dock' } as never) // 22 drawable
+  const tree = await pane.drawn()
+  const project = rowOf(tree, 'project')
+  const [labelBox, cell] = (project?.children ?? []) as Node[]
+  expect(project?.children?.length).toBe(2)
+  expect(textOf(labelBox).length).toBe(11)
+  expect(cell?.type).toBe('Box')
+  expect(cell?.props).toMatchObject({ flexShrink: 0, flexWrap: 'wrap', columnGap: 1, width: 10 })
+  expect(JSON.stringify(cell)).toContain('"key":"rdd-project-off"')
+  // The TDD summary sits in the same column, in a cell of its own width.
+  const tdd = rowOf(tree, 'TDD')
+  expect(textOf((tdd?.children ?? [])[0]).length).toBe(11)
+  expect((tdd?.children?.[1] as Node).props).toMatchObject({ width: 10, flexWrap: 'wrap' })
+  expect(textOf(tdd?.children?.[1])).toBe('test-first (ODD)')
+})
+
 test('each RDD scope row shows its own value and marks it on its buttons; unset is —', async ($, on) => {
   await start($, on) // global on, project unset
   const tree = await (await mountPane($)).drawn()
@@ -544,7 +657,7 @@ test('the Gentle AI section is one grid: headings Tools, gga, RDD, TDD and align
   expect(cellsOf(tree, 'strict')).toEqual(['strict', '—', '[configure]'])
   // Every item's label Box is as wide as the others, and so is every value.
   const widths = (cell: number) =>
-    new Set(ITEM_LABELS.map(l => textOf((rowOf(tree, l)?.children ?? [])[cell]).length))
+    new Set(ITEM_LABELS.map(l => textOf(cellNodes(tree, l)[cell]).length))
   expect(widths(0).size).toBe(1)
   expect(widths(1).size).toBe(1)
   for (const l of ITEM_LABELS) expect((rowOf(tree, l)?.children?.[0] as Node).props?.flexShrink).toBe(0)
@@ -793,6 +906,72 @@ test('a safe RULES_FILE is the file checked and shown, with no note', async ($, 
     expect(exists).toContain(`${ROOT}/docs/REVIEW.md`)
     expect(text).toContain('docs/REVIEW.md')
     expect(text).not.toContain('RULES_FILE ignored')
+  } finally {
+    resetFixture()
+  }
+})
+
+// ── Detection without Homebrew ───────────────────────────────────────────
+
+test('without brew, engram shows the version `engram version` prints', async ($, on) => {
+  brewMissing = true
+  engramVersion = 'engram 3.4.0\n'
+  try {
+    const { runs } = await start($, on)
+    const tree = await (await mountPane($)).drawn()
+    expect(cellsOf(tree, 'engram')).toEqual(['engram', '3.4.0', '?'])
+    const run = runs.find(r => r.argv.join(' ') === 'engram version')
+    expect((run?.init as { timeoutMs?: number } | undefined)?.timeoutMs).toBe(5_000)
+  } finally {
+    resetFixture()
+  }
+})
+
+test('without brew, a gga on PATH is installed (never run), not ✗', async ($, on) => {
+  brewMissing = true
+  pathLookup = { 'which gga': '/home/myuser/.local/bin/gga\n' }
+  try {
+    const { runs } = await start($, on)
+    const tree = await (await mountPane($)).drawn()
+    expect(cellsOf(tree, 'gga')).toEqual(['gga', 'installed', '?'])
+    expect(headingsOf(tree)).toEqual(HEADINGS)
+    expect(runs.some(r => r.argv[0] === 'gga')).toBe(false)
+  } finally {
+    resetFixture()
+  }
+})
+
+test('without brew or which, `where gga` finds gga as on Windows', async ($, on) => {
+  brewMissing = true
+  pathLookup = { 'where gga': 'C:\\Users\\myuser\\bin\\gga\r\n' }
+  try {
+    await start($, on)
+    const tree = await (await mountPane($)).drawn()
+    expect(cellsOf(tree, 'gga')).toEqual(['gga', 'installed', '?'])
+  } finally {
+    resetFixture()
+  }
+})
+
+test('without brew, tools found nowhere stay ✗', async ($, on) => {
+  brewMissing = true
+  pathLookup = { 'which gga': '' }
+  try {
+    await start($, on)
+    const tree = await (await mountPane($)).drawn()
+    expect(cellsOf(tree, 'gga')).toEqual(['gga', '—', '✗'])
+    expect(cellsOf(tree, 'engram')).toEqual(['engram', '—', '✗'])
+  } finally {
+    resetFixture()
+  }
+})
+
+test('the global gga config falls back to USERPROFILE when HOME is unset', async ($, on) => {
+  envVars = { USERPROFILE: 'C:/Users/myuser' }
+  try {
+    const { reads } = await start($, on)
+    // The engine resolves a non-POSIX path against the cwd on this host.
+    expect(reads.some(p => p.endsWith('C:/Users/myuser/.config/gga/config'))).toBe(true)
   } finally {
     resetFixture()
   }

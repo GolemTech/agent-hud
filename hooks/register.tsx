@@ -11,8 +11,11 @@ import {
   BREW_ENV,
   GENTLE_JOIN_DEADLINE_MS,
   gentleGrid,
+  gentleRowLines,
+  rowCells,
   ggaHookInstalled,
   hooksDir,
+  isAbsolutePath,
   parseBrewList,
   parseBrewOutdated,
   parseGgaConfig,
@@ -29,7 +32,7 @@ import {
   STRICT_TDD_PROMPT,
   TOOLS,
 } from './gentle'
-import type { GentleAction, GentleButton, GentleInfo, GentleRow, GentleView, RddStatus, StrictTdd } from './gentle'
+import type { GentleAction, GentleButton, GentleInfo, GentleRow, GentleView, Mark, RddStatus, StrictTdd } from './gentle'
 import {
   BRANCH_ICON,
   buttonText,
@@ -839,7 +842,7 @@ const detectGentle = async ($: EngineInterface): Promise<GentleInfo> => {
     })
     Object.assign(versions, parseBrewList(r.stdout))
   } catch {
-    // no brew: versions come from gentle-ai itself below
+    // no brew: versions come from the tools themselves below
   }
   try {
     const r = await $.process.run(['gentle-ai', '--version'], { timeoutMs: CMD_TIMEOUT_MS })
@@ -847,6 +850,33 @@ const detectGentle = async ($: EngineInterface): Promise<GentleInfo> => {
     if (v) versions['gentle-ai'] = v
   } catch {
     // not installed
+  }
+  if (!versions.engram) {
+    try {
+      // `engram version` prints `engram 3.4.0` and has no side effects.
+      const r = await $.process.run(['engram', 'version'], { timeoutMs: CMD_TIMEOUT_MS })
+      const v = r.exitCode === 0 ? parseVersion(r.stdout) : null
+      if (v) versions.engram = v
+    } catch {
+      // not installed
+    }
+  }
+  // gga is never run (it checks GitHub and sources `.gga`): without brew it
+  // is only looked up on PATH, `which` then `where` (Windows), so it shows as
+  // installed with an unknown version.
+  let ggaOnPath = false
+  if (!versions.gga) {
+    for (const lookup of ['which', 'where']) {
+      try {
+        const r = await $.process.run([lookup, 'gga'], { timeoutMs: CMD_TIMEOUT_MS })
+        if (r.exitCode === 0 && clean(r.stdout).trim()) {
+          ggaOnPath = true
+          break
+        }
+      } catch {
+        // no such lookup command here
+      }
+    }
   }
   try {
     // Exits 1 when something is outdated: the JSON on stdout is what counts.
@@ -867,8 +897,9 @@ const detectGentle = async ($: EngineInterface): Promise<GentleInfo> => {
   let config: Record<string, string> = {}
   try {
     const xdg = await $.env.get('XDG_CONFIG_HOME')
-    const home = await $.env.get('HOME')
-    const dir = xdg ? xdg : typeof home === 'string' ? `${home}/.config` : null
+    // HOME, else USERPROFILE (Windows without Git Bash's HOME).
+    const home = (await $.env.get('HOME')) || (await $.env.get('USERPROFILE'))
+    const dir = xdg ? xdg : typeof home === 'string' && home ? `${home}/.config` : null
     const text = dir ? await readOr($, `${dir}/gga/config`) : null
     if (text) config = parseGgaConfig(text)
   } catch {
@@ -893,7 +924,7 @@ const detectGentle = async ($: EngineInterface): Promise<GentleInfo> => {
       const common = await $.process.run(['git', 'rev-parse', '--git-common-dir'], { cwd: root, timeoutMs: CMD_TIMEOUT_MS })
       const commonDir = clean(common.stdout).trim()
       if (common.exitCode === 0 && commonDir) {
-        const configFile = `${commonDir.startsWith('/') ? commonDir : `${root}/${commonDir}`}/config`
+        const configFile = `${isAbsolutePath(commonDir) ? commonDir : `${root}/${commonDir}`}/config`
         const set = await $.process.run(['git', 'config', '--file', configFile, '--get', 'core.hooksPath'], {
           cwd: root,
           timeoutMs: CMD_TIMEOUT_MS,
@@ -922,6 +953,7 @@ const detectGentle = async ($: EngineInterface): Promise<GentleInfo> => {
       name,
       version: versions[name] ?? null,
       update: updates?.[name] ?? null,
+      ...(name === 'gga' && ggaOnPath ? { installed: true } : {}),
     })),
     updatesKnown: updates !== null,
     root,
@@ -1827,10 +1859,12 @@ export const register: Register = on => {
       )
 
     // The Gentle AI section is one grid (`gentleGrid`): headings at
-    // HEADING_INDENT with their summary in the detail column, items at
-    // ITEM_INDENT as label · value · detail and buttons. The label and value
-    // columns are padded to the widest in the section, so every row lines up;
-    // details and buttons wrap below when the row is narrow.
+    // HEADING_INDENT, items at ITEM_INDENT. Each row is a label cell and a
+    // value cell of the rest of the line (`rowCells`): an item's value, detail
+    // and buttons, or a heading's summary (in the detail column when it fits,
+    // else the value column). The value cell wraps inside its own width, so a
+    // wrapped part lines up under the value column. The label and value
+    // columns are padded to the widest in the section, so every row lines up.
     const gentleButton = (b: GentleButton, g: GentleView) =>
       b.key === 'gga-rules'
         ? action(b.key, b.label, () => fillPrompt($, rulesPrompt(g.gga.rulesFile)))
@@ -1851,6 +1885,12 @@ export const register: Register = on => {
         ),
       }
     }
+    // A detail or summary: as wide as its text up to the cell, wrapping there.
+    const cellText = (m: Mark, cell: number) => (
+      <Box flexShrink={0} width={Math.min(m.text.length, cell)}>
+        <Text color={m.tone ? t[m.tone] : t.foreground}>{m.text}</Text>
+      </Box>
+    )
 
     const gentleSection = (g: GentleView | null) => {
       if (!g) return <Text color={t.subtle}>checking…</Text>
@@ -1859,37 +1899,36 @@ export const register: Register = on => {
       const { rows, grid } = gentleLayout(g)
       return (
         <Box flexDirection="column">
-          {rows.map(r =>
-            r.kind === 'heading' ? (
+          {rows.map(r => {
+            const cells = rowCells(r, grid, W)
+            return r.kind === 'heading' ? (
               <Box flexWrap="wrap" columnGap={1}>
                 <Box flexShrink={0}>
                   <Text bold color={t.subtle}>
-                    {`${' '.repeat(HEADING_INDENT)}${r.label}`.padEnd(grid.head)}
+                    {`${' '.repeat(HEADING_INDENT)}${r.label}`.padEnd(cells.label)}
                   </Text>
                 </Box>
                 {r.summary && (
-                  <Text wrap="truncate-end" color={r.summary.tone ? t[r.summary.tone] : t.foreground}>
-                    {r.summary.text}
-                  </Text>
+                  <Box flexShrink={0} width={cells.cell} flexWrap="wrap" columnGap={1}>
+                    {cellText(r.summary, cells.cell)}
+                  </Box>
                 )}
               </Box>
             ) : (
               <Box flexWrap="wrap" columnGap={1}>
                 <Box flexShrink={0}>
-                  <Text color={t.subtle}>{`${' '.repeat(ITEM_INDENT)}${r.label}`.padEnd(grid.label)}</Text>
+                  <Text color={t.subtle}>{`${' '.repeat(ITEM_INDENT)}${r.label}`.padEnd(cells.label)}</Text>
                 </Box>
-                <Box flexShrink={0}>
-                  <Text color={r.value.tone ? t[r.value.tone] : t.foreground}>{r.value.text.padEnd(grid.value)}</Text>
+                <Box flexShrink={0} width={cells.cell} flexWrap="wrap" columnGap={1}>
+                  <Box flexShrink={0}>
+                    <Text color={r.value.tone ? t[r.value.tone] : t.foreground}>{r.value.text.padEnd(grid.value)}</Text>
+                  </Box>
+                  {r.detail && cellText(r.detail, cells.cell)}
+                  {r.buttons.map(b => gentleButton(b, g))}
                 </Box>
-                {r.detail && (
-                  <Text wrap="truncate-end" color={r.detail.tone ? t[r.detail.tone] : t.foreground}>
-                    {r.detail.text}
-                  </Text>
-                )}
-                {r.buttons.map(b => gentleButton(b, g))}
               </Box>
-            ),
-          )}
+            )
+          })}
         </Box>
       )
     }
@@ -1898,22 +1937,7 @@ export const register: Register = on => {
     const gentleRows = (g: GentleView | null): number => {
       if (!g || !g.tools.find(t => t.name === 'gentle-ai')?.version) return 1
       const { rows, grid } = gentleLayout(g)
-      return rows.reduce(
-        (n, r) =>
-          n +
-          (r.kind === 'heading'
-            ? flowRows([grid.head, ...(r.summary ? [r.summary.text.length] : [])], W)
-            : flowRows(
-                [
-                  grid.label,
-                  grid.value,
-                  ...(r.detail ? [r.detail.text.length] : []),
-                  ...r.buttons.map(b => buttonText(b.label, b.selected).length),
-                ],
-                W,
-              )),
-        0,
-      )
+      return rows.reduce((n, r) => n + gentleRowLines(r, grid, W), 0)
     }
 
     const branch = view.branch

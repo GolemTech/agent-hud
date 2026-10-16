@@ -5,6 +5,8 @@
 // commands; gga itself is never run for it (every gga command but `run` checks
 // GitHub for updates, and `gga config` sources the repository's `.gga`).
 
+import { buttonText, flowRows, textRows } from './layout'
+import type { Grid } from './layout'
 import { clean } from './text'
 
 // ── Pure helpers ─────────────────────────────────────────────────────────
@@ -35,12 +37,16 @@ const GGA_MARKER = '# ======== GGA START ========'
 const LEGACY_RUN = /^[ \t]*(?:gga|ai-code-review)[ \t]+run\b/m
 export const ggaHookInstalled = (text: string): boolean => text.includes(GGA_MARKER) || LEGACY_RUN.test(text)
 
+// An absolute path: POSIX `/…`, a Windows drive (`C:\\…`, `C:/…`) or UNC
+// (`\\\\server\\…`). Git for Windows may print any of them.
+export const isAbsolutePath = (p: string): boolean => p.startsWith('/') || /^[A-Za-z]:[\\/]/.test(p) || p.startsWith('\\\\')
+
 // The repo's hooks folder. Claude Code runs git with `core.hooksPath` forced to
 // /dev/null, so `git rev-parse --git-path hooks` cannot be asked; the repo's
 // own `core.hooksPath` (read from its config file alone) or `<common dir>/hooks`
 // is what git uses outside Claude Code. Relative paths are from the repo root.
 export const hooksDir = (root: string, commonDir: string, configured: string, home: string | null): string => {
-  const abs = (p: string) => (p.startsWith('/') ? p : `${root}/${p}`)
+  const abs = (p: string) => (isAbsolutePath(p) ? p : `${root}/${p}`)
   const set = configured.trim()
   if (!set) return `${abs(commonDir.trim())}/hooks`
   if (set === '~' || set.startsWith('~/')) return home ? `${home}${set.slice(1)}` : abs(set)
@@ -147,7 +153,12 @@ export type ToolStatus = {
   version: string | null
   /** Newer version brew knows of; null when up to date or unknown. */
   update: string | null
+  /** Found on PATH although its version is unknown (gga without brew). */
+  installed?: boolean
 }
+
+// Installed: a known version, or found on PATH without one.
+export const toolInstalled = (t: ToolStatus): boolean => Boolean(t.version) || t.installed === true
 
 export type GentleInfo = {
   tools: ToolStatus[]
@@ -185,7 +196,7 @@ export const BREW_TIMEOUT_MS = 15_000
 export const ACTION_TIMEOUT_MS = 30_000
 // A refresh joins a detection under way only this long after it started.
 // Detection runs its probes one after another, each with its own timeout
-// (three brew runs at most 15 s, four other commands at most 5 s: 65 s), so a
+// (three brew runs at most 15 s, seven other commands at most 5 s: 80 s), so a
 // run older than this is stuck (a read that never answers) and a new one
 // starts; the generation number drops the stuck run's result if it ever ends.
 export const GENTLE_JOIN_DEADLINE_MS = 90_000
@@ -278,9 +289,21 @@ const UNKNOWN: Mark = { text: '?', tone: 'subtle' }
 export const checkMark = (v: boolean | null): Mark => (v ? OK : v === false ? MISSING : UNKNOWN)
 
 // A tool's status: a newer version, up to date, or ? when brew did not answer
-// (no up-to-date claim without it); ✗ when it is not installed.
+// or the version is unknown (no up-to-date claim without it); ✗ when it is
+// not installed.
 export const toolMark = (t: ToolStatus, updatesKnown: boolean): Mark =>
-  !t.version ? MISSING : t.update ? { text: `↑ ${t.update}`, tone: 'warning' } : updatesKnown ? OK : UNKNOWN
+  !toolInstalled(t)
+    ? MISSING
+    : !t.version
+      ? UNKNOWN
+      : t.update
+        ? { text: `↑ ${t.update}`, tone: 'warning' }
+        : updatesKnown
+          ? OK
+          : UNKNOWN
+
+const INSTALLED: Mark = { text: 'installed' }
+const toolValue = (t: ToolStatus): Mark => (t.version ? { text: t.version } : t.installed ? INSTALLED : UNSET)
 
 // One RDD scope's own setting; `known` is false when RDD could not be read.
 export const scopeMark = (v: OnOff | null, known: boolean): Mark =>
@@ -328,9 +351,10 @@ export const gentleGrid = (g: GentleView): GentleRow[] => {
     label: 'Tools',
     summary: null,
   })
-  for (const t of g.tools) item(t.name, t.version ? { text: t.version } : UNSET, toolMark(t, g.updatesKnown))
+  for (const t of g.tools) item(t.name, toolValue(t), toolMark(t, g.updatesKnown))
 
-  if (g.tools.find(t => t.name === 'gga')?.version) {
+  const gga = g.tools.find(t => t.name === 'gga')
+  if (gga && toolInstalled(gga)) {
     rows.push({ kind: 'heading', label: 'gga', summary: g.root ? null : { text: 'no repository', tone: 'subtle' } })
     if (g.root) {
       item('hook', checkMark(g.gga.hook), null, [
@@ -354,5 +378,57 @@ export const gentleGrid = (g: GentleView): GentleRow[] => {
   if (g.strictTdd)
     item('strict', strictMark(g.strictTdd), null, g.strictTdd === 'on' ? [] : [{ key: 'tdd-configure', label: 'configure' }])
   return rows
+}
+
+// ── Grid rows ────────────────────────────────────────────────────────────
+// A row is a label cell and a value cell holding the rest of the line. The
+// value cell wraps inside its own width, so a wrapped part (a button, a
+// detail, a summary) lines up under the value column, never at column 0.
+
+// The label and value cells of a row at `columns`. A heading's summary sits
+// in the detail column (the label spans the value column) when it fits there,
+// else in the value column; the value cell is never under one column.
+export const rowCells = (r: GentleRow, grid: Grid, columns: number): { label: number; cell: number } => {
+  const label =
+    r.kind === 'item' ? grid.label : !r.summary || grid.head + 1 + r.summary.text.length <= columns ? grid.head : grid.label
+  return { label, cell: Math.max(1, columns - label - 1) }
+}
+
+// The widths of what a row's value cell holds, in order: a heading's summary;
+// an item's padded value, detail and buttons.
+export const cellWidths = (r: GentleRow, grid: Grid): number[] =>
+  r.kind === 'heading'
+    ? r.summary
+      ? [r.summary.text.length]
+      : []
+    : [grid.value, ...(r.detail ? [r.detail.text.length] : []), ...r.buttons.map(b => buttonText(b.label, b.selected).length)]
+
+// Lines a value cell of `cell` columns takes: greedy, as flex wrapping places
+// its items; an item wider than the cell sits alone and wraps over its own
+// lines (`textRows`).
+export const cellLines = (widths: readonly number[], cell: number): number => {
+  let lines = 0
+  let used = -1 // no open line
+  for (const w of widths) {
+    if (w > cell) {
+      lines += textRows(w, cell)
+      used = -1
+    } else if (used >= 0 && used + 1 + w <= cell) {
+      used += 1 + w
+    } else {
+      lines += 1
+      used = w
+    }
+  }
+  return lines
+}
+
+// Rows one grid row draws at `columns`: its value cell's lines (one for a
+// bare heading), plus a line when the label cell alone fills the row.
+export const gentleRowLines = (r: GentleRow, grid: Grid, columns: number): number => {
+  const { label, cell } = rowCells(r, grid, columns)
+  const widths = cellWidths(r, grid)
+  if (widths.length === 0) return 1
+  return flowRows([label, cell], columns) - 1 + cellLines(widths, cell)
 }
 
