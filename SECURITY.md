@@ -115,13 +115,20 @@ and MCP server names.
 
 ## What it does not do
 
-- No network calls by the plugin itself. brew runs with
-  `HOMEBREW_NO_AUTO_UPDATE=1` and reads only its local tap metadata: in a
-  check with no network interface (`unshare --user --net`), the three brew
-  commands, `gentle-ai --version` and `gentle-ai review mode status` all
-  completed with their normal output. A command the person confirms (`gga`,
-  `gentle-ai review mode`) is that tool's own: gga runs with
-  `CURL_CMD=false`, which disables its update check.
+- Two online checks, nothing else in the background:
+  - `$.http.fetch` of
+    `https://registry.npmjs.org/-/package/@anthropic-ai/claude-code/dist-tags`
+    (no auth, no body) at session start and hourly, for the Claude Code
+    version in the footer. It is skipped when
+    `CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC` is set.
+  - `gentle-ai update` with Gentle AI detection (about every 5 minutes), run
+    with `DO_NOT_TRACK=1`, for the latest tool versions.
+
+  brew is only a fallback and runs with `HOMEBREW_NO_AUTO_UPDATE=1`, so it
+  reads only its local tap metadata. A command the person confirms (`gga`,
+  `gentle-ai review mode`, `gentle-ai upgrade <tool>`) is that tool's own:
+  gga runs with `CURL_CMD=false`, which disables its update check, and an
+  upgrade downloads the new release.
 - No logging and no files written by the plugin. Files change only through
   the confirmed commands above.
 - No prompt is sent on the person's behalf.
