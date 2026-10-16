@@ -28,6 +28,7 @@ import {
   parseTitle,
   prettyModel,
   projectDir,
+  projectName,
   shortPath,
   summaryLine,
   updateTask,
@@ -430,6 +431,26 @@ test('shortPath handles home itself, the root and paths outside home', () => {
   expect(shortPath('/var/log/nginx', '/home/myuser', 40)).toEqual({ parent: '/var/log/', leaf: 'nginx' })
   expect(shortPath('/var/log/nginx', null, 13)).toEqual({ parent: '/var/../', leaf: 'nginx' })
   expect(shortPath('/var/log/nginx', null, 12)).toEqual({ parent: '/var/../', leaf: 'ng..' })
+})
+
+test('projectName: the last segment of a POSIX or Windows path', () => {
+  expect(projectName('/home/myuser/code/demo-proj')).toBe('demo-proj')
+  expect(projectName('/home/myuser/code/demo-proj/')).toBe('demo-proj')
+  expect(projectName('/')).toBe('/')
+  expect(projectName('C:\\Users\\myuser')).toBe('myuser')
+  expect(projectName('C:/Users/myuser/repo')).toBe('repo')
+  expect(projectName('C:\\Users\\myuser\\repo\\')).toBe('repo')
+})
+
+test('shortPath reads Windows paths: home by its folder name, either separator, any drive-letter case', () => {
+  const home = 'C:\\Users\\myuser'
+  expect(shortPath('C:\\Users\\myuser\\code\\demo-proj', home, 40)).toEqual({ parent: 'myuser/code/', leaf: 'demo-proj' })
+  expect(shortPath('C:/Users/myuser/code/demo-proj', home, 40)).toEqual({ parent: 'myuser/code/', leaf: 'demo-proj' })
+  expect(shortPath('c:\\Users\\myuser\\code', home, 40)).toEqual({ parent: 'myuser/', leaf: 'code' })
+  expect(shortPath(home, home, 40)).toEqual({ parent: '', leaf: 'myuser' })
+  // A sibling folder whose name starts like home is not inside it.
+  expect(shortPath('C:\\Users\\myuser2\\code', home, 40)).toEqual({ parent: 'C:/Users/myuser2/', leaf: 'code' })
+  expect(shortPath('D:\\work\\demo-proj', home, 40)).toEqual({ parent: 'D:/work/', leaf: 'demo-proj' })
 })
 
 test('parseShortstat reads insertions and deletions, null when clean', () => {

@@ -221,6 +221,9 @@ export const UPDATE_TIMEOUT_MS = 15_000
 // A confirmed action (`gga install`, `gentle-ai review mode ...`) may write
 // files, so it gets longer than a read-only probe.
 export const ACTION_TIMEOUT_MS = 30_000
+// `gentle-ai upgrade <tool>` downloads and installs a release (brew, go or a
+// binary), which can take minutes.
+export const UPGRADE_TIMEOUT_MS = 300_000
 // A refresh joins a detection under way only this long after it started.
 // Detection runs its probes one after another, each with its own timeout
 // (two brew runs and `gentle-ai update` at most 15 s each, seven other
@@ -241,14 +244,41 @@ export type GentleAction =
   | 'rdd-project-off'
   | 'rdd-global-on'
   | 'rdd-global-off'
+  | UpgradeAction
+
+export type UpgradeAction = `gentle-upgrade-${ToolName}`
 
 const OFF_WINS = 'Off always wins: a project "on" cannot override a global "off".'
 
+const UPGRADE_PREFIX = 'gentle-upgrade-'
+export const upgradeAction = (tool: ToolName): UpgradeAction => `${UPGRADE_PREFIX}${tool}`
+const isUpgrade = (action: GentleAction): action is UpgradeAction => action.startsWith(UPGRADE_PREFIX)
+
+export type ActionSpec = {
+  question: string
+  argv: string[]
+  env?: Record<string, string>
+  stdin?: string
+  /** Set only when the action needs longer than `ACTION_TIMEOUT_MS`. */
+  timeoutMs?: number
+  done: string
+}
+
 // The confirmation, constant argv and result message of each command button.
-export const actionSpec = (
-  action: GentleAction,
-  root: string,
-): { question: string; argv: string[]; env?: Record<string, string>; stdin?: string; done: string } => {
+// `tools` gives an upgrade's installed and latest versions for its question.
+export const actionSpec = (action: GentleAction, root: string, tools: readonly ToolStatus[] = []): ActionSpec => {
+  if (isUpgrade(action)) {
+    const tool = action.slice(UPGRADE_PREFIX.length) as ToolName
+    const t = tools.find(x => x.name === tool)
+    const versions = t?.version && t.update ? ` ${t.version} → ${t.update}` : ''
+    return {
+      question: `Upgrade ${tool}${versions} (runs \`gentle-ai upgrade ${tool}\`)? Agent configs are kept.`,
+      argv: ['gentle-ai', 'upgrade', tool],
+      env: { ...UPDATE_ENV },
+      timeoutMs: UPGRADE_TIMEOUT_MS,
+      done: tool === 'gentle-ai' ? 'gentle-ai upgraded · run `gentle-ai sync` to refresh agent configs' : `${tool} upgraded`,
+    }
+  }
   const mode = (verb: 'enable' | 'disable', scope: 'clone' | 'global') =>
     scope === 'clone'
       ? ['gentle-ai', 'review', 'mode', verb, '--scope', 'clone', '--cwd', root, '--json']
@@ -379,7 +409,14 @@ export const gentleGrid = (g: GentleView): GentleRow[] => {
     label: 'Tools',
     summary: null,
   })
-  for (const t of g.tools) item(t.name, toolValue(t), toolMark(t, g.updatesKnown))
+  // A tool with a newer version offers [upgrade] after its `↑ x.y.z` mark.
+  for (const t of g.tools)
+    item(
+      t.name,
+      toolValue(t),
+      toolMark(t, g.updatesKnown),
+      toolInstalled(t) && t.version && t.update ? [{ key: upgradeAction(t.name), label: 'upgrade' }] : [],
+    )
 
   const gga = g.tools.find(t => t.name === 'gga')
   if (gga && toolInstalled(gga)) {

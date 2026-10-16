@@ -123,9 +123,13 @@ To add the marketplace first and install separately:
   - Command buttons ask first: `[install]` (gga pre-commit hook, `gga install`),
     `[init]` (sample `.gga`, `gga init`, only when the project has none), and
     RDD `project [on] [off]` / `global [on] [off]` (the current value is marked `[● on]`)
-    (`gentle-ai review mode enable|disable --scope clone|global`). Nothing runs
-    unless you choose **Run it**; a short toast says how it went. Off always
-    wins: a project "on" cannot override a global "off".
+    (`gentle-ai review mode enable|disable --scope clone|global`), and
+    `[upgrade]` after a tool's `↑ <newer>` mark (`gentle-ai upgrade <tool>`:
+    the tool binary only, agent configs are kept; it may run for up to 5
+    minutes, and after upgrading gentle-ai itself the toast suggests
+    `gentle-ai sync`). Nothing runs unless you choose **Run it**; a short
+    toast says how it went. Off always wins: a project "on" cannot override a
+    global "off".
   - Prompt buttons only fill the prompt box, they never send it:
     `[create rules]` (asks Claude to write the gga rules file) and
     `[configure]` (asks Claude to set up strict TDD through the sdd-init flow).
@@ -246,8 +250,9 @@ rest, and the limits that come with them:
   the project's `openspec/config.yaml`, matched as text (quoted or not,
   `true`/`false` or YAML `yes`/`no`/`on`/`off`, an inline `# comment`
   allowed; a commented-out line does not count).
-- **Network**: the only call that leaves the machine is `gentle-ai update`'s
-  version check above; the plugin itself makes none.
+- **Network**: the only call that leaves the machine on its own is
+  `gentle-ai update`'s version check above; an `[upgrade]` you confirm
+  downloads the new release. The plugin itself makes none.
 - **Control characters** (escape sequences, newlines, bells) are stripped from
   every displayed string that comes from outside the plugin.
 

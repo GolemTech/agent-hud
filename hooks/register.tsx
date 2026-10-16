@@ -35,7 +35,7 @@ import {
   STRICT_TDD_PROMPT,
   TOOLS,
 } from './gentle'
-import type { GentleAction, GentleButton, GentleInfo, GentleRow, GentleUpdate, GentleView, Mark, RddStatus, StrictTdd } from './gentle'
+import type { GentleAction, GentleButton, GentleInfo, GentleRow, GentleUpdate, GentleView, Mark, RddStatus, StrictTdd, ToolStatus } from './gentle'
 import {
   BRANCH_ICON,
   buttonText,
@@ -338,6 +338,14 @@ const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
 const cutName = (s: string, n: number): string =>
   s.length <= n ? s : `${s.slice(0, Math.max(1, n - 2))}..`
 
+// A path's segments, split on `/` and on Windows' `\`.
+const pathSegments = (path: string): string[] => path.split(/[\\/]/).filter(Boolean)
+
+// Two paths name the same place: either separator, a drive letter in any case
+// (`C:` and `c:`). POSIX paths compare as they are.
+const pathKey = (p: string) => p.replace(/\\/g, '/').replace(/^[A-Za-z]:/, d => d.toLowerCase())
+const samePath = (a: string, b: string): boolean => pathKey(a) === pathKey(b)
+
 // A path that fits `max` columns while keeping its depth visible:
 //   myuser/.claude/dev-mods/0a1b2c3d…/session-explorer
 //   myuser/../../../session-explorer
@@ -352,11 +360,11 @@ export const shortPath = (
   max: number,
 ): { parent: string; leaf: string } => {
   let segs: string[]
-  if (home && (path === home || path.startsWith(`${home}/`))) {
-    const user = home.split('/').filter(Boolean).pop() ?? '~'
-    segs = [user, ...path.slice(home.length).split('/').filter(Boolean)]
+  if (home && (samePath(path, home) || pathKey(path).startsWith(`${pathKey(home)}/`))) {
+    const user = pathSegments(home).pop() ?? '~'
+    segs = [user, ...pathSegments(path.slice(home.length))]
   } else {
-    segs = path.split('/').filter(Boolean)
+    segs = pathSegments(path)
     if (path.startsWith('/')) segs[0] = `/${segs[0] ?? ''}`
   }
   segs = segs.map(s => (UUID.test(s) ? `${s.slice(0, 8)}…` : s))
@@ -381,7 +389,7 @@ export const shortPath = (
 }
 
 // The project's name for the sticky header: a path's last segment.
-export const projectName = (path: string): string => path.split('/').filter(Boolean).pop() ?? '/'
+export const projectName = (path: string): string => pathSegments(path).pop() ?? '/'
 
 // Claude Code's project folder name: the root path, non-alphanumerics as `-`.
 export const projectDir = (root: string): string => root.replace(/[^a-zA-Z0-9]/g, '-')
@@ -998,7 +1006,15 @@ const detectGentle = async ($: EngineInterface): Promise<GentleInfo> => {
 // Outside a repository (`root` null) it runs in the session's real cwd, read
 // now: the drawn cwd may be the privacy mask (`~/…`), never a usable path;
 // when it cannot be read, nothing runs.
-const runAction = async ($: EngineInterface, action: GentleAction, root: string | null): Promise<boolean> => {
+// `tools` gives an upgrade's versions for its question. An upgrade gets
+// `UPGRADE_TIMEOUT_MS` (its spec's `timeoutMs`); every other action
+// `ACTION_TIMEOUT_MS`.
+const runAction = async (
+  $: EngineInterface,
+  action: GentleAction,
+  root: string | null,
+  tools: readonly ToolStatus[] = [],
+): Promise<boolean> => {
   let cwd: string
   try {
     cwd = root ?? (await $.session.cwd())
@@ -1006,7 +1022,7 @@ const runAction = async ($: EngineInterface, action: GentleAction, root: string 
     $.ui.toast('failed (could not run)')
     return false
   }
-  const spec = actionSpec(action, cwd)
+  const spec = actionSpec(action, cwd, tools)
   let answer: string
   try {
     answer = await $.ui.ask(spec.question, { header: 'Gentle AI', options: [RUN_IT, CANCEL] })
@@ -1017,7 +1033,7 @@ const runAction = async ($: EngineInterface, action: GentleAction, root: string 
   try {
     const r = await $.process.run(spec.argv, {
       cwd,
-      timeoutMs: ACTION_TIMEOUT_MS,
+      timeoutMs: spec.timeoutMs ?? ACTION_TIMEOUT_MS,
       ...(spec.env ? { env: spec.env } : {}),
       ...(spec.stdin === undefined ? {} : { stdin: spec.stdin }),
     })
@@ -1878,12 +1894,12 @@ export const register: Register = on => {
       </Button>
     )
     // Command buttons confirm first (`runAction`), then detection runs again.
-    const command = (key: GentleAction, label: string, root: string | null, selected = false) =>
+    const command = (key: GentleAction, label: string, g: GentleView, selected = false) =>
       action(
         key,
         label,
         async () => {
-          if (await runAction($, key, root)) await refreshGentle($, true)
+          if (await runAction($, key, g.root, g.tools)) await refreshGentle($, true)
         },
         selected,
       )
@@ -1900,7 +1916,7 @@ export const register: Register = on => {
         ? action(b.key, b.label, () => fillPrompt($, rulesPrompt(g.gga.rulesFile)))
         : b.key === 'tdd-configure'
           ? action(b.key, b.label, () => fillPrompt($, STRICT_TDD_PROMPT))
-          : command(b.key, b.label, g.root, b.selected)
+          : command(b.key, b.label, g, b.selected)
     // The rows and their column widths, built once for both the tree and its
     // row count (`gentleRows`), so the two cannot drift apart.
     const gentleLayout = (g: GentleView) => {
