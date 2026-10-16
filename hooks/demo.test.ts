@@ -137,6 +137,9 @@ test('/hud-demo shows the sample session, and running it again restores live dat
   expect(demo).toContain('checkout-refactor')
   expect(demo).toContain('you@Acme')
   expect(demo).not.toContain('live-proj')
+  // The demo footer shows an older install with a newer release out.
+  expect(demo).toContain(' 2.1.296')
+  expect(demo).toContain(' ↑ 2.1.301')
 
   const offRes = await $.command.run({ command: 'hud-demo', args: '' } as never)
   expect(offRes.text).toBe('Demo mode off.')

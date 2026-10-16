@@ -65,9 +65,18 @@ issue for a security problem.
     only when there is none).
   - `gentle-ai review mode enable|disable --scope clone --cwd <root> --json`
     and `gentle-ai review mode enable|disable --scope global --json`.
-  - Each has a 30 s timeout. Nothing runs when the working directory cannot
-    be read; a failure shows only "failed (exit N)" or "failed (could not
-    run)".
+  - `claude update`, from the footer's `[update]` button (shown only when a
+    newer Claude Code is out), with a 300 s timeout. It runs the `claude`
+    first on `PATH` and downloads the new release; its output is read only
+    for the result toast.
+  - The others have a 30 s timeout. Nothing runs when the working directory cannot
+    be read. One run at a time: a press while `claude update` or a Gentle AI
+    command is still running only toasts that it is already running. A
+    failure shows "failed (exit N)", "failed (could not run)" or "failed
+    (timed out)"; the `claude update` and `gentle-ai upgrade` toasts may
+    also echo one line of the command's output (`claude update`'s last line,
+    or the reason gentle-ai prints for the tool), with control characters
+    stripped and cut to a short length.
 - **Plugin API**: session id, model, working directory, repository root,
   usage and the Claude Code version (`$.session.version()`, shown in the
   footer); the tool list (MCP server names are derived from tool names); the
@@ -102,7 +111,9 @@ the Gentle AI section (tool versions and updates, gga hook and rules file
 name, RDD mode, strict TDD setting).
 
 Toasts are short fixed texts ("gga hook installed", "RDD on for this
-project", "failed (exit N)", "demo mode"); command output is never shown.
+project", "failed (exit N)", "demo mode"); command output is never shown,
+except the one cleaned, shortened line the `claude update` and
+`gentle-ai upgrade` toasts may echo (see above).
 The `[create rules]` and `[configure]` buttons put a fixed request in the
 prompt box (`$.prompt.fill`, replacing the draft); they never send it. The
 rules file name in that request comes from `.gga` only when it is a plain
@@ -115,13 +126,20 @@ and MCP server names.
 
 ## What it does not do
 
-- No network calls by the plugin itself. brew runs with
-  `HOMEBREW_NO_AUTO_UPDATE=1` and reads only its local tap metadata: in a
-  check with no network interface (`unshare --user --net`), the three brew
-  commands, `gentle-ai --version` and `gentle-ai review mode status` all
-  completed with their normal output. A command the person confirms (`gga`,
-  `gentle-ai review mode`) is that tool's own: gga runs with
-  `CURL_CMD=false`, which disables its update check.
+- Two online checks, nothing else in the background:
+  - `$.http.fetch` of
+    `https://registry.npmjs.org/-/package/@anthropic-ai/claude-code/dist-tags`
+    (no auth, no body) at session start and hourly, for the Claude Code
+    version in the footer. It is skipped when
+    `CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC` is set.
+  - `gentle-ai update` with Gentle AI detection (about every 5 minutes), run
+    with `DO_NOT_TRACK=1`, for the latest tool versions.
+
+  brew is only a fallback and runs with `HOMEBREW_NO_AUTO_UPDATE=1`, so it
+  reads only its local tap metadata. A command the person confirms (`gga`,
+  `gentle-ai review mode`, `gentle-ai upgrade <tool>`, `claude update`) is that tool's own:
+  gga runs with `CURL_CMD=false`, which disables its update check, and an
+  upgrade downloads the new release.
 - No logging and no files written by the plugin. Files change only through
   the confirmed commands above.
 - No prompt is sent on the person's behalf.

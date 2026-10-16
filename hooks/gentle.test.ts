@@ -1085,6 +1085,34 @@ test('[upgrade] runs nothing on Cancel or a dismissed dialog', async ($, on) => 
   expect(upgradeRuns(runs).length).toBe(0)
 })
 
+test('a press while a Gentle AI command runs asks nothing and runs nothing; once it ends a press works again', PERIODIC, async ($, on) => {
+  upgradeOutcome = 'timeout'
+  try {
+    const { clock, runs, toasts, asks: questions } = await start($, on, () => 'Run it')
+    const pane = await mountPane($)
+    await pane.press({ key: 'gentle-upgrade-engram' })
+    await clock.settle()
+    expect(upgradeRuns(runs).length).toBe(1)
+    await pane.press({ key: 'gentle-upgrade-engram' })
+    await clock.settle()
+    expect(questions.length).toBe(1)
+    expect(upgradeRuns(runs).length).toBe(1)
+    expect(toasts.at(-1)).toBe('Gentle AI command already running')
+    await clock.advance(UPGRADE_TIMEOUT_MS)
+    await clock.settle()
+    expect(toasts).toContain('failed (timed out)')
+    await pane.drawn()
+    await pane.press({ key: 'gentle-upgrade-engram' })
+    await clock.settle()
+    expect(questions.length).toBe(2)
+    expect(upgradeRuns(runs).length).toBe(2)
+    await clock.advance(UPGRADE_TIMEOUT_MS) // lets the second run end inside the test
+    await clock.settle()
+  } finally {
+    resetFixture()
+  }
+})
+
 const failedUpgrade = async ($: Engine, on: On, outcome: number | Error, toast: string) => {
   upgradeOutcome = outcome
   try {

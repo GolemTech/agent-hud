@@ -2,6 +2,19 @@ import { atom, read, update } from 'claude-code'
 import type { EngineInterface, Register } from 'claude-code'
 
 import type { AgentRow, TodoItem, TodoStatus } from '../types'
+import {
+  CLAUDE_UPDATE_ARGV,
+  CLAUDE_UPDATE_EVERY_TICKS,
+  CLAUDE_UPDATE_RUN_TIMEOUT_MS,
+  CLAUDE_UPDATE_TIMEOUT_MS,
+  CLAUDE_UPDATE_URL,
+  channelFrom,
+  claudeUpdateOnDisk,
+  claudeUpdateQuestion,
+  claudeUpdateToast,
+  newerVersion,
+  parseDistTags,
+} from './claude-update'
 import { demoSnapshot } from './demo'
 import { aheadText, behindText, parseAheadBehind, syncText } from './git'
 import type { AheadBehind } from './git'
@@ -38,7 +51,7 @@ import {
   STRICT_TDD_PROMPT,
   TOOLS,
 } from './gentle'
-import type { GentleAction, GentleButton, GentleInfo, GentleRow, GentleUpdate, GentleView, Mark, RddStatus, StrictTdd, ToolStatus } from './gentle'
+import type { ActionSpec, GentleAction, GentleButton, GentleInfo, GentleRow, GentleUpdate, GentleView, Mark, RddStatus, StrictTdd, ToolStatus } from './gentle'
 import {
   BRANCH_ICON,
   buttonText,
@@ -807,6 +820,12 @@ export type HudView = {
   todos: TodoItem[]
   /** The Gentle AI section; null (or absent) until the first detection finished. */
   gentle?: GentleView | null
+  /** The Claude Code version this session runs on; no footer when null or absent. */
+  claudeVersion?: string | null
+  /** A newer Claude Code on the person's update channel; null when none or unknown. */
+  claudeUpdate?: string | null
+  /** A newer Claude Code the footer's `[update]` left on disk; the footer then asks for a restart. */
+  claudeRestart?: string | null
 }
 
 // The Claude Code version for the footer, read once per session start.
@@ -815,6 +834,23 @@ let versionCache: string | null = null
 // (`version.ts`): both surfaces then draw only this notice. An unknown
 // version leaves it null, so the HUD runs normally.
 let unsupportedNotice: string | null = null
+// A newer Claude Code release on the person's update channel (`claude-update.ts`),
+// or null: none, not checked yet, or the check failed. Checked at session start
+// and every CLAUDE_UPDATE_EVERY_TICKS, never on a render.
+let claudeUpdateCache: string | null = null
+// Numbers each update check as it starts; only the newest may write the cache.
+let claudeUpdateGeneration = 0
+// The newer version the footer's `[update]` left on disk (`claudeUpdateOnDisk`),
+// or null. The running session keeps its version, so until the next session
+// start the footer shows `↑ <version> restart` instead of the button.
+let claudeRestartCache: string | null = null
+// The footer's `claude update` under way (a token per run), or null. While set,
+// a press only toasts `CLAUDE_UPDATE_BUSY`: two runs at once would race on the
+// install. A run clears its own token in `finally` (the run has a timeout), and
+// `session.start` never resets it: a run under way when a /clear or a resume
+// starts a session is still writing the install.
+let claudeUpdateRunning: object | null = null
+const CLAUDE_UPDATE_BUSY = 'Claude Code update already running'
 
 // ── Gentle AI ────────────────────────────────────────────────────────────
 // The section's pure parsers and constants live in `gentle.ts`; everything
@@ -828,6 +864,12 @@ let gentleRun: Promise<void> | null = null
 let gentleRunStartedAt = 0
 // Numbers each detection as it starts; only the newest may write the cache.
 let gentleGeneration = 0
+// The Gentle AI command action under way (a token per run), or null: one at a
+// time, whatever its key (an upgrade, an RDD toggle, an install), as
+// `claudeUpdateRunning` is for the footer. While set, a press only toasts
+// `GENTLE_ACTION_BUSY`.
+let gentleActionRunning: object | null = null
+const GENTLE_ACTION_BUSY = 'Gentle AI command already running'
 
 // A file's text, or null when it is missing or unreadable.
 const readOr = async ($: EngineInterface, path: string): Promise<string | null> => {
@@ -835,6 +877,48 @@ const readOr = async ($: EngineInterface, path: string): Promise<string | null> 
     return await $.fs.read(path)
   } catch {
     return null
+  }
+}
+
+// The settings files Claude Code layers, in its precedence order (local
+// project, project, user); each text null when missing or unreadable.
+const settingsTexts = async ($: EngineInterface): Promise<(string | null)[]> => {
+  const home = await $.env.get('HOME')
+  const configDir = await $.env.get('CLAUDE_CONFIG_DIR')
+  const root = await $.session.root()
+  const user = typeof home === 'string' ? claudePaths(home, configDir ?? undefined).settings : null
+  return [
+    await readOr($, `${root}/.claude/settings.local.json`),
+    await readOr($, `${root}/.claude/settings.json`),
+    user === null ? null : await readOr($, user),
+  ]
+}
+
+// Asks the npm registry for Claude Code's dist-tags and keeps the person's
+// channel's release when it is newer than the running one. Skipped under
+// `CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC` (the host only refuses a plugin
+// request that carries `auth`, so the opt-out is honored here). `HttpInit`
+// has no timeout: the fetch races a timer, and an answer after it is dropped.
+// Any failure (rejection, non-2xx, unparsable body, no usable tag for the
+// channel, timeout) keeps the cache. A check that ends after a newer one
+// started (the hourly tick, a session start) is dropped.
+const checkClaudeUpdate = async ($: EngineInterface): Promise<void> => {
+  const generation = ++claudeUpdateGeneration
+  try {
+    if (await $.env.get('CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC')) return
+    const running = versionCache
+    if (!running) return
+    const channel = channelFrom(...(await settingsTexts($)))
+    const timeout = { cancel: () => {} }
+    const timedOut = new Promise<null>(resolve => {
+      timeout.cancel = $.clock.after(CLAUDE_UPDATE_TIMEOUT_MS, () => resolve(null)).cancel
+    })
+    const res = await Promise.race([$.http.fetch(CLAUDE_UPDATE_URL), timedOut]).finally(() => timeout.cancel())
+    if (!res?.ok) return
+    const tag = parseDistTags(res.text)?.[channel]
+    if (tag && generation === claudeUpdateGeneration) claudeUpdateCache = newerVersion(running, tag)
+  } catch {
+    // keep the last known answer
   }
 }
 
@@ -1014,12 +1098,18 @@ const detectGentle = async ($: EngineInterface): Promise<GentleInfo> => {
 // `ACTION_TIMEOUT_MS`. An upgrade toasts `upgrading <tool>…` before it runs,
 // and its result toast comes from its printed summary (`upgradeToast`), not
 // its exit code alone. A rejection at the timeout reads `failed (timed out)`.
+// One command action at a time (`gentleActionRunning`): a press meanwhile only
+// toasts `GENTLE_ACTION_BUSY` and returns false (no detection after it).
 const runAction = async (
   $: EngineInterface,
   action: GentleAction,
   root: string | null,
   tools: readonly ToolStatus[] = [],
 ): Promise<boolean> => {
+  if (gentleActionRunning) {
+    $.ui.toast(GENTLE_ACTION_BUSY)
+    return false
+  }
   let cwd: string
   try {
     cwd = root ?? (await $.session.cwd())
@@ -1035,9 +1125,31 @@ const runAction = async (
     return false
   }
   if (answer !== RUN_IT) return false
+  // Another press may have started one while this dialog was open.
+  if (gentleActionRunning) {
+    $.ui.toast(GENTLE_ACTION_BUSY)
+    return false
+  }
+  const mine = {}
+  gentleActionRunning = mine
   const timeoutMs = spec.timeoutMs ?? ACTION_TIMEOUT_MS
-  // An upgrade can take minutes: say it started.
-  if (spec.upgrades) $.ui.toast(`upgrading ${spec.upgrades}…`)
+  try {
+    // An upgrade can take minutes: say it started.
+    if (spec.upgrades) $.ui.toast(`upgrading ${spec.upgrades}…`)
+    await runActionCommand($, spec, cwd, timeoutMs)
+  } finally {
+    if (gentleActionRunning === mine) gentleActionRunning = null
+  }
+  return true
+}
+
+// Runs a confirmed action's command and toasts its outcome (`runAction`).
+const runActionCommand = async (
+  $: EngineInterface,
+  spec: ActionSpec,
+  cwd: string,
+  timeoutMs: number,
+): Promise<void> => {
   const startedAt = await $.clock.now()
   try {
     const r = await $.process.run(spec.argv, {
@@ -1056,7 +1168,47 @@ const runAction = async (
   } catch {
     $.ui.toast(runFailure((await $.clock.now()) - startedAt, timeoutMs))
   }
-  return true
+}
+
+// The footer's `[update]`: asks first and runs `claude update` only on the
+// exact "Run it" (a dismissed dialog is a cancel), as `runAction` does. It runs
+// whatever `claude` is on PATH, which may not be the install this session
+// runs. The toast reads its output (`claudeUpdateToast`); a rejection at the
+// timeout is `failed (timed out)`. One run at a time (`claudeUpdateRunning`).
+const runClaudeUpdate = async ($: EngineInterface, running: string, latest: string): Promise<void> => {
+  if (claudeUpdateRunning) {
+    $.ui.toast(CLAUDE_UPDATE_BUSY)
+    return
+  }
+  let answer: string
+  try {
+    answer = await $.ui.ask(claudeUpdateQuestion(running, latest), { header: 'Claude Code', options: [RUN_IT, CANCEL] })
+  } catch {
+    return
+  }
+  if (answer !== RUN_IT) return
+  // Another press may have started one while this dialog was open.
+  if (claudeUpdateRunning) {
+    $.ui.toast(CLAUDE_UPDATE_BUSY)
+    return
+  }
+  const mine = {}
+  claudeUpdateRunning = mine
+  try {
+    $.ui.toast('updating Claude Code…')
+    const startedAt = await $.clock.now()
+    try {
+      const r = await $.process.run([...CLAUDE_UPDATE_ARGV], { timeoutMs: CLAUDE_UPDATE_RUN_TIMEOUT_MS })
+      const output = `${r.stdout}\n${r.stderr}`
+      const onDisk = claudeUpdateOnDisk(r.exitCode, output, running)
+      if (onDisk) claudeRestartCache = onDisk
+      $.ui.toast(claudeUpdateToast(r.exitCode, output, running))
+    } catch {
+      $.ui.toast(runFailure((await $.clock.now()) - startedAt, CLAUDE_UPDATE_RUN_TIMEOUT_MS))
+    }
+  } finally {
+    if (claudeUpdateRunning === mine) claudeUpdateRunning = null
+  }
 }
 
 // Puts the text in the prompt box for the person to review and send.
@@ -1130,6 +1282,8 @@ const demoView = (elapsedMs: number): HudView => {
     models: new Map(d.agents.map(a => [a.id, { model: a.model, effort: a.effort }])),
     todos: d.todos,
     gentle: d.gentle,
+    claudeVersion: d.claude.version,
+    claudeUpdate: d.claude.update,
   }
 }
 
@@ -1185,6 +1339,9 @@ const liveView = async ($: EngineInterface, list: AgentRow[]): Promise<HudView> 
     models: loopModel,
     todos: todoList,
     gentle: gentleCache,
+    claudeVersion: versionCache,
+    claudeUpdate: claudeUpdateCache,
+    claudeRestart: claudeRestartCache,
   }
   return masked ? maskView(view) : view
 }
@@ -1422,6 +1579,14 @@ export const register: Register = on => {
 
     void $.ui.open({ id: PANE, title: 'Agent HUD' })
 
+    // Newer Claude Code: now (not awaited: a network call), then hourly below.
+    claudeUpdateCache = null
+    claudeRestartCache = null
+    // `claudeUpdateRunning` / `gentleActionRunning` are not reset: a run that
+    // started before this session start (a /clear, a resume) is still writing
+    // the install, and it clears its own token when it ends.
+    void checkClaudeUpdate($)
+
     let ticks = 0
     const tick = async (): Promise<void> => {
       ticks += 1
@@ -1461,15 +1626,7 @@ export const register: Register = on => {
       // since a compose with no style cannot be told from a subagent's.
       if (ticks % 30 === 1) {
         try {
-          const home = await $.env.get('HOME')
-          const configDir = await $.env.get('CLAUDE_CONFIG_DIR')
-          const root = await $.session.root()
-          const user = typeof home === 'string' ? claudePaths(home, configDir ?? undefined).settings : null
-          const style = outputStyleFrom(
-            await readOr($, `${root}/.claude/settings.local.json`),
-            await readOr($, `${root}/.claude/settings.json`),
-            user === null ? null : await readOr($, user),
-          )
+          const style = outputStyleFrom(...(await settingsTexts($)))
           if (polledSettingsStyle !== undefined && style !== polledSettingsStyle) composedStyle = undefined
           polledSettingsStyle = style
           settingsStyle = style
@@ -1536,6 +1693,8 @@ export const register: Register = on => {
       // Gentle AI detection: now, then every ~5 min. Not awaited: it takes a
       // second or more, and the rows write below must not wait for it.
       if (ticks % 300 === 1) void refreshGentle($)
+      // Newer Claude Code: every ~hour after the session start's check.
+      if (ticks % CLAUDE_UPDATE_EVERY_TICKS === 0) void checkClaudeUpdate($)
       try {
         const built = buildRows(await $.agent.list(), seen, await $.clock.now())
         await update($, rows, prev => mergeRows(prev, built).filter(r => !clearedAgents.has(r.id)))
@@ -2060,15 +2219,42 @@ export const register: Register = on => {
       </Box>
     )
 
-    // Sticky footer: the Claude Code version the session runs on.
-    const footerRow = versionCache ? (
+    // Sticky footer: the Claude Code version the session runs on, and a
+    // newer release on the person's channel, in the same truncating line.
+    // Beside the release, `[update]` (never wrapped: the row has no flexWrap
+    // and the text truncates, so FOOTER_ROWS holds); once an update left a
+    // newer version on disk, a restart hint instead. Demo only toasts.
+    const running = view.claudeVersion
+    const latest = view.claudeUpdate
+    const footerRow = running ? (
       <Box flexDirection="column" flexShrink={0} marginTop={1}>
-        <Text wrap="truncate-end" {...fg(t)}>
-          <Text color={t.success}>● </Text>
-          <Text color={t.subtle}>Claude</Text>
-          <Text bold {...fg(t)}>Code</Text>
-          <Text color={t.subtle}>{` ${versionCache}`}</Text>
-        </Text>
+        <Box>
+          <Text wrap="truncate-end" {...fg(t)}>
+            <Text color={t.success}>● </Text>
+            <Text color={t.subtle}>Claude</Text>
+            <Text bold {...fg(t)}>Code</Text>
+            <Text color={t.subtle}>{` ${running}`}</Text>
+            {view.claudeRestart ? (
+              <Text color={t.subtle}>{` ↑ ${view.claudeRestart} restart`}</Text>
+            ) : latest ? (
+              <Text color={t.warning}>{` ↑ ${latest}`}</Text>
+            ) : null}
+          </Text>
+          {latest && !view.claudeRestart ? (
+            <Box flexShrink={0} marginLeft={1}>
+              <Button
+                key="claude-update"
+                plain
+                onPress={() => {
+                  if (view.demo) return $.ui.toast('demo mode')
+                  void runClaudeUpdate($, running, latest)
+                }}
+              >
+                <Text color={t.accent}>{buttonText('update')}</Text>
+              </Button>
+            </Box>
+          ) : null}
+        </Box>
       </Box>
     ) : null
 

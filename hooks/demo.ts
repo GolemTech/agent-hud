@@ -27,6 +27,8 @@ export type DemoSnapshot = {
   contextPercent: number
   meters: DemoMeter[]
   footer: string
+  /** The footer's Claude Code version and a newer release on its channel. */
+  claude: { version: string; update: string | null }
   servers: DemoServer[]
   agents: DemoAgent[]
   todos: TodoItem[]
@@ -174,11 +176,15 @@ const todosAt = (t: number): TodoItem[] => {
   })
 }
 
+// The footer: an older install with a newer release out, for the ↑ mark.
+const CLAUDE = { version: '2.1.296', update: '2.1.301' }
+
 export const demoSnapshot = (elapsedMs: number): DemoSnapshot => ({
   session: SESSION,
   contextPercent: CONTEXT_PERCENT,
   meters: METERS,
   footer: FOOTER,
+  claude: CLAUDE,
   servers: SERVERS,
   agents: AGENTS.filter(a => elapsedMs >= a.start).map(a => agentAt(a, elapsedMs)),
   todos: todosAt(elapsedMs),

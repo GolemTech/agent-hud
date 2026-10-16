@@ -26,12 +26,12 @@ from the repository root (needs `vhs`, `ffmpeg` and `gifsicle`).
 | Subagents | Running / done / error counts, then one card per subagent: description, type, model, elapsed time and context tokens. Past 12 rows the cards scroll in a window of their own. |
 | Todo      | The main loop's task list: done first, then in progress, then pending. Past 5 rows it scrolls in a window of its own. |
 | Gentle AI | The [gentle-ai](https://github.com/Gentleman-Programming/gentle-ai) toolset: one aligned grid in four groups. **Tools**: `gentle-ai`, `gga` and `engram` versions with `✓` up to date or `↑ <newer>` (from `gentle-ai update`, else your local brew tap); **gga**: the review hook and its rules file; **RDD**: receipt-driven development on or off and which scope decides it, then each scope's own setting; **TDD**: test-first by default under ODD, and strict TDD. One status vocabulary throughout: `✓` ok, `✗` missing, `↑` update, `●` on, `○` off, `—` unset, `?` unknown. Shows "gentle-ai not installed" when it is not. |
-| Footer    | Always at the bottom: the Claude Code version (`● ClaudeCode x.y.z`). |
+| Footer    | Always at the bottom: the Claude Code version this session runs on (`● ClaudeCode x.y.z`), then `↑ <newer>` and an `[update]` button when a newer Claude Code is out on your update channel; `↑ <newer> restart` once an update left it on disk. |
 
 ## How it works
 
 <p align="center">
-  <img src="docs/assets/data-flow.svg" width="760" alt="Data flow in three columns. Sources: Claude Code events (agent.spawn, turn.step, prompt.compose, tool.call for TodoWrite, TaskCreate and TaskUpdate, ui.scroll), the plugin API (session usage, id, model and version, the tool list for MCP servers, the agent list) and local reads plus one online check (git branch, diff and ahead/behind, settings files, custom-title.json, account fields, gentle-ai update with the local brew tap as fallback, gga files read as text). Agent HUD core: a one-second poller with caches, the $.state atoms, one view built by liveView and turned into maskView in privacy mode or demoView in demo mode, clean() on external text, and actions (gga, RDD and tool upgrades) only after a Run it confirmation. Surfaces: the sidebar pane and the band above the prompt.">
+  <img src="docs/assets/data-flow.svg" width="760" alt="Data flow in three columns. Sources: Claude Code events (agent.spawn, turn.step, prompt.compose, tool.call for TodoWrite, TaskCreate and TaskUpdate, ui.scroll), the plugin API (session usage, id, model and version, the tool list for MCP servers, the agent list) and local reads plus two online checks (git branch, diff and ahead/behind, settings files, custom-title.json, account fields, the npm registry for the newest Claude Code on your channel, gentle-ai update with the local brew tap as fallback, gga files read as text). Agent HUD core: a one-second poller with caches, the $.state atoms, one view built by liveView and turned into maskView in privacy mode or demoView in demo mode, clean() on external text, and actions (gga, RDD and tool upgrades) only after a Run it confirmation. Surfaces: the sidebar pane and the band above the prompt.">
 </p>
 
 Details and limits are in [How it gets its data](#how-it-gets-its-data).
@@ -139,7 +139,9 @@ To add the marketplace first and install separately:
     `failed (timed out)` when it is still running after its time limit (any
     command button). Long reasons are cut, keeping a trailing link. On Windows
     gentle-ai cannot upgrade gga: it skips it with "manual update required"
-    and the gga repository URL, which the toast shows.
+    and the gga repository URL, which the toast shows. One command button
+    runs at a time: a press while one runs only toasts `Gentle AI command
+    already running`.
   - Prompt buttons only fill the prompt box, they never send it:
     `[create rules]` (asks Claude to write the gga rules file) and
     `[configure]` (asks Claude to set up strict TDD through the sdd-init flow).
@@ -226,6 +228,31 @@ rest, and the limits that come with them:
   named style replaces it. Privacy mode leaves the style and the
   change counts visible: they are not identity.
 - **Reset times** use the system UTC offset from `date +%z`.
+- **Newer Claude Code** comes from the npm registry's dist-tags for
+  `@anthropic-ai/claude-code` (`registry.npmjs.org`, no npm needed), checked at
+  session start and then hourly, with a 10-second timeout. Your channel is the
+  `autoUpdatesChannel` setting, read from the same settings files as the
+  output style (`latest` when unset or unknown; `stable` compares against the
+  stable tag). The footer shows `↑ <newer>` only when that release is newer
+  than the running one; a failed check shows nothing. The version shown is the
+  running process's: after an update, a session keeps its version until it is
+  restarted.
+- **`[update]`** in the footer asks first (naming both versions and the
+  command), then runs `claude update` for up to 5 minutes. A running session
+  never changes version: after an update, restart it (`/exit`, then
+  `claude --resume`). The toast reads what `claude update` printed:
+  `Claude Code updated to X — restart it …`; `Claude Code X is already
+  installed — restart to use it` when the newer version was on disk already;
+  `claude update found nothing newer (X)`; `claude update finished — restart
+  and check the version` when it printed nothing it recognizes;
+  `failed (<its last line>)` on a non-zero exit, `failed (timed out)` past
+  the limit. After the first two the footer shows `↑ X restart` instead of
+  the button until the next session start. The button runs whatever `claude`
+  is first on your `PATH`, which may not be the install this session runs
+  (for example an npm-global one beside the native one); when `claude update`
+  warns about multiple installations the toast adds `see claude doctor`.
+  A press while an update runs only toasts `Claude Code update already
+  running`.
 - **Dock width** cannot be forced by a plugin; a width you set wins.
 - **Gentle AI versions** come from `brew list --versions` when Homebrew is
   there, else from the tools themselves: `gentle-ai --version` and
@@ -260,9 +287,11 @@ rest, and the limits that come with them:
   the project's `openspec/config.yaml`, matched as text (quoted or not,
   `true`/`false` or YAML `yes`/`no`/`on`/`off`, an inline `# comment`
   allowed; a commented-out line does not count).
-- **Network**: the only call that leaves the machine on its own is
-  `gentle-ai update`'s version check above; an `[upgrade]` you confirm
-  downloads the new release. The plugin itself makes none.
+- **Network**: two checks leave the machine on their own: the plugin's
+  hourly Claude Code check above (one GET to `registry.npmjs.org`, through
+  Claude Code's own fetch, carrying no credential) and `gentle-ai update`'s
+  version check. An `[upgrade]` you confirm downloads the new release. Set
+  `CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC` to skip the Claude Code check.
 - **Control characters** (escape sequences, newlines, bells) are stripped from
   every displayed string that comes from outside the plugin.
 

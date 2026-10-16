@@ -215,12 +215,20 @@ const truncates = (t: Node) => String(t.props?.wrap ?? '').startsWith('truncate'
 // wraps, and each of its items either keeps its width (flexShrink 0, a
 // Button) or only holds truncating Text, so nothing is squeezed into one
 // letter per line. A width-keeping item never exceeds the drawable width.
+// The one exception is a line that must stay one row (the footer): it leads
+// with truncating Text, every other item keeps its width, and the Text
+// truncates to make room instead of the row wrapping.
+const oneLine = (items: Node[]) =>
+  items[0]?.type === 'Text' &&
+  truncates(items[0]) &&
+  items.slice(1).every(item => item.type === 'Box' && item.props?.flexShrink === 0)
 const checkRules = (tree: unknown, columns: number) => {
   for (const box of all(tree, 'Box')) {
     const direction = box.props?.flexDirection ?? 'row'
     const items = elements(box)
     if (direction === 'row' && items.length > 1) {
-      expect({ row: textOf(box), flexWrap: box.props?.flexWrap }).toEqual({ row: textOf(box), flexWrap: 'wrap' })
+      const wrap = oneLine(items) ? (box.props?.flexWrap ?? 'wrap') : box.props?.flexWrap
+      expect({ row: textOf(box), flexWrap: wrap }).toEqual({ row: textOf(box), flexWrap: 'wrap' })
       for (const item of items) {
         const keeps = item.type === 'Button' || (item.type === 'Box' && item.props?.flexShrink === 0)
         const texts = item.type === 'Text' ? [item] : all(item, 'Text').filter(t => !all(tree, 'Text').some(p => elements(p).includes(t)))
