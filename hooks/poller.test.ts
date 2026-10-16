@@ -2,7 +2,7 @@ import type { On } from 'claude-code'
 import { expect, mock, test } from 'claude-code/testing'
 import type { Engine } from 'claude-code/testing'
 
-import { BREW_TIMEOUT_MS, CMD_TIMEOUT_MS } from './gentle'
+import { BREW_TIMEOUT_MS, CMD_TIMEOUT_MS, UPDATE_TIMEOUT_MS } from './gentle'
 
 const HOME = '/home/myuser'
 const CWD = `${HOME}/code/demo-proj`
@@ -116,7 +116,9 @@ test('every command the poller and the detection run carries a timeout', async (
   expect(runs.some(r => r.argv[0] === 'brew')).toBe(true)
   expect(runs.some(r => r.argv[0] === 'gentle-ai')).toBe(true)
   for (const r of runs) {
-    expect(r.init?.timeoutMs).toBe(r.argv[0] === 'brew' ? BREW_TIMEOUT_MS : CMD_TIMEOUT_MS)
+    const expected =
+      r.argv[0] === 'brew' ? BREW_TIMEOUT_MS : r.argv.join(' ') === 'gentle-ai update' ? UPDATE_TIMEOUT_MS : CMD_TIMEOUT_MS
+    expect(r.init?.timeoutMs).toBe(expected)
   }
 })
 

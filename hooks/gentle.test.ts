@@ -4,6 +4,9 @@ import type { Engine, MockClock } from 'claude-code/testing'
 
 import {
   ACTION_TIMEOUT_MS,
+  BREW_TIMEOUT_MS,
+  CMD_TIMEOUT_MS,
+  UPDATE_TIMEOUT_MS,
   checkMark,
   GENTLE_JOIN_DEADLINE_MS,
   gentleGrid,
@@ -15,6 +18,7 @@ import {
   isAbsolutePath,
   parseBrewList,
   parseBrewOutdated,
+  parseGentleUpdate,
   parseGgaConfig,
   parseRddStatus,
   parseStrictTdd,
@@ -155,6 +159,49 @@ test('parseBrewOutdated: the newer version per formula, short names', () => {
   expect(parseBrewOutdated('Warning: something\n')).toBe(null)
   expect(parseBrewOutdated('')).toBe(null)
   expect(parseBrewOutdated('{"formulae":[{"name":42}]}')).toEqual({})
+})
+
+// `gentle-ai update` as gentle-ai 4.1.1 prints it (exit 0).
+const UPDATE_TABLE = [
+  'Update Check',
+  '============',
+  '',
+  '  [UP] gentle-ai     installed: 4.1.1       latest: 4.2.0       brew upgrade --formula gentle-ai',
+  '  [ok] engram        installed: 3.4.0       latest: 3.4.0',
+  '  [ok] gga           installed: 2.10.1      latest: 2.10.1',
+  '',
+  '1 update(s) available.',
+  '',
+].join('\n')
+
+test('parseGentleUpdate: installed and latest per known tool from the update table', () => {
+  expect(parseGentleUpdate(UPDATE_TABLE)).toEqual({
+    'gentle-ai': { installed: '4.1.1', latest: '4.2.0' },
+    engram: { installed: '3.4.0', latest: '3.4.0' },
+    gga: { installed: '2.10.1', latest: '2.10.1' },
+  })
+})
+
+test('parseGentleUpdate: spinner frames on \\r, ANSI colors, CRLF and unknown tools are tolerated', () => {
+  const noisy =
+    '  ⠋ Checking for updates...\r  ⠙ Checking for updates...\r\u001b[2K\r' +
+    UPDATE_TABLE.replace('[UP]', '\u001b[33m[UP]\u001b[0m').replace(/\n/g, '\r\n') +
+    '  [ok] other-tool    installed: 1.0.0       latest: 1.0.0\n'
+  expect(parseGentleUpdate(noisy)).toEqual({
+    'gentle-ai': { installed: '4.1.1', latest: '4.2.0' },
+    engram: { installed: '3.4.0', latest: '3.4.0' },
+    gga: { installed: '2.10.1', latest: '2.10.1' },
+  })
+})
+
+test('parseGentleUpdate: only the tools whose row parses; null when none does', () => {
+  expect(parseGentleUpdate('  [UP] engram  installed: 3.3.0  latest: 3.4.0  brew upgrade engram  extra\n')).toEqual({
+    engram: { installed: '3.3.0', latest: '3.4.0' },
+  })
+  expect(parseGentleUpdate('  [??] gga  installed: unknown  latest: 2.10.1\n')).toBe(null)
+  expect(parseGentleUpdate('  ⠋ Checking for updates...\r')).toBe(null)
+  expect(parseGentleUpdate('')).toBe(null)
+  expect(parseGentleUpdate('{"tools":[]}')).toBe(null)
 })
 
 test('parseBrewList: installed versions from `brew list --versions`', () => {
@@ -393,6 +440,9 @@ let engramVersion: string | null = null
 let pathLookup: Record<string, string> = {}
 // The session's environment; a test drops HOME for USERPROFILE.
 let envVars: Record<string, string> = { HOME }
+// What `gentle-ai update` prints, or a rejection (offline, timed out); null
+// answers an empty stdout, as an old gentle-ai would.
+let gentleUpdate: string | Error | null = null
 
 // Puts every fixture variable back, so the tests stay order-independent.
 const resetFixture = () => {
@@ -405,6 +455,7 @@ const resetFixture = () => {
   engramVersion = null
   pathLookup = {}
   envVars = { HOME }
+  gentleUpdate = null
 }
 
 const answerEngine = (
@@ -462,6 +513,10 @@ const answerEngine = (
       return out('', ggaOutcome)
     }
     if (argv === 'gentle-ai --version') return out('gentle-ai 4.0.0\n')
+    if (argv === 'gentle-ai update') {
+      if (gentleUpdate instanceof Error) throw gentleUpdate
+      return out(gentleUpdate ?? '')
+    }
     if (run.argv[0] === 'brew' && brewMissing) throw new Error('brew: command not found')
     if (argv === 'engram version') {
       if (engramVersion === null) throw new Error('engram: command not found')
@@ -975,4 +1030,77 @@ test('the global gga config falls back to USERPROFILE when HOME is unset', async
   } finally {
     resetFixture()
   }
+})
+
+// ── Update status from `gentle-ai update` ────────────────────────────────
+
+// The fixture's own versions (brew list, `gentle-ai --version`): gentle-ai
+// 4.0.0 has 4.2.0 out, engram 2.2.1 and gga 2.10.1 are current.
+const FIXTURE_UPDATE =
+  '  ⠋ Checking for updates...\r  ⠙ Checking for updates...\r' +
+  'Update Check\n============\n\n' +
+  '  \u001b[33m[UP]\u001b[0m gentle-ai     installed: 4.0.0       latest: 4.2.0       brew upgrade --formula gentle-ai\n' +
+  '  [ok] engram        installed: 2.2.1       latest: 2.2.1\n' +
+  '  [ok] gga           installed: 2.10.1      latest: 2.10.1\n\n1 update(s) available.\n'
+
+test('gentle-ai update decides the update status over a stale brew tap, and brew outdated is skipped', async ($, on) => {
+  gentleUpdate = FIXTURE_UPDATE
+  try {
+    const { runs } = await start($, on)
+    const tree = await (await mountPane($)).drawn()
+    expect(cellsOf(tree, 'gentle-ai')).toEqual(['gentle-ai', '4.0.0', '↑ 4.2.0'])
+    // brew's tap would call engram outdated; gentle-ai update says it is current.
+    expect(cellsOf(tree, 'engram')).toEqual(['engram', '2.2.1', '✓'])
+    expect(cellsOf(tree, 'gga')).toEqual(['gga', '2.10.1', '✓'])
+    expect(runs.some(r => r.argv.join(' ').startsWith('brew outdated'))).toBe(false)
+  } finally {
+    resetFixture()
+  }
+})
+
+test('without brew, gentle-ai update gives engram and gga their versions and ✓, no ?', async ($, on) => {
+  brewMissing = true
+  gentleUpdate = UPDATE_TABLE
+  try {
+    const { runs } = await start($, on)
+    const tree = await (await mountPane($)).drawn()
+    expect(cellsOf(tree, 'gentle-ai')).toEqual(['gentle-ai', '4.0.0', '↑ 4.2.0'])
+    expect(cellsOf(tree, 'engram')).toEqual(['engram', '3.4.0', '✓'])
+    expect(cellsOf(tree, 'gga')).toEqual(['gga', '2.10.1', '✓'])
+    expect(runs.some(r => r.argv[0] === 'gga')).toBe(false)
+  } finally {
+    resetFixture()
+  }
+})
+
+test('when gentle-ai update fails, brew outdated decides as before', async ($, on) => {
+  gentleUpdate = new Error('network unreachable')
+  try {
+    const { runs } = await start($, on)
+    const tree = await (await mountPane($)).drawn()
+    expect(cellsOf(tree, 'gentle-ai')).toEqual(['gentle-ai', '4.0.0', '✓'])
+    expect(cellsOf(tree, 'engram')).toEqual(['engram', '2.2.1', '↑ 3.3.0'])
+    expect(runs.some(r => r.argv.join(' ').startsWith('brew outdated'))).toBe(true)
+  } finally {
+    resetFixture()
+  }
+})
+
+test('gentle-ai update runs with DO_NOT_TRACK=1 and its own timeout', async ($, on) => {
+  gentleUpdate = FIXTURE_UPDATE
+  try {
+    const { runs } = await start($, on)
+    const run = runs.find(r => r.argv.join(' ') === 'gentle-ai update')
+    expect(run?.argv).toEqual(['gentle-ai', 'update'])
+    expect(run?.init?.env?.DO_NOT_TRACK).toBe('1')
+    expect((run?.init as { timeoutMs?: number } | undefined)?.timeoutMs).toBe(UPDATE_TIMEOUT_MS)
+  } finally {
+    resetFixture()
+  }
+})
+
+test('the join deadline outlasts the slowest detection: every probe at its timeout', () => {
+  // brew list, brew outdated and gentle-ai update; seven other commands.
+  const worst = 2 * BREW_TIMEOUT_MS + UPDATE_TIMEOUT_MS + 7 * CMD_TIMEOUT_MS
+  expect(GENTLE_JOIN_DEADLINE_MS).toBeGreaterThan(worst)
 })
