@@ -26,7 +26,7 @@ from the repository root (needs `vhs`, `ffmpeg` and `gifsicle`).
 | Subagents | Running / done / error counts, then one card per subagent: description, type, model, elapsed time and context tokens. Past 12 rows the cards scroll in a window of their own. |
 | Todo      | The main loop's task list: done first, then in progress, then pending. Past 5 rows it scrolls in a window of its own. |
 | Gentle AI | The [gentle-ai](https://github.com/Gentleman-Programming/gentle-ai) toolset: one aligned grid in four groups. **Tools**: `gentle-ai`, `gga` and `engram` versions with `✓` up to date or `↑ <newer>` (from `gentle-ai update`, else your local brew tap); **gga**: the review hook and its rules file; **RDD**: receipt-driven development on or off and which scope decides it, then each scope's own setting; **TDD**: test-first by default under ODD, and strict TDD. One status vocabulary throughout: `✓` ok, `✗` missing, `↑` update, `●` on, `○` off, `—` unset, `?` unknown. Shows "gentle-ai not installed" when it is not. |
-| Footer    | Always at the bottom: the Claude Code version this session runs on (`● ClaudeCode x.y.z`), then `↑ <newer>` when a newer Claude Code is out on your update channel. |
+| Footer    | Always at the bottom: the Claude Code version this session runs on (`● ClaudeCode x.y.z`), then `↑ <newer>` and an `[update]` button when a newer Claude Code is out on your update channel; `↑ <newer> restart` once an update left it on disk. |
 
 ## How it works
 
@@ -235,6 +235,20 @@ rest, and the limits that come with them:
   than the running one; a failed check shows nothing. The version shown is the
   running process's: after an update, a session keeps its version until it is
   restarted.
+- **`[update]`** in the footer asks first (naming both versions and the
+  command), then runs `claude update` for up to 5 minutes. A running session
+  never changes version: after an update, restart it (`/exit`, then
+  `claude --resume`). The toast reads what `claude update` printed:
+  `Claude Code updated to X — restart it …`; `Claude Code X is already
+  installed — restart to use it` when the newer version was on disk already;
+  `claude update found nothing newer (X)`; `claude update finished — restart
+  and check the version` when it printed nothing it recognizes;
+  `failed (<its last line>)` on a non-zero exit, `failed (timed out)` past
+  the limit. After the first two the footer shows `↑ X restart` instead of
+  the button until the next session start. The button runs whatever `claude`
+  is first on your `PATH`, which may not be the install this session runs
+  (for example an npm-global one beside the native one); when `claude update`
+  warns about multiple installations the toast adds `see claude doctor`.
 - **Dock width** cannot be forced by a plugin; a width you set wins.
 - **Gentle AI versions** come from `brew list --versions` when Homebrew is
   there, else from the tools themselves: `gentle-ai --version` and

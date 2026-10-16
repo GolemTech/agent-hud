@@ -65,7 +65,11 @@ issue for a security problem.
     only when there is none).
   - `gentle-ai review mode enable|disable --scope clone --cwd <root> --json`
     and `gentle-ai review mode enable|disable --scope global --json`.
-  - Each has a 30 s timeout. Nothing runs when the working directory cannot
+  - `claude update`, from the footer's `[update]` button (shown only when a
+    newer Claude Code is out), with a 300 s timeout. It runs the `claude`
+    first on `PATH` and downloads the new release; its output is read only
+    for the result toast.
+  - The others have a 30 s timeout. Nothing runs when the working directory cannot
     be read; a failure shows only "failed (exit N)" or "failed (could not
     run)".
 - **Plugin API**: session id, model, working directory, repository root,
@@ -126,7 +130,7 @@ and MCP server names.
 
   brew is only a fallback and runs with `HOMEBREW_NO_AUTO_UPDATE=1`, so it
   reads only its local tap metadata. A command the person confirms (`gga`,
-  `gentle-ai review mode`, `gentle-ai upgrade <tool>`) is that tool's own:
+  `gentle-ai review mode`, `gentle-ai upgrade <tool>`, `claude update`) is that tool's own:
   gga runs with `CURL_CMD=false`, which disables its update check, and an
   upgrade downloads the new release.
 - No logging and no files written by the plugin. Files change only through

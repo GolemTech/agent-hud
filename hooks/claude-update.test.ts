@@ -5,8 +5,12 @@ import type { Engine } from 'claude-code/testing'
 import {
   CLAUDE_UPDATE_EVERY_TICKS,
   CLAUDE_UPDATE_TIMEOUT_MS,
+  CLAUDE_UPDATE_RUN_TIMEOUT_MS,
   CLAUDE_UPDATE_URL,
   channelFrom,
+  claudeUpdateOnDisk,
+  claudeUpdateQuestion,
+  claudeUpdateToast,
   newerVersion,
   parseDistTags,
 } from './claude-update'
@@ -83,6 +87,98 @@ test('newerVersion is null when either side is unknown or unreadable', () => {
   expect(newerVersion('2.1.296', '2.1.301-beta')).toBeNull()
 })
 
+// ── `claude update` from the footer: its outcome ─────────────────────────
+
+// A no-op run on a machine with two installs (captured 2026-10-16).
+const UP_TO_DATE_TWO_INSTALLS = `Current version: 2.1.301
+Checking for updates to latest version...
+
+Warning: Multiple installations found
+- npm-global at /home/myuser/.npm-global/bin/claude
+- native at /home/myuser/.local/bin/claude (currently running)
+
+Warning: Running native installation but config install method is 'global'
+Fix: Run claude install to update configuration
+
+Claude Code is up to date (2.1.301)
+`
+const UPDATED = `Current version: 2.1.296
+Checking for updates to latest version...
+Successfully updated from 2.1.296 to version 2.1.301
+`
+const MULTIPLE = 'multiple installations found, see claude doctor'
+
+test('the update runs for up to five minutes and asks naming both versions and the command', () => {
+  expect(CLAUDE_UPDATE_RUN_TIMEOUT_MS).toBe(300_000)
+  const q = claudeUpdateQuestion('2.1.296', '2.1.301')
+  expect(q).toContain('2.1.296 → 2.1.301')
+  expect(q).toContain('`claude update`')
+  expect(q).toContain('keeps 2.1.296 until you restart it')
+})
+
+test('claudeUpdateToast: an update names the new version and the restart', () => {
+  expect(claudeUpdateToast(0, UPDATED, '2.1.296')).toBe(
+    'Claude Code updated to 2.1.301 — restart it (/exit, then claude --resume)',
+  )
+  expect(claudeUpdateToast(0, 'Claude Code has been updated to v2.1.301.', '2.1.296')).toBe(
+    'Claude Code updated to 2.1.301 — restart it (/exit, then claude --resume)',
+  )
+  expect(claudeUpdateToast(0, 'SUCCESSFULLY UPDATED: 2.1.301', '2.1.296')).toBe(
+    'Claude Code updated to 2.1.301 — restart it (/exit, then claude --resume)',
+  )
+})
+
+test('claudeUpdateToast: the multiple installations warning adds a hint', () => {
+  const both = `Warning: Multiple installations found\n${UPDATED}`
+  expect(claudeUpdateToast(0, both, '2.1.296')).toBe(
+    `Claude Code updated to 2.1.301 — restart it (/exit, then claude --resume) — ${MULTIPLE}`,
+  )
+  expect(claudeUpdateToast(0, UP_TO_DATE_TWO_INSTALLS, '2.1.301')).toBe(
+    `claude update found nothing newer (2.1.301) — ${MULTIPLE}`,
+  )
+})
+
+test('claudeUpdateToast: up to date with a newer version than the session runs means restart', () => {
+  expect(claudeUpdateToast(0, UP_TO_DATE_TWO_INSTALLS, '2.1.296')).toBe(
+    'Claude Code 2.1.301 is already installed — restart to use it (this session runs 2.1.296)',
+  )
+})
+
+test('claudeUpdateToast: up to date with nothing newer says so', () => {
+  expect(claudeUpdateToast(0, 'Claude Code is up to date (2.1.296)', '2.1.296')).toBe(
+    'claude update found nothing newer (2.1.296)',
+  )
+})
+
+test('claudeUpdateToast: a non-zero exit is a failure naming its last line', () => {
+  expect(claudeUpdateToast(1, 'Checking...\nError: EACCES permission denied\n\n', '2.1.296')).toBe(
+    'failed (Error: EACCES permission denied)',
+  )
+  expect(claudeUpdateToast(2, '  \n', '2.1.296')).toBe('failed (exit 2)')
+  expect(claudeUpdateToast(1, '\u001b[31mError: no network\u001b[0m', '2.1.296')).toBe(
+    'failed (Error: no network)',
+  )
+  expect(claudeUpdateToast(1, UPDATED, '2.1.296')).toBe('failed (Successfully updated from 2.1.296 to version 2.1.301)')
+  const long = claudeUpdateToast(1, `Error: ${'x'.repeat(200)}`, '2.1.296')
+  expect(long.length).toBeLessThanOrEqual(100)
+  expect(long.endsWith('…)')).toBe(true)
+})
+
+test('claudeUpdateToast: an exit 0 it cannot read claims nothing', () => {
+  expect(claudeUpdateToast(0, '', '2.1.296')).toBe('claude update finished — restart and check the version')
+  expect(claudeUpdateToast(0, 'Checking for updates to latest version...', '2.1.296')).toBe(
+    'claude update finished — restart and check the version',
+  )
+})
+
+test('claudeUpdateOnDisk: the version a restart would run, only when it is on disk', () => {
+  expect(claudeUpdateOnDisk(0, UPDATED, '2.1.296')).toBe('2.1.301')
+  expect(claudeUpdateOnDisk(0, UP_TO_DATE_TWO_INSTALLS, '2.1.296')).toBe('2.1.301')
+  expect(claudeUpdateOnDisk(0, UP_TO_DATE_TWO_INSTALLS, '2.1.301')).toBeNull()
+  expect(claudeUpdateOnDisk(1, UPDATED, '2.1.296')).toBeNull()
+  expect(claudeUpdateOnDisk(0, '', '2.1.296')).toBeNull()
+})
+
 // ── Wiring: the check at session start and its footer mark ───────────────
 
 const HOME = '/home/myuser'
@@ -96,9 +192,21 @@ type Answer = { status: number; text: string } | 'reject' | { lateMs: number; te
 // registry answering `answer`, and settings files from `files` (path → text).
 const answerEngine = (
   on: On,
-  opts: { answer?: Answer; answers?: Answer[]; env?: Record<string, string>; files?: Record<string, string> } = {},
+  opts: {
+    answer?: Answer
+    answers?: Answer[]
+    env?: Record<string, string>
+    files?: Record<string, string>
+    /** What `claude update` answers; a rejection when 'reject'. */
+    update?: { stdout: string; stderr?: string; exitCode?: number } | 'timeout'
+    /** The AskUserQuestion answer; an Error is a dismissed dialog. */
+    ask?: string | Error
+  } = {},
 ) => {
   const fetches: Fetch[] = []
+  const runs: { argv: string[]; timeoutMs?: number }[] = []
+  const asks: { question: string; header?: string; options: string[] }[] = []
+  const toasts: string[] = []
   const clock = mock.clock(on)
   mock.env(on, { HOME, ...opts.env })
   on('command.register', () => ({ value: undefined }) as never)
@@ -122,7 +230,29 @@ const answerEngine = (
     return { value: text } as never
   })
   on('fs.exists', () => ({ value: false }) as never)
-  on('process.run', () => ({ value: { stdout: '+0000\n', stderr: '', exitCode: 0 } }) as never)
+  on('process.run', async (_$, e) => {
+    const run = e as { argv: string[]; init?: { timeoutMs?: number } }
+    if (run.argv[0] !== 'claude') return { value: { stdout: '+0000\n', stderr: '', exitCode: 0 } } as never
+    runs.push({ argv: run.argv, timeoutMs: run.init?.timeoutMs })
+    const u = opts.update ?? { stdout: '' }
+    if (u === 'timeout') {
+      await clock.sleep(run.init?.timeoutMs ?? 0)
+      throw new Error('timed out')
+    }
+    return { value: { stdout: u.stdout, stderr: u.stderr ?? '', exitCode: u.exitCode ?? 0 } } as never
+  })
+  on('tool.call', { tool: 'AskUserQuestion' }, (_$, e) => {
+    const a = opts.ask ?? 'Run it'
+    if (a instanceof Error) throw a
+    const q = (e as unknown as { questions: { question: string; header?: string; options: { label: string }[] }[] })
+      .questions[0]
+    asks.push({ question: q?.question ?? '', header: q?.header, options: (q?.options ?? []).map(o => o.label) })
+    return { result: { questions: [], answers: { [q?.question ?? '']: a } } } as never
+  })
+  on('ui.toast', (_$, e) => {
+    toasts.push((e as { text: string }).text)
+    return { value: undefined } as never
+  })
   on('http.fetch', async (_$, e) => {
     fetches.push({ url: (e as Fetch).url })
     const answer = opts.answers?.[fetches.length - 1] ?? opts.answer ?? { status: 200, text: DIST_TAGS }
@@ -134,7 +264,7 @@ const answerEngine = (
     const ok = answer.status >= 200 && answer.status < 300
     return { value: { status: answer.status, ok, headers: {}, text: answer.text } } as never
   })
-  return { clock, fetches }
+  return { clock, fetches, runs, asks, toasts }
 }
 
 const mountPane = ($: Engine) =>
@@ -259,4 +389,127 @@ test('the check runs again only once the interval has passed', { timeoutMs: 60_0
   expect(fetches.length).toBe(1)
   await clock.advance(2000)
   expect(fetches.length).toBe(2)
+})
+
+// ── Wiring: the footer's [update] button ─────────────────────────────────
+
+const UPDATE_KEY = '"key":"claude-update"'
+
+test('the footer draws [update] only beside a newer release', async ($, on) => {
+  const { clock } = answerEngine(on)
+  await start($)
+  await clock.settle()
+  const text = await footerText($)
+  expect(text).toContain(UPDATE_KEY)
+  expect(text).toContain('[update]')
+})
+
+test('no newer release, no [update]', async ($, on) => {
+  const { clock } = answerEngine(on, { answer: { status: 200, text: '{"latest":"2.1.296"}' } })
+  await start($)
+  await clock.settle()
+  const text = await footerText($)
+  expect(text).toContain('2.1.296')
+  expect(text).not.toContain(UPDATE_KEY)
+})
+
+for (const [name, stdout, onDisk] of [
+  ['an update', UPDATED, '2.1.301'],
+  ['an up to date answer newer than the session', UP_TO_DATE_TWO_INSTALLS, '2.1.301'],
+] as const) {
+  test(`[update] asks, runs claude update and toasts the outcome: ${name}`, async ($, on) => {
+    const { clock, runs, asks, toasts } = answerEngine(on, { update: { stdout } })
+    await start($)
+    await clock.settle()
+    const pane = await mountPane($)
+    await pane.drawn()
+    await pane.press({ key: 'claude-update' })
+    await clock.settle()
+    expect(asks.length).toBe(1)
+    expect(asks[0]!.header).toBe('Claude Code')
+    expect(asks[0]!.options).toEqual(['Run it', 'Cancel'])
+    expect(asks[0]!.question).toBe(claudeUpdateQuestion('2.1.296', '2.1.301'))
+    expect(runs).toEqual([{ argv: ['claude', 'update'], timeoutMs: CLAUDE_UPDATE_RUN_TIMEOUT_MS }])
+    expect(toasts.slice(-2)).toEqual(['updating Claude Code…', claudeUpdateToast(0, stdout, '2.1.296')])
+    // A newer version is on disk now: the footer says restart, no button.
+    await clock.advance(1000)
+    const text = JSON.stringify(await pane.drawn())
+    expect(text).toContain(` ↑ ${onDisk} restart`)
+    expect(text).not.toContain(UPDATE_KEY)
+  })
+}
+
+test('a session start drops the restart hint', async ($, on) => {
+  const { clock } = answerEngine(on, { update: { stdout: UPDATED } })
+  await start($)
+  await clock.settle()
+  const pane = await mountPane($)
+  await pane.drawn()
+  await pane.press({ key: 'claude-update' })
+  await clock.settle()
+  await start($)
+  await clock.advance(1000)
+  const text = JSON.stringify(await pane.drawn())
+  expect(text).not.toContain('restart')
+  expect(text).toContain(UPDATE_KEY)
+})
+
+test('an update that finds nothing newer keeps the button', async ($, on) => {
+  const { clock, toasts } = answerEngine(on, { update: { stdout: 'Claude Code is up to date (2.1.296)' } })
+  await start($)
+  await clock.settle()
+  const pane = await mountPane($)
+  await pane.drawn()
+  await pane.press({ key: 'claude-update' })
+  await clock.advance(1000)
+  expect(toasts.at(-1)).toBe('claude update found nothing newer (2.1.296)')
+  const text = JSON.stringify(await pane.drawn())
+  expect(text).toContain(UPDATE_KEY)
+  expect(text).not.toContain('restart')
+})
+
+test('a rejected run at the timeout is failed (timed out)', async ($, on) => {
+  const { clock, toasts } = answerEngine(on, { update: 'timeout' })
+  await start($)
+  await clock.settle()
+  const pane = await mountPane($)
+  await pane.drawn()
+  void pane.press({ key: 'claude-update' })
+  await clock.advance(CLAUDE_UPDATE_RUN_TIMEOUT_MS + 1000)
+  expect(toasts.at(-1)).toBe('failed (timed out)')
+})
+
+for (const [name, ask] of [
+  ['Cancel', 'Cancel'],
+  ['a dismissed dialog', new Error('dismissed')],
+] as const) {
+  test(`${name} runs nothing`, async ($, on) => {
+    const { clock, runs, toasts } = answerEngine(on, { update: { stdout: UPDATED }, ask })
+    await start($)
+    await clock.settle()
+    const pane = await mountPane($)
+    await pane.drawn()
+    await pane.press({ key: 'claude-update' })
+    await clock.settle()
+    expect(runs).toEqual([])
+    expect(toasts).not.toContain('updating Claude Code…')
+  })
+}
+
+test('in demo mode [update] only toasts', async ($, on) => {
+  const { clock, runs, asks, toasts } = answerEngine(on, {
+    answer: { status: 200, text: '{"latest":"2.1.296"}' },
+    update: { stdout: UPDATED },
+  })
+  await start($)
+  await clock.settle()
+  await $.command.run({ command: 'hud-demo', args: '' } as never)
+  await clock.advance(1000)
+  const pane = await mountPane($)
+  expect(JSON.stringify(await pane.drawn())).toContain(UPDATE_KEY)
+  await pane.press({ key: 'claude-update' })
+  await clock.settle()
+  expect(asks).toEqual([])
+  expect(runs).toEqual([])
+  expect(toasts.at(-1)).toBe('demo mode')
 })

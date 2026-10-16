@@ -2,7 +2,19 @@ import { atom, read, update } from 'claude-code'
 import type { EngineInterface, Register } from 'claude-code'
 
 import type { AgentRow, TodoItem, TodoStatus } from '../types'
-import { CLAUDE_UPDATE_EVERY_TICKS, CLAUDE_UPDATE_TIMEOUT_MS, CLAUDE_UPDATE_URL, channelFrom, newerVersion, parseDistTags } from './claude-update'
+import {
+  CLAUDE_UPDATE_ARGV,
+  CLAUDE_UPDATE_EVERY_TICKS,
+  CLAUDE_UPDATE_RUN_TIMEOUT_MS,
+  CLAUDE_UPDATE_TIMEOUT_MS,
+  CLAUDE_UPDATE_URL,
+  channelFrom,
+  claudeUpdateOnDisk,
+  claudeUpdateQuestion,
+  claudeUpdateToast,
+  newerVersion,
+  parseDistTags,
+} from './claude-update'
 import { demoSnapshot } from './demo'
 import { aheadText, behindText, parseAheadBehind, syncText } from './git'
 import type { AheadBehind } from './git'
@@ -812,6 +824,8 @@ export type HudView = {
   claudeVersion?: string | null
   /** A newer Claude Code on the person's update channel; null when none or unknown. */
   claudeUpdate?: string | null
+  /** A newer Claude Code the footer's `[update]` left on disk; the footer then asks for a restart. */
+  claudeRestart?: string | null
 }
 
 // The Claude Code version for the footer, read once per session start.
@@ -826,6 +840,10 @@ let unsupportedNotice: string | null = null
 let claudeUpdateCache: string | null = null
 // Numbers each update check as it starts; only the newest may write the cache.
 let claudeUpdateGeneration = 0
+// The newer version the footer's `[update]` left on disk (`claudeUpdateOnDisk`),
+// or null. The running session keeps its version, so until the next session
+// start the footer shows `↑ <version> restart` instead of the button.
+let claudeRestartCache: string | null = null
 
 // ── Gentle AI ────────────────────────────────────────────────────────────
 // The section's pure parsers and constants live in `gentle.ts`; everything
@@ -1112,6 +1130,32 @@ const runAction = async (
   return true
 }
 
+// The footer's `[update]`: asks first and runs `claude update` only on the
+// exact "Run it" (a dismissed dialog is a cancel), as `runAction` does. It runs
+// whatever `claude` is on PATH, which may not be the install this session
+// runs. The toast reads its output (`claudeUpdateToast`); a rejection at the
+// timeout is `failed (timed out)`.
+const runClaudeUpdate = async ($: EngineInterface, running: string, latest: string): Promise<void> => {
+  let answer: string
+  try {
+    answer = await $.ui.ask(claudeUpdateQuestion(running, latest), { header: 'Claude Code', options: [RUN_IT, CANCEL] })
+  } catch {
+    return
+  }
+  if (answer !== RUN_IT) return
+  $.ui.toast('updating Claude Code…')
+  const startedAt = await $.clock.now()
+  try {
+    const r = await $.process.run([...CLAUDE_UPDATE_ARGV], { timeoutMs: CLAUDE_UPDATE_RUN_TIMEOUT_MS })
+    const output = `${r.stdout}\n${r.stderr}`
+    const onDisk = claudeUpdateOnDisk(r.exitCode, output, running)
+    if (onDisk) claudeRestartCache = onDisk
+    $.ui.toast(claudeUpdateToast(r.exitCode, output, running))
+  } catch {
+    $.ui.toast(runFailure((await $.clock.now()) - startedAt, CLAUDE_UPDATE_RUN_TIMEOUT_MS))
+  }
+}
+
 // Puts the text in the prompt box for the person to review and send.
 const fillPrompt = async ($: EngineInterface, text: string): Promise<void> => {
   try {
@@ -1242,6 +1286,7 @@ const liveView = async ($: EngineInterface, list: AgentRow[]): Promise<HudView> 
     gentle: gentleCache,
     claudeVersion: versionCache,
     claudeUpdate: claudeUpdateCache,
+    claudeRestart: claudeRestartCache,
   }
   return masked ? maskView(view) : view
 }
@@ -1481,6 +1526,7 @@ export const register: Register = on => {
 
     // Newer Claude Code: now (not awaited: a network call), then hourly below.
     claudeUpdateCache = null
+    claudeRestartCache = null
     void checkClaudeUpdate($)
 
     let ticks = 0
@@ -2117,15 +2163,40 @@ export const register: Register = on => {
 
     // Sticky footer: the Claude Code version the session runs on, and a
     // newer release on the person's channel, in the same truncating line.
-    const footerRow = view.claudeVersion ? (
+    // Beside the release, `[update]` (never wrapped: the row has no flexWrap
+    // and the text truncates, so FOOTER_ROWS holds); once an update left a
+    // newer version on disk, a restart hint instead. Demo only toasts.
+    const running = view.claudeVersion
+    const latest = view.claudeUpdate
+    const footerRow = running ? (
       <Box flexDirection="column" flexShrink={0} marginTop={1}>
-        <Text wrap="truncate-end" {...fg(t)}>
-          <Text color={t.success}>● </Text>
-          <Text color={t.subtle}>Claude</Text>
-          <Text bold {...fg(t)}>Code</Text>
-          <Text color={t.subtle}>{` ${view.claudeVersion}`}</Text>
-          {view.claudeUpdate ? <Text color={t.warning}>{` ↑ ${view.claudeUpdate}`}</Text> : null}
-        </Text>
+        <Box>
+          <Text wrap="truncate-end" {...fg(t)}>
+            <Text color={t.success}>● </Text>
+            <Text color={t.subtle}>Claude</Text>
+            <Text bold {...fg(t)}>Code</Text>
+            <Text color={t.subtle}>{` ${running}`}</Text>
+            {view.claudeRestart ? (
+              <Text color={t.subtle}>{` ↑ ${view.claudeRestart} restart`}</Text>
+            ) : latest ? (
+              <Text color={t.warning}>{` ↑ ${latest}`}</Text>
+            ) : null}
+          </Text>
+          {latest && !view.claudeRestart ? (
+            <Box flexShrink={0} marginLeft={1}>
+              <Button
+                key="claude-update"
+                plain
+                onPress={() => {
+                  if (view.demo) return $.ui.toast('demo mode')
+                  void runClaudeUpdate($, running, latest)
+                }}
+              >
+                <Text color={t.accent}>{buttonText('update')}</Text>
+              </Button>
+            </Box>
+          ) : null}
+        </Box>
       </Box>
     ) : null
 
