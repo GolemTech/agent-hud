@@ -24,7 +24,10 @@ import {
   parseGgaConfig,
   parseRddStatus,
   parseStrictTdd,
+  parseUpgradeResult,
   parseVersion,
+  runFailure,
+  upgradeToast,
   rddSummary,
   rulesFileName,
   rulesFileOverridden,
@@ -204,6 +207,90 @@ test('parseGentleUpdate: only the tools whose row parses; null when none does', 
   expect(parseGentleUpdate('  ⠋ Checking for updates...\r')).toBe(null)
   expect(parseGentleUpdate('')).toBe(null)
   expect(parseGentleUpdate('{"tools":[]}')).toBe(null)
+})
+
+// `gentle-ai upgrade gga` on Windows with gga installed by hand (exit 0): it
+// skips the tool, wraps the row's message onto the next line, and says so only
+// in the summary line.
+const UPGRADE_WINDOWS = [
+  '  ⠋ Upgrading gga via script (2.8.1 → 2.10.1)...',
+  '  -- Upgrading gga via script (2.8.1 → 2.10.1)',
+  'Upgrade',
+  '=======',
+  '',
+  '  Upgrades managed tool binaries only.',
+  '  Agent configs are preserved — no install or sync is performed.',
+  '',
+  '  [--] gga           manual update required: upgrade "gga" on Windows requires manual',
+  'update: See https://github.com/Gentleman-Programming/gentleman-guardian-angel',
+  '',
+  '  Config backup: upgrade-20261016T003724Z',
+  '  0 succeeded, 0 failed, 1 skipped.',
+  '',
+].join('\n')
+const GGA_URL = 'https://github.com/Gentleman-Programming/gentleman-guardian-angel'
+const WINDOWS_REASON = `manual update required: upgrade "gga" on Windows requires manual update: See ${GGA_URL}`
+const UPGRADE_SUCCESS = '  1 succeeded, 0 failed, 0 skipped.\n'
+
+test('parseUpgradeResult: the summary counts and the wrapped row message', () => {
+  expect(parseUpgradeResult(UPGRADE_WINDOWS)).toEqual({ succeeded: 0, failed: 0, skipped: 1, reason: WINDOWS_REASON })
+  expect(parseUpgradeResult('  1 succeeded, 0 failed, 0 skipped.\n')).toEqual({
+    succeeded: 1,
+    failed: 0,
+    skipped: 0,
+    reason: null,
+  })
+})
+
+test('parseUpgradeResult: spinner frames on \\r, ANSI colors and CRLF are tolerated', () => {
+  const noisy =
+    '  ⠋ Upgrading gga via script...\r  ⠙ Upgrading gga via script...\r\u001b[2K\r' +
+    UPGRADE_WINDOWS.replace('[--]', '\u001b[33m[--]\u001b[0m')
+      .replace('1 skipped', '\u001b[1m1\u001b[0m skipped')
+      .replace(/\n/g, '\r\n')
+  expect(parseUpgradeResult(noisy)).toEqual({ succeeded: 0, failed: 0, skipped: 1, reason: WINDOWS_REASON })
+})
+
+test('parseUpgradeResult: null without a summary line', () => {
+  expect(parseUpgradeResult('')).toBe(null)
+  expect(parseUpgradeResult('  ⠋ Upgrading gga via script...\r')).toBe(null)
+  expect(parseUpgradeResult('  [--] gga  manual update required\n')).toBe(null)
+  expect(parseUpgradeResult('  [--] gentle-ai 4.1.1 → 4.2.0 (dry-run)\n\n1 upgrade(s) pending\n')).toBe(null)
+})
+
+test('upgradeToast: the summary decides, never the exit code alone', () => {
+  const r = (succeeded: number, failed: number, skipped: number, reason: string | null = null) => ({
+    succeeded,
+    failed,
+    skipped,
+    reason,
+  })
+  expect(upgradeToast('gga', 0, r(1, 0, 0), 'gga upgraded')).toBe('gga upgraded')
+  expect(upgradeToast('gga', 0, r(0, 1, 0, 'download failed'), 'gga upgraded')).toBe('failed (download failed)')
+  expect(upgradeToast('gga', 3, r(0, 1, 0), 'gga upgraded')).toBe('failed (exit 3)')
+  expect(upgradeToast('gga', 0, r(0, 0, 1, 'already current'), 'gga upgraded')).toBe('gga not upgraded: already current')
+  expect(upgradeToast('gga', 0, r(0, 0, 1), 'gga upgraded')).toBe('gga not upgraded')
+  expect(upgradeToast('gga', 0, null, 'gga upgraded')).toBe('gga: upgrade finished, check the version')
+  expect(upgradeToast('gga', 2, null, 'gga upgraded')).toBe('failed (exit 2)')
+  expect(upgradeToast('gga', 2, r(1, 0, 0), 'gga upgraded')).toBe('failed (exit 2)')
+})
+
+test('upgradeToast: a long reason is cut with …, keeping its URL', () => {
+  const text = upgradeToast('gga', 0, r0(WINDOWS_REASON), 'gga upgraded')
+  expect(text.startsWith('gga not upgraded: manual update required')).toBe(true)
+  expect(text).toContain('…')
+  expect(text.endsWith(GGA_URL)).toBe(true)
+  expect(text.length).toBeLessThanOrEqual('gga not upgraded: '.length + 120)
+  const long = upgradeToast('gga', 0, r0('x '.repeat(100).trim()), 'gga upgraded')
+  expect(long.endsWith('…')).toBe(true)
+  expect(long.length).toBeLessThanOrEqual('gga not upgraded: '.length + 120)
+})
+const r0 = (reason: string) => ({ succeeded: 0, failed: 0, skipped: 1, reason })
+
+test('runFailure: a rejection at the timeout reads as timed out, an early one as could not run', () => {
+  expect(runFailure(30_000, 30_000)).toBe('failed (timed out)')
+  expect(runFailure(31_000, 30_000)).toBe('failed (timed out)')
+  expect(runFailure(5, 30_000)).toBe('failed (could not run)')
 })
 
 test('parseBrewList: installed versions from `brew list --versions`', () => {
@@ -513,8 +600,10 @@ let envVars: Record<string, string> = { HOME }
 // What `gentle-ai update` prints, or a rejection (offline, timed out); null
 // answers an empty stdout, as an old gentle-ai would.
 let gentleUpdate: string | Error | null = null
-// How a `gentle-ai upgrade` run ends: its exit code, or a rejection.
-let upgradeOutcome: number | Error = 0
+// How a `gentle-ai upgrade` run ends: its exit code, a rejection, or a
+// rejection once its timeout has passed; and what it prints.
+let upgradeOutcome: number | Error | 'timeout' = 0
+let upgradeStdout = UPGRADE_SUCCESS
 
 // Puts every fixture variable back, so the tests stay order-independent.
 const resetFixture = () => {
@@ -529,6 +618,7 @@ const resetFixture = () => {
   envVars = { HOME }
   gentleUpdate = null
   upgradeOutcome = 0
+  upgradeStdout = UPGRADE_SUCCESS
 }
 
 const answerEngine = (
@@ -588,7 +678,11 @@ const answerEngine = (
     }
     if (argv.startsWith('gentle-ai upgrade')) {
       if (upgradeOutcome instanceof Error) throw upgradeOutcome
-      return out('', upgradeOutcome)
+      if (upgradeOutcome === 'timeout')
+        return clock.sleep(UPGRADE_TIMEOUT_MS).then(() => {
+          throw new Error('timed out')
+        }) as never
+      return out(upgradeStdout, upgradeOutcome)
     }
     if (argv === 'gentle-ai --version') return out('gentle-ai 4.0.0\n')
     if (argv === 'gentle-ai update') {
@@ -947,7 +1041,7 @@ test('an action that exits non-zero says so, and detection runs again', async ($
   }
 })
 
-test('an action that cannot run (or times out) says so, and detection runs again', async ($, on) => {
+test('an action that cannot run says so, and detection runs again', async ($, on) => {
   ggaOutcome = new Error('timed out')
   try {
     const { clock, runs, toasts } = await start($, on, () => 'Run it')
@@ -977,7 +1071,7 @@ test('[upgrade] asks with the versions, then runs `gentle-ai upgrade engram` unt
   expect(ran[0]?.argv).toEqual(['gentle-ai', 'upgrade', 'engram'])
   expect(ran[0]?.init?.env?.DO_NOT_TRACK).toBe('1')
   expect((ran[0]?.init as { timeoutMs?: number } | undefined)?.timeoutMs).toBe(UPGRADE_TIMEOUT_MS)
-  expect(toasts.some(t => t.includes('engram') && t.includes('upgraded'))).toBe(true)
+  expect(toasts).toEqual(['upgrading engram…', 'engram upgraded'])
   expect(statusRuns(runs)).toBe(before + 1)
 })
 
@@ -1010,8 +1104,80 @@ const failedUpgrade = async ($: Engine, on: On, outcome: number | Error, toast: 
 test('an upgrade that exits non-zero says so, and detection runs again', ($, on) =>
   failedUpgrade($, on, 1, 'failed (exit 1)'))
 
-test('an upgrade that cannot run (or times out) says so, and detection runs again', ($, on) =>
-  failedUpgrade($, on, new Error('timed out'), 'failed (could not run)'))
+test('an upgrade that cannot run says so, and detection runs again', ($, on) =>
+  failedUpgrade($, on, new Error('spawn failed'), 'failed (could not run)'))
+
+test('an upgrade killed at its timeout says it timed out, and detection runs again', PERIODIC, ($, on) =>
+  upgradeEnds($, on, 'timeout', '', ['upgrading engram…', 'failed (timed out)'], 'gentle-upgrade-engram'))
+
+// Presses `[upgrade]`, answers "Run it", lets the run end and checks every
+// toast in order; detection runs again after it.
+const upgradeEnds = async (
+  $: Engine,
+  on: On,
+  outcome: number | 'timeout',
+  stdout: string,
+  expected: string[],
+  key: string,
+) => {
+  upgradeOutcome = outcome
+  upgradeStdout = stdout
+  try {
+    const { clock, runs, toasts } = await start($, on, () => 'Run it')
+    const before = statusRuns(runs)
+    await (await mountPane($)).press({ key })
+    await clock.settle()
+    if (outcome === 'timeout') {
+      expect(toasts).toEqual(expected.slice(0, 1))
+      await clock.advance(UPGRADE_TIMEOUT_MS)
+      await clock.settle()
+    }
+    expect(upgradeRuns(runs).length).toBe(1)
+    expect(toasts).toEqual(expected)
+    // Waiting out the timeout also reaches the periodic detection (tick 301).
+    expect(statusRuns(runs)).toBe(before + (outcome === 'timeout' ? 2 : 1))
+  } finally {
+    resetFixture()
+  }
+}
+
+// gga gets an [upgrade] from `gentle-ai update`'s row.
+const GGA_BEHIND = '  [UP] gga           installed: 2.8.1       latest: 2.10.1\n'
+
+test('an upgrade gentle-ai skips (gga on Windows) says why, not that it upgraded', async ($, on) => {
+  gentleUpdate = GGA_BEHIND
+  upgradeStdout = UPGRADE_WINDOWS
+  try {
+    const { clock, runs, toasts } = await start($, on, () => 'Run it')
+    const before = statusRuns(runs)
+    await (await mountPane($)).press({ key: 'gentle-upgrade-gga' })
+    await clock.settle()
+    expect(upgradeRuns(runs).map(r => r.argv)).toEqual([['gentle-ai', 'upgrade', 'gga']])
+    expect(toasts.length).toBe(2)
+    expect(toasts[0]).toBe('upgrading gga…')
+    expect(toasts[1]?.startsWith('gga not upgraded: manual update required')).toBe(true)
+    expect(toasts[1]).toContain(GGA_URL)
+    expect(toasts).not.toContain('gga upgraded')
+    expect(statusRuns(runs)).toBe(before + 1)
+  } finally {
+    resetFixture()
+  }
+})
+
+test('an upgrade whose summary counts one success says it upgraded', async ($, on) => {
+  gentleUpdate = GGA_BEHIND
+  try {
+    const { clock, toasts } = await start($, on, () => 'Run it')
+    await (await mountPane($)).press({ key: 'gentle-upgrade-gga' })
+    await clock.settle()
+    expect(toasts).toEqual(['upgrading gga…', 'gga upgraded'])
+  } finally {
+    resetFixture()
+  }
+})
+
+test('an upgrade with no summary and exit 0 claims nothing', ($, on) =>
+  upgradeEnds($, on, 0, 'done\n', ['upgrading engram…', 'engram: upgrade finished, check the version'], 'gentle-upgrade-engram'))
 
 test('outside a repository, an unreadable cwd runs nothing and says so', async ($, on) => {
   inRepo = false

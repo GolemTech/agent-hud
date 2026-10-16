@@ -130,6 +130,16 @@ To add the marketplace first and install separately:
     `gentle-ai sync`). Nothing runs unless you choose **Run it**; a short
     toast says how it went. Off always wins: a project "on" cannot override a
     global "off".
+  - After **Run it**, `[upgrade]` toasts `upgrading <tool>…`, then reads the
+    summary gentle-ai prints (`N succeeded, N failed, N skipped.`), since it
+    exits 0 even when it upgraded nothing: `<tool> upgraded` only when one
+    succeeded; `<tool> not upgraded: <reason>` when it skipped the tool;
+    `failed (<reason>)` when it failed; `<tool>: upgrade finished, check the
+    version` when it printed no summary; `failed (exit N)` on a non-zero exit;
+    `failed (timed out)` when it is still running after its time limit (any
+    command button). Long reasons are cut, keeping a trailing link. On Windows
+    gentle-ai cannot upgrade gga: it skips it with "manual update required"
+    and the gga repository URL, which the toast shows.
   - Prompt buttons only fill the prompt box, they never send it:
     `[create rules]` (asks Claude to write the gga rules file) and
     `[configure]` (asks Claude to set up strict TDD through the sdd-init flow).

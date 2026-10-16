@@ -19,6 +19,9 @@ import {
   parseBrewList,
   parseBrewOutdated,
   parseGentleUpdate,
+  parseUpgradeResult,
+  runFailure,
+  upgradeToast,
   parseGgaConfig,
   parseRddStatus,
   parseStrictTdd,
@@ -1008,7 +1011,9 @@ const detectGentle = async ($: EngineInterface): Promise<GentleInfo> => {
 // when it cannot be read, nothing runs.
 // `tools` gives an upgrade's versions for its question. An upgrade gets
 // `UPGRADE_TIMEOUT_MS` (its spec's `timeoutMs`); every other action
-// `ACTION_TIMEOUT_MS`.
+// `ACTION_TIMEOUT_MS`. An upgrade toasts `upgrading <tool>…` before it runs,
+// and its result toast comes from its printed summary (`upgradeToast`), not
+// its exit code alone. A rejection at the timeout reads `failed (timed out)`.
 const runAction = async (
   $: EngineInterface,
   action: GentleAction,
@@ -1030,16 +1035,26 @@ const runAction = async (
     return false
   }
   if (answer !== RUN_IT) return false
+  const timeoutMs = spec.timeoutMs ?? ACTION_TIMEOUT_MS
+  // An upgrade can take minutes: say it started.
+  if (spec.upgrades) $.ui.toast(`upgrading ${spec.upgrades}…`)
+  const startedAt = await $.clock.now()
   try {
     const r = await $.process.run(spec.argv, {
       cwd,
-      timeoutMs: spec.timeoutMs ?? ACTION_TIMEOUT_MS,
+      timeoutMs,
       ...(spec.env ? { env: spec.env } : {}),
       ...(spec.stdin === undefined ? {} : { stdin: spec.stdin }),
     })
-    $.ui.toast(r.exitCode === 0 ? spec.done : `failed (exit ${r.exitCode})`)
+    $.ui.toast(
+      spec.upgrades
+        ? upgradeToast(spec.upgrades, r.exitCode, parseUpgradeResult(r.stdout), spec.done)
+        : r.exitCode === 0
+          ? spec.done
+          : `failed (exit ${r.exitCode})`,
+    )
   } catch {
-    $.ui.toast('failed (could not run)')
+    $.ui.toast(runFailure((await $.clock.now()) - startedAt, timeoutMs))
   }
   return true
 }
