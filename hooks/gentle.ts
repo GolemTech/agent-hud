@@ -144,6 +144,73 @@ export const parseGentleUpdate = (stdout: string): GentleUpdate | null => {
   return Object.keys(out).length > 0 ? out : null
 }
 
+// `gentle-ai upgrade <tool>` → its summary counts (`0 succeeded, 0 failed,
+// 1 skipped.`) and the tool row's message (`[--] gga  manual update required:
+// ...`), which may wrap onto the following lines until a blank one. Its exit
+// code is 0 even when it upgraded nothing, so the summary is what counts.
+// CRLF is folded first so a wrapped message stays one block; of a line the
+// spinner redrew on `\r`, only its last frame is kept. Null without a summary.
+export type UpgradeResult = { succeeded: number; failed: number; skipped: number; reason: string | null }
+const UPGRADE_SUMMARY = /(\d+)\s+succeeded,\s*(\d+)\s+failed,\s*(\d+)\s+skipped/
+const UPGRADE_ROW = /^\s*\[[^\]]*\]\s+(\S+)\s+(.*)$/
+export const parseUpgradeResult = (stdout: string): UpgradeResult | null => {
+  const lines = stdout
+    .replace(ANSI, '')
+    .replace(/\r\n/g, '\n')
+    .split('\n')
+    .map(l => clean(l.split('\r').filter(f => f.trim() !== '').pop() ?? ''))
+  let counts: Omit<UpgradeResult, 'reason'> | null = null
+  let reason: string | null = null
+  let parts: string[] | null = null
+  for (const line of lines) {
+    const summary = UPGRADE_SUMMARY.exec(line)
+    const row = UPGRADE_ROW.exec(line)
+    if (summary || row || line.trim() === '') {
+      if (parts) reason = parts.join(' ').replace(/\s+/g, ' ').trim() || null
+      parts = null
+    } else if (parts) parts.push(line)
+    if (summary) counts = { succeeded: Number(summary[1]), failed: Number(summary[2]), skipped: Number(summary[3]) }
+    else if (row && TOOLS.some(t => t === row[1])) parts = [row[2] ?? '']
+  }
+  if (parts) reason = parts.join(' ').replace(/\s+/g, ' ').trim() || null
+  return counts ? { ...counts, reason } : null
+}
+
+// A reason longer than this is cut, keeping a trailing URL when it has one.
+export const UPGRADE_REASON_MAX = 120
+const URL_AT_END = /\s*(https?:\/\/\S+)\s*$/
+const shortReason = (reason: string): string => {
+  if (reason.length <= UPGRADE_REASON_MAX) return reason
+  const url = URL_AT_END.exec(reason)?.[1]
+  const keep = url && url.length <= UPGRADE_REASON_MAX - 20 ? url : null
+  const budget = keep ? UPGRADE_REASON_MAX - keep.length - 2 : UPGRADE_REASON_MAX - 1
+  let head = reason.slice(0, budget)
+  const space = head.lastIndexOf(' ')
+  if (space > budget / 2) head = head.slice(0, space)
+  head = head.trimEnd()
+  return keep ? `${head}… ${keep}` : `${head}…`
+}
+
+// The toast after an upgrade: the summary decides, since gentle-ai exits 0
+// when it skips a tool; a non-zero exit is a failure whatever it printed; with
+// no summary at all an exit 0 claims nothing.
+export const upgradeToast = (tool: string, exitCode: number, r: UpgradeResult | null, done: string): string => {
+  if (r && r.failed > 0) return `failed (${r.reason ? shortReason(r.reason) : `exit ${exitCode}`})`
+  if (exitCode !== 0) return `failed (exit ${exitCode})`
+  if (!r) return `${tool}: upgrade finished, check the version`
+  if (r.succeeded > 0) return done
+  if (r.skipped > 0) return r.reason ? `${tool} not upgraded: ${shortReason(r.reason)}` : `${tool} not upgraded`
+  return `${tool}: upgrade finished, check the version`
+}
+
+// `$.process.run` rejects both when a command cannot start and when it is
+// killed at its timeout, with no documented error shape, so the time the call
+// took tells them apart: a start failure rejects at once. A second of slack
+// covers the engine's timer and `$.clock.now()` not agreeing to the ms.
+const TIMEOUT_SLACK_MS = 1_000
+export const runFailure = (elapsedMs: number, timeoutMs: number): string =>
+  elapsedMs >= timeoutMs - TIMEOUT_SLACK_MS ? 'failed (timed out)' : 'failed (could not run)'
+
 // Only a plain relative file name goes into the prompt text; anything else
 // (an absolute path, spaces, punctuation) falls back to the default.
 const SAFE_RULES = /^(?!\/)(?!.*\.\.)[\w./-]{1,80}$/
@@ -262,6 +329,8 @@ export type ActionSpec = {
   /** Set only when the action needs longer than `ACTION_TIMEOUT_MS`. */
   timeoutMs?: number
   done: string
+  /** The tool an upgrade action upgrades; its result is read by `upgradeToast`. */
+  upgrades?: ToolName
 }
 
 // The confirmation, constant argv and result message of each command button.
@@ -276,6 +345,7 @@ export const actionSpec = (action: GentleAction, root: string, tools: readonly T
       argv: ['gentle-ai', 'upgrade', tool],
       env: { ...UPDATE_ENV },
       timeoutMs: UPGRADE_TIMEOUT_MS,
+      upgrades: tool,
       done: tool === 'gentle-ai' ? 'gentle-ai upgraded · run `gentle-ai sync` to refresh agent configs' : `${tool} upgraded`,
     }
   }
