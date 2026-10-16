@@ -338,6 +338,14 @@ const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
 const cutName = (s: string, n: number): string =>
   s.length <= n ? s : `${s.slice(0, Math.max(1, n - 2))}..`
 
+// A path's segments, split on `/` and on Windows' `\`.
+const pathSegments = (path: string): string[] => path.split(/[\\/]/).filter(Boolean)
+
+// Two paths name the same place: either separator, a drive letter in any case
+// (`C:` and `c:`). POSIX paths compare as they are.
+const pathKey = (p: string) => p.replace(/\\/g, '/').replace(/^[A-Za-z]:/, d => d.toLowerCase())
+const samePath = (a: string, b: string): boolean => pathKey(a) === pathKey(b)
+
 // A path that fits `max` columns while keeping its depth visible:
 //   myuser/.claude/dev-mods/0a1b2c3d…/session-explorer
 //   myuser/../../../session-explorer
@@ -352,11 +360,11 @@ export const shortPath = (
   max: number,
 ): { parent: string; leaf: string } => {
   let segs: string[]
-  if (home && (path === home || path.startsWith(`${home}/`))) {
-    const user = home.split('/').filter(Boolean).pop() ?? '~'
-    segs = [user, ...path.slice(home.length).split('/').filter(Boolean)]
+  if (home && (samePath(path, home) || pathKey(path).startsWith(`${pathKey(home)}/`))) {
+    const user = pathSegments(home).pop() ?? '~'
+    segs = [user, ...pathSegments(path.slice(home.length))]
   } else {
-    segs = path.split('/').filter(Boolean)
+    segs = pathSegments(path)
     if (path.startsWith('/')) segs[0] = `/${segs[0] ?? ''}`
   }
   segs = segs.map(s => (UUID.test(s) ? `${s.slice(0, 8)}…` : s))
@@ -381,7 +389,7 @@ export const shortPath = (
 }
 
 // The project's name for the sticky header: a path's last segment.
-export const projectName = (path: string): string => path.split('/').filter(Boolean).pop() ?? '/'
+export const projectName = (path: string): string => pathSegments(path).pop() ?? '/'
 
 // Claude Code's project folder name: the root path, non-alphanumerics as `-`.
 export const projectDir = (root: string): string => root.replace(/[^a-zA-Z0-9]/g, '-')
