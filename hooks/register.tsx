@@ -51,7 +51,7 @@ import {
   STRICT_TDD_PROMPT,
   TOOLS,
 } from './gentle'
-import type { GentleAction, GentleButton, GentleInfo, GentleRow, GentleUpdate, GentleView, Mark, RddStatus, StrictTdd, ToolStatus } from './gentle'
+import type { ActionSpec, GentleAction, GentleButton, GentleInfo, GentleRow, GentleUpdate, GentleView, Mark, RddStatus, StrictTdd, ToolStatus } from './gentle'
 import {
   BRANCH_ICON,
   buttonText,
@@ -844,6 +844,12 @@ let claudeUpdateGeneration = 0
 // or null. The running session keeps its version, so until the next session
 // start the footer shows `↑ <version> restart` instead of the button.
 let claudeRestartCache: string | null = null
+// The footer's `claude update` under way (a token per run), or null. While set,
+// a press only toasts `CLAUDE_UPDATE_BUSY`: two runs at once would race on the
+// install. A run clears only its own token, so a session start's reset is not
+// undone by an older run that ends later.
+let claudeUpdateRunning: object | null = null
+const CLAUDE_UPDATE_BUSY = 'Claude Code update already running'
 
 // ── Gentle AI ────────────────────────────────────────────────────────────
 // The section's pure parsers and constants live in `gentle.ts`; everything
@@ -857,6 +863,12 @@ let gentleRun: Promise<void> | null = null
 let gentleRunStartedAt = 0
 // Numbers each detection as it starts; only the newest may write the cache.
 let gentleGeneration = 0
+// The Gentle AI command action under way (a token per run), or null: one at a
+// time, whatever its key (an upgrade, an RDD toggle, an install), as
+// `claudeUpdateRunning` is for the footer. While set, a press only toasts
+// `GENTLE_ACTION_BUSY`.
+let gentleActionRunning: object | null = null
+const GENTLE_ACTION_BUSY = 'Gentle AI command already running'
 
 // A file's text, or null when it is missing or unreadable.
 const readOr = async ($: EngineInterface, path: string): Promise<string | null> => {
@@ -1085,12 +1097,18 @@ const detectGentle = async ($: EngineInterface): Promise<GentleInfo> => {
 // `ACTION_TIMEOUT_MS`. An upgrade toasts `upgrading <tool>…` before it runs,
 // and its result toast comes from its printed summary (`upgradeToast`), not
 // its exit code alone. A rejection at the timeout reads `failed (timed out)`.
+// One command action at a time (`gentleActionRunning`): a press meanwhile only
+// toasts `GENTLE_ACTION_BUSY` and returns false (no detection after it).
 const runAction = async (
   $: EngineInterface,
   action: GentleAction,
   root: string | null,
   tools: readonly ToolStatus[] = [],
 ): Promise<boolean> => {
+  if (gentleActionRunning) {
+    $.ui.toast(GENTLE_ACTION_BUSY)
+    return false
+  }
   let cwd: string
   try {
     cwd = root ?? (await $.session.cwd())
@@ -1106,9 +1124,31 @@ const runAction = async (
     return false
   }
   if (answer !== RUN_IT) return false
+  // Another press may have started one while this dialog was open.
+  if (gentleActionRunning) {
+    $.ui.toast(GENTLE_ACTION_BUSY)
+    return false
+  }
+  const mine = {}
+  gentleActionRunning = mine
   const timeoutMs = spec.timeoutMs ?? ACTION_TIMEOUT_MS
-  // An upgrade can take minutes: say it started.
-  if (spec.upgrades) $.ui.toast(`upgrading ${spec.upgrades}…`)
+  try {
+    // An upgrade can take minutes: say it started.
+    if (spec.upgrades) $.ui.toast(`upgrading ${spec.upgrades}…`)
+    await runActionCommand($, spec, cwd, timeoutMs)
+  } finally {
+    if (gentleActionRunning === mine) gentleActionRunning = null
+  }
+  return true
+}
+
+// Runs a confirmed action's command and toasts its outcome (`runAction`).
+const runActionCommand = async (
+  $: EngineInterface,
+  spec: ActionSpec,
+  cwd: string,
+  timeoutMs: number,
+): Promise<void> => {
   const startedAt = await $.clock.now()
   try {
     const r = await $.process.run(spec.argv, {
@@ -1127,15 +1167,18 @@ const runAction = async (
   } catch {
     $.ui.toast(runFailure((await $.clock.now()) - startedAt, timeoutMs))
   }
-  return true
 }
 
 // The footer's `[update]`: asks first and runs `claude update` only on the
 // exact "Run it" (a dismissed dialog is a cancel), as `runAction` does. It runs
 // whatever `claude` is on PATH, which may not be the install this session
 // runs. The toast reads its output (`claudeUpdateToast`); a rejection at the
-// timeout is `failed (timed out)`.
+// timeout is `failed (timed out)`. One run at a time (`claudeUpdateRunning`).
 const runClaudeUpdate = async ($: EngineInterface, running: string, latest: string): Promise<void> => {
+  if (claudeUpdateRunning) {
+    $.ui.toast(CLAUDE_UPDATE_BUSY)
+    return
+  }
   let answer: string
   try {
     answer = await $.ui.ask(claudeUpdateQuestion(running, latest), { header: 'Claude Code', options: [RUN_IT, CANCEL] })
@@ -1143,16 +1186,27 @@ const runClaudeUpdate = async ($: EngineInterface, running: string, latest: stri
     return
   }
   if (answer !== RUN_IT) return
-  $.ui.toast('updating Claude Code…')
-  const startedAt = await $.clock.now()
+  // Another press may have started one while this dialog was open.
+  if (claudeUpdateRunning) {
+    $.ui.toast(CLAUDE_UPDATE_BUSY)
+    return
+  }
+  const mine = {}
+  claudeUpdateRunning = mine
   try {
-    const r = await $.process.run([...CLAUDE_UPDATE_ARGV], { timeoutMs: CLAUDE_UPDATE_RUN_TIMEOUT_MS })
-    const output = `${r.stdout}\n${r.stderr}`
-    const onDisk = claudeUpdateOnDisk(r.exitCode, output, running)
-    if (onDisk) claudeRestartCache = onDisk
-    $.ui.toast(claudeUpdateToast(r.exitCode, output, running))
-  } catch {
-    $.ui.toast(runFailure((await $.clock.now()) - startedAt, CLAUDE_UPDATE_RUN_TIMEOUT_MS))
+    $.ui.toast('updating Claude Code…')
+    const startedAt = await $.clock.now()
+    try {
+      const r = await $.process.run([...CLAUDE_UPDATE_ARGV], { timeoutMs: CLAUDE_UPDATE_RUN_TIMEOUT_MS })
+      const output = `${r.stdout}\n${r.stderr}`
+      const onDisk = claudeUpdateOnDisk(r.exitCode, output, running)
+      if (onDisk) claudeRestartCache = onDisk
+      $.ui.toast(claudeUpdateToast(r.exitCode, output, running))
+    } catch {
+      $.ui.toast(runFailure((await $.clock.now()) - startedAt, CLAUDE_UPDATE_RUN_TIMEOUT_MS))
+    }
+  } finally {
+    if (claudeUpdateRunning === mine) claudeUpdateRunning = null
   }
 }
 
@@ -1527,6 +1581,8 @@ export const register: Register = on => {
     // Newer Claude Code: now (not awaited: a network call), then hourly below.
     claudeUpdateCache = null
     claudeRestartCache = null
+    claudeUpdateRunning = null
+    gentleActionRunning = null
     void checkClaudeUpdate($)
 
     let ticks = 0

@@ -70,8 +70,13 @@ issue for a security problem.
     first on `PATH` and downloads the new release; its output is read only
     for the result toast.
   - The others have a 30 s timeout. Nothing runs when the working directory cannot
-    be read; a failure shows only "failed (exit N)" or "failed (could not
-    run)".
+    be read. One run at a time: a press while `claude update` or a Gentle AI
+    command is still running only toasts that it is already running. A
+    failure shows "failed (exit N)", "failed (could not run)" or "failed
+    (timed out)"; the `claude update` and `gentle-ai upgrade` toasts may
+    also echo one line of the command's output (`claude update`'s last line,
+    or the reason gentle-ai prints for the tool), with control characters
+    stripped and cut to a short length.
 - **Plugin API**: session id, model, working directory, repository root,
   usage and the Claude Code version (`$.session.version()`, shown in the
   footer); the tool list (MCP server names are derived from tool names); the
@@ -106,7 +111,9 @@ the Gentle AI section (tool versions and updates, gga hook and rules file
 name, RDD mode, strict TDD setting).
 
 Toasts are short fixed texts ("gga hook installed", "RDD on for this
-project", "failed (exit N)", "demo mode"); command output is never shown.
+project", "failed (exit N)", "demo mode"); command output is never shown,
+except the one cleaned, shortened line the `claude update` and
+`gentle-ai upgrade` toasts may echo (see above).
 The `[create rules]` and `[configure]` buttons put a fixed request in the
 prompt box (`$.prompt.fill`, replacing the draft); they never send it. The
 rules file name in that request comes from `.gga` only when it is a plain

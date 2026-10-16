@@ -139,7 +139,9 @@ To add the marketplace first and install separately:
     `failed (timed out)` when it is still running after its time limit (any
     command button). Long reasons are cut, keeping a trailing link. On Windows
     gentle-ai cannot upgrade gga: it skips it with "manual update required"
-    and the gga repository URL, which the toast shows.
+    and the gga repository URL, which the toast shows. One command button
+    runs at a time: a press while one runs only toasts `Gentle AI command
+    already running`.
   - Prompt buttons only fill the prompt box, they never send it:
     `[create rules]` (asks Claude to write the gga rules file) and
     `[configure]` (asks Claude to set up strict TDD through the sdd-init flow).
@@ -249,6 +251,8 @@ rest, and the limits that come with them:
   is first on your `PATH`, which may not be the install this session runs
   (for example an npm-global one beside the native one); when `claude update`
   warns about multiple installations the toast adds `see claude doctor`.
+  A press while an update runs only toasts `Claude Code update already
+  running`.
 - **Dock width** cannot be forced by a plugin; a width you set wins.
 - **Gentle AI versions** come from `brew list --versions` when Homebrew is
   there, else from the tools themselves: `gentle-ai --version` and

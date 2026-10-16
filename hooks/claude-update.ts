@@ -156,7 +156,7 @@ export const claudeUpdateToast = (exitCode: number, output: string, running: str
   if (o.updated) return `Claude Code updated to ${o.updated} — restart it (/exit, then claude --resume)${hint}`
   if (o.upToDate) {
     if (newerVersion(running, o.upToDate))
-      return `Claude Code ${o.upToDate} is already installed — restart to use it (this session runs ${running})`
+      return `Claude Code ${o.upToDate} is already installed — restart to use it (this session runs ${running})${hint}`
     return `claude update found nothing newer (${o.upToDate})${hint}`
   }
   return 'claude update finished — restart and check the version'

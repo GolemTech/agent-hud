@@ -140,6 +140,9 @@ test('claudeUpdateToast: the multiple installations warning adds a hint', () => 
 
 test('claudeUpdateToast: up to date with a newer version than the session runs means restart', () => {
   expect(claudeUpdateToast(0, UP_TO_DATE_TWO_INSTALLS, '2.1.296')).toBe(
+    `Claude Code 2.1.301 is already installed — restart to use it (this session runs 2.1.296) — ${MULTIPLE}`,
+  )
+  expect(claudeUpdateToast(0, 'Claude Code is up to date (2.1.301)', '2.1.296')).toBe(
     'Claude Code 2.1.301 is already installed — restart to use it (this session runs 2.1.296)',
   )
 })
@@ -198,7 +201,7 @@ const answerEngine = (
     env?: Record<string, string>
     files?: Record<string, string>
     /** What `claude update` answers; a rejection when 'reject'. */
-    update?: { stdout: string; stderr?: string; exitCode?: number } | 'timeout'
+    update?: { stdout: string; stderr?: string; exitCode?: number; lateMs?: number } | 'timeout'
     /** The AskUserQuestion answer; an Error is a dismissed dialog. */
     ask?: string | Error
   } = {},
@@ -239,6 +242,7 @@ const answerEngine = (
       await clock.sleep(run.init?.timeoutMs ?? 0)
       throw new Error('timed out')
     }
+    if (u.lateMs) await clock.sleep(u.lateMs)
     return { value: { stdout: u.stdout, stderr: u.stderr ?? '', exitCode: u.exitCode ?? 0 } } as never
   })
   on('tool.call', { tool: 'AskUserQuestion' }, (_$, e) => {
@@ -477,6 +481,33 @@ test('a rejected run at the timeout is failed (timed out)', async ($, on) => {
   void pane.press({ key: 'claude-update' })
   await clock.advance(CLAUDE_UPDATE_RUN_TIMEOUT_MS + 1000)
   expect(toasts.at(-1)).toBe('failed (timed out)')
+})
+
+test('a press while an update runs asks nothing and runs nothing; once it ends a press works again', async ($, on) => {
+  const { clock, runs, asks, toasts } = answerEngine(on, {
+    update: { stdout: 'Claude Code is up to date (2.1.296)', lateMs: 10_000 },
+  })
+  await start($)
+  await clock.settle()
+  const pane = await mountPane($)
+  await pane.drawn()
+  await pane.press({ key: 'claude-update' })
+  await clock.settle()
+  expect(runs.length).toBe(1)
+  expect(toasts.at(-1)).toBe('updating Claude Code…')
+  await pane.press({ key: 'claude-update' })
+  await clock.settle()
+  expect(asks.length).toBe(1)
+  expect(runs.length).toBe(1)
+  expect(toasts.at(-1)).toBe('Claude Code update already running')
+  await clock.advance(11_000)
+  expect(toasts).toContain('claude update found nothing newer (2.1.296)')
+  await pane.drawn()
+  await pane.press({ key: 'claude-update' })
+  await clock.settle()
+  expect(asks.length).toBe(2)
+  expect(runs.length).toBe(2)
+  await clock.advance(11_000) // lets the second run end inside the test
 })
 
 for (const [name, ask] of [
