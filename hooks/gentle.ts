@@ -123,6 +123,27 @@ export const parseBrewList = (text: string): Record<string, string> => {
   return out
 }
 
+// `gentle-ai update` (a read-only online check; it has no JSON output) →
+// installed and latest version per known tool, from rows like
+// `  [UP] gentle-ai  installed: 4.1.1  latest: 4.2.0  brew upgrade ...`.
+// Its spinner redraws on `\r`, so the text is split on `\r` and `\n`, ANSI
+// sequences are dropped and each line is cleaned; unknown tools, rows without
+// two versions and trailing columns are ignored. Null when no row parses.
+export type GentleUpdate = Partial<Record<ToolName, { installed: string; latest: string }>>
+const ANSI = /\u001b\[[0-9;?]*[ -/]*[@-~]/g
+const UPDATE_ROW = /^\s*\[[^\]]*\]\s+(\S+)\s+installed:\s*(\S+)\s+latest:\s*(\S+)/
+export const parseGentleUpdate = (stdout: string): GentleUpdate | null => {
+  const out: GentleUpdate = {}
+  for (const line of stdout.replace(ANSI, '').split(/[\r\n]/)) {
+    const m = UPDATE_ROW.exec(clean(line))
+    const name = TOOLS.find(t => t === m?.[1])
+    const installed = parseVersion(m?.[2] ?? '')
+    const latest = parseVersion(m?.[3] ?? '')
+    if (name && installed && latest) out[name] = { installed, latest }
+  }
+  return Object.keys(out).length > 0 ? out : null
+}
+
 // Only a plain relative file name goes into the prompt text; anything else
 // (an absolute path, spaces, punctuation) falls back to the default.
 const SAFE_RULES = /^(?!\/)(?!.*\.\.)[\w./-]{1,80}$/
@@ -151,7 +172,7 @@ export type ToolStatus = {
   name: ToolName
   /** Installed version; null when not installed or unknown. */
   version: string | null
-  /** Newer version brew knows of; null when up to date or unknown. */
+  /** Newer version `gentle-ai update` (else brew) knows of; null when up to date or unknown. */
   update: string | null
   /** Found on PATH although its version is unknown (gga without brew). */
   installed?: boolean
@@ -162,7 +183,7 @@ export const toolInstalled = (t: ToolStatus): boolean => Boolean(t.version) || t
 
 export type GentleInfo = {
   tools: ToolStatus[]
-  /** Whether brew answered the update check (else no up-to-date claim). */
+  /** Whether `gentle-ai update` or brew answered the update check (else no up-to-date claim). */
   updatesKnown: boolean
   /** The session's repository root; null outside a repository. */
   root: string | null
@@ -187,16 +208,23 @@ export const BREW_ENV = {
   HOMEBREW_NO_ENV_HINTS: '1',
 } as const
 
+// `gentle-ai update` fires gentle-ai's opportunistic telemetry check; a
+// background check opts out of it for its own run. Set over the host's env.
+export const UPDATE_ENV = { DO_NOT_TRACK: '1' } as const
+
 // How long a read-only command may run before `$.process.run` kills it and
-// rejects: git, gentle-ai and date answer at once; brew loads Ruby first.
+// rejects: git, gentle-ai and date answer at once; brew loads Ruby first;
+// `gentle-ai update` asks the network and takes a few seconds.
 export const CMD_TIMEOUT_MS = 5_000
 export const BREW_TIMEOUT_MS = 15_000
+export const UPDATE_TIMEOUT_MS = 15_000
 // A confirmed action (`gga install`, `gentle-ai review mode ...`) may write
 // files, so it gets longer than a read-only probe.
 export const ACTION_TIMEOUT_MS = 30_000
 // A refresh joins a detection under way only this long after it started.
 // Detection runs its probes one after another, each with its own timeout
-// (three brew runs at most 15 s, seven other commands at most 5 s: 80 s), so a
+// (two brew runs and `gentle-ai update` at most 15 s each, seven other
+// commands at most 5 s: 80 s), so a
 // run older than this is stuck (a read that never answers) and a new one
 // starts; the generation number drops the stuck run's result if it ever ends.
 export const GENTLE_JOIN_DEADLINE_MS = 90_000
@@ -288,7 +316,7 @@ const UNKNOWN: Mark = { text: '?', tone: 'subtle' }
 
 export const checkMark = (v: boolean | null): Mark => (v ? OK : v === false ? MISSING : UNKNOWN)
 
-// A tool's status: a newer version, up to date, or ? when brew did not answer
+// A tool's status: a newer version, up to date, or ? when no update check answered
 // or the version is unknown (no up-to-date claim without it); ✗ when it is
 // not installed.
 export const toolMark = (t: ToolStatus, updatesKnown: boolean): Mark =>

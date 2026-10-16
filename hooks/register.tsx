@@ -18,11 +18,14 @@ import {
   isAbsolutePath,
   parseBrewList,
   parseBrewOutdated,
+  parseGentleUpdate,
   parseGgaConfig,
   parseRddStatus,
   parseStrictTdd,
   parseVersion,
   BREW_TIMEOUT_MS,
+  UPDATE_ENV,
+  UPDATE_TIMEOUT_MS,
   CMD_TIMEOUT_MS,
   RUN_IT,
   CANCEL,
@@ -32,7 +35,7 @@ import {
   STRICT_TDD_PROMPT,
   TOOLS,
 } from './gentle'
-import type { GentleAction, GentleButton, GentleInfo, GentleRow, GentleView, Mark, RddStatus, StrictTdd } from './gentle'
+import type { GentleAction, GentleButton, GentleInfo, GentleRow, GentleUpdate, GentleView, Mark, RddStatus, StrictTdd } from './gentle'
 import {
   BRANCH_ICON,
   buttonText,
@@ -851,6 +854,19 @@ const detectGentle = async ($: EngineInterface): Promise<GentleInfo> => {
   } catch {
     // not installed
   }
+  // The online check (read-only; `UPDATE_ENV` opts out of its telemetry).
+  // Its installed versions fill what brew and `--version` left unknown.
+  let checked: GentleUpdate | null = null
+  try {
+    const r = await $.process.run(['gentle-ai', 'update'], { env: UPDATE_ENV, timeoutMs: UPDATE_TIMEOUT_MS })
+    checked = parseGentleUpdate(r.stdout)
+  } catch {
+    checked = null
+  }
+  for (const name of TOOLS) {
+    const installed = checked?.[name]?.installed
+    if (installed && !versions[name]) versions[name] = installed
+  }
   if (!versions.engram) {
     try {
       // `engram version` prints `engram 3.4.0` and has no side effects.
@@ -878,15 +894,29 @@ const detectGentle = async ($: EngineInterface): Promise<GentleInfo> => {
       }
     }
   }
-  try {
-    // Exits 1 when something is outdated: the JSON on stdout is what counts.
-    const r = await $.process.run(['brew', 'outdated', '--json=v2', '--formula', ...TOOLS], {
-      env: BREW_ENV,
-      timeoutMs: BREW_TIMEOUT_MS,
-    })
-    updates = parseBrewOutdated(r.stdout)
-  } catch {
-    updates = null
+  // A tool `gentle-ai update` reported is decided by it (`ok` is up to date,
+  // whatever the local brew tap says); brew's local tap answers only for the
+  // tools it did not report, so brew runs only when one is left.
+  let brew: Record<string, string> | null = null
+  if (!checked || TOOLS.some(name => !checked?.[name])) {
+    try {
+      // Exits 1 when something is outdated: the JSON on stdout is what counts.
+      const r = await $.process.run(['brew', 'outdated', '--json=v2', '--formula', ...TOOLS], {
+        env: BREW_ENV,
+        timeoutMs: BREW_TIMEOUT_MS,
+      })
+      brew = parseBrewOutdated(r.stdout)
+    } catch {
+      brew = null
+    }
+  }
+  if (checked || brew) {
+    updates = {}
+    for (const name of TOOLS) {
+      const c = checked?.[name]
+      const latest = c ? (c.latest !== c.installed ? c.latest : undefined) : brew?.[name]
+      if (latest) updates[name] = latest
+    }
   }
 
   const gga: GentleInfo['gga'] = { hook: null, projectConfig: false, rulesFile: 'AGENTS.md', rules: null }
