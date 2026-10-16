@@ -1,7 +1,7 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <svg xmlns="http://www.w3.org/2000/svg" version="1.1" width="1000" height="640" viewBox="0 0 1000 640" role="img" aria-labelledby="df-title df-desc">
   <title id="df-title">How Agent HUD gets its data</title>
-  <desc id="df-desc">Three columns. Sources: Claude Code events (agent.spawn, turn.step, prompt.compose, tool.call for TodoWrite, TaskCreate and TaskUpdate, ui.scroll); the plugin API (session usage, id, model and version, the tool list for MCP servers, the agent list); and local reads plus one online check (git branch, diff shortstat and rev-list ahead/behind, settings files, custom-title.json, account fields of .claude.json, gentle-ai update for versions with the local brew tap as fallback, gga files read as text). Agent HUD core: a one-second poller with caches, the $.state atoms, one view builder liveView that becomes maskView in privacy mode or demoView in demo mode, clean() on external text, and actions (gga, RDD and tool upgrades) only after a Run it confirmation. Surfaces: the sidebar pane with a sticky header, sections and a sticky footer, and the band above the prompt. The only online call is gentle-ai update, and the plugin writes nothing to disk.</desc>
+  <desc id="df-desc">Three columns. Sources: Claude Code events (agent.spawn, turn.step, prompt.compose, tool.call for TodoWrite, TaskCreate and TaskUpdate, ui.scroll); the plugin API (session usage, id, model and version, the tool list for MCP servers, the agent list); and local reads plus two online checks (git branch, diff shortstat and rev-list ahead/behind, settings files for the output style and the update channel, custom-title.json, account fields of .claude.json, the npm registry's dist-tags for the newest Claude Code on that channel, gentle-ai update for versions with the local brew tap as fallback, gga files read as text). Agent HUD core: a one-second poller with caches, the $.state atoms, one view builder liveView that becomes maskView in privacy mode or demoView in demo mode, clean() on external text, and actions (gga, RDD and tool upgrades) only after a Run it confirmation. Surfaces: the sidebar pane with a sticky header, sections and a sticky footer that marks a newer Claude Code with an up arrow, and the band above the prompt. The online calls are the hourly npm registry check for Claude Code (skipped with CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC) and gentle-ai update, and the plugin writes nothing to disk.</desc>
   <defs>
     <marker id="df-arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto" markerUnits="userSpaceOnUse">
       <path d="M 0 0 L 10 5 L 0 10 z" fill="#3DD6D0"/>
@@ -19,6 +19,7 @@
     .d { font-size: 12px; fill: #8798AA; }
     .k { font-size: 12.5px; fill: #3DD6D0; }
     .ok { font-size: 12.5px; fill: #7FD39B; }
+    .warn { fill: #E5C07B; }
     .panel { fill: #12202F; stroke: #2A8C9A; stroke-width: 1.2; }
     .box { fill: #0B1420; stroke: #2A8C9A; stroke-width: 1; }
     .guard { fill: #0B1420; stroke: #8798AA; stroke-width: 1; stroke-dasharray: 4 3; }
@@ -50,14 +51,15 @@
   <text class="t" x="40" y="348">$.agent.list <tspan class="d">→ subagents</tspan></text>
 
   <!-- Sources: Local reads -->
-  <rect class="panel" x="24" y="380" width="340" height="170" rx="10"/>
-  <text class="h" x="40" y="404">Local reads <tspan class="ok">· one online check</tspan></text>
+  <rect class="panel" x="24" y="380" width="340" height="186" rx="10"/>
+  <text class="h" x="40" y="404">Local reads <tspan class="ok">· two online checks</tspan></text>
   <text class="t" x="40" y="430">git branch · diff · rev-list <tspan class="d">↑↓</tspan></text>
-  <text class="t" x="40" y="450">settings files <tspan class="d">(output style)</tspan></text>
+  <text class="t" x="40" y="450">settings files <tspan class="d">(style · channel)</tspan></text>
   <text class="t" x="40" y="470">custom-title.json <tspan class="d">(title)</tspan></text>
   <text class="t" x="40" y="490">.claude.json <tspan class="d">account fields</tspan></text>
   <text class="t" x="40" y="510">gentle-ai update <tspan class="d">· brew tap fallback</tspan></text>
   <text class="t" x="40" y="530">gga files <tspan class="d">read as text</tspan></text>
+  <text class="t" x="40" y="550">npm registry <tspan class="d">· Claude Code version</tspan></text>
 
   <!-- Sources -> core -->
   <path class="flow" d="M 364 169 L 418 169" marker-end="url(#df-arrow)"/>
@@ -112,7 +114,7 @@
   <text class="t" x="792" y="280">▾ Todo</text>
   <text class="t" x="792" y="302">▾ Gentle AI</text>
   <line x1="784" y1="330" x2="968" y2="330" stroke="#22364A" stroke-width="1"/>
-  <text class="d" x="792" y="354"><tspan class="ok">●</tspan> ClaudeCode x.y.z</text>
+  <text class="d" x="792" y="354"><tspan class="ok">●</tspan> ClaudeCode x.y.z <tspan class="warn">↑</tspan></text>
   <text class="d" x="776" y="390">sticky header · sections</text>
   <text class="d" x="776" y="408">· sticky footer</text>
 
@@ -124,6 +126,6 @@
 
   <!-- Footer note -->
   <line x1="24" y1="578" x2="976" y2="578" stroke="#22364A" stroke-width="1"/>
-  <circle cx="262" cy="606" r="5" fill="#7FD39B"/>
-  <text class="t" x="278" y="611">Online: gentle-ai update, and an upgrade you confirm · the plugin writes nothing to disk</text>
+  <circle cx="40" cy="606" r="5" fill="#7FD39B"/>
+  <text class="t" x="56" y="611">Online: npm registry (Claude Code), gentle-ai update, upgrades you confirm · the plugin writes nothing to disk</text>
 </svg>
