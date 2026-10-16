@@ -846,8 +846,9 @@ let claudeUpdateGeneration = 0
 let claudeRestartCache: string | null = null
 // The footer's `claude update` under way (a token per run), or null. While set,
 // a press only toasts `CLAUDE_UPDATE_BUSY`: two runs at once would race on the
-// install. A run clears only its own token, so a session start's reset is not
-// undone by an older run that ends later.
+// install. A run clears its own token in `finally` (the run has a timeout), and
+// `session.start` never resets it: a run under way when a /clear or a resume
+// starts a session is still writing the install.
 let claudeUpdateRunning: object | null = null
 const CLAUDE_UPDATE_BUSY = 'Claude Code update already running'
 
@@ -1581,8 +1582,9 @@ export const register: Register = on => {
     // Newer Claude Code: now (not awaited: a network call), then hourly below.
     claudeUpdateCache = null
     claudeRestartCache = null
-    claudeUpdateRunning = null
-    gentleActionRunning = null
+    // `claudeUpdateRunning` / `gentleActionRunning` are not reset: a run that
+    // started before this session start (a /clear, a resume) is still writing
+    // the install, and it clears its own token when it ends.
     void checkClaudeUpdate($)
 
     let ticks = 0

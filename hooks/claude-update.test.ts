@@ -510,6 +510,27 @@ test('a press while an update runs asks nothing and runs nothing; once it ends a
   await clock.advance(11_000) // lets the second run end inside the test
 })
 
+test('a session start while an update runs keeps it the only run', async ($, on) => {
+  const { clock, runs, toasts } = answerEngine(on, {
+    update: { stdout: 'Claude Code is up to date (2.1.296)', lateMs: 10_000 },
+  })
+  await start($)
+  await clock.settle()
+  const pane = await mountPane($)
+  await pane.drawn()
+  await pane.press({ key: 'claude-update' })
+  await clock.settle()
+  expect(runs.length).toBe(1)
+  await start($) // e.g. /clear: the first run is still under way
+  await clock.settle()
+  await pane.drawn()
+  await pane.press({ key: 'claude-update' })
+  await clock.settle()
+  expect(runs.length).toBe(1)
+  expect(toasts.at(-1)).toBe('Claude Code update already running')
+  await clock.advance(11_000) // lets the run end inside the test
+})
+
 for (const [name, ask] of [
   ['Cancel', 'Cancel'],
   ['a dismissed dialog', new Error('dismissed')],
