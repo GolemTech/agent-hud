@@ -1,6 +1,6 @@
 {
   "name": "agent-hud",
-  "version": "1.1.0",
+  "version": "1.1.1",
   "description": "Agent HUD: a live sidebar for Claude Code with session, context and rate-limit meters, MCP servers, subagents and todos.",
   "author": {
     "name": "GolemTech",
