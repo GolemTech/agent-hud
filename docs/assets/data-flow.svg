@@ -1,7 +1,7 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <svg xmlns="http://www.w3.org/2000/svg" version="1.1" width="1000" height="640" viewBox="0 0 1000 640" role="img" aria-labelledby="df-title df-desc">
   <title id="df-title">How Agent HUD gets its data</title>
-  <desc id="df-desc">Three columns. Sources: Claude Code events (agent.spawn, turn.step, prompt.compose, tool.call for TodoWrite, TaskCreate and TaskUpdate, ui.scroll); the plugin API (session usage, id, model and version, the tool list for MCP servers, the agent list); and local reads with no network (git branch and diff shortstat, settings files, custom-title.json, account fields of .claude.json, gentle-ai and the local brew tap, gga files read as text). Agent HUD core: a one-second poller with caches, the $.state atoms, one view builder liveView that becomes maskView in privacy mode or demoView in demo mode, clean() on external text, and actions only after a Run it confirmation. Surfaces: the sidebar pane with a sticky header, sections and a sticky footer, and the band above the prompt. No network calls and nothing written to disk by the plugin.</desc>
+  <desc id="df-desc">Three columns. Sources: Claude Code events (agent.spawn, turn.step, prompt.compose, tool.call for TodoWrite, TaskCreate and TaskUpdate, ui.scroll); the plugin API (session usage, id, model and version, the tool list for MCP servers, the agent list); and local reads plus one online check (git branch and diff shortstat, settings files, custom-title.json, account fields of .claude.json, gentle-ai update for versions with the local brew tap as fallback, gga files read as text). Agent HUD core: a one-second poller with caches, the $.state atoms, one view builder liveView that becomes maskView in privacy mode or demoView in demo mode, clean() on external text, and actions only after a Run it confirmation. Surfaces: the sidebar pane with a sticky header, sections and a sticky footer, and the band above the prompt. The only online call is gentle-ai update, and the plugin writes nothing to disk.</desc>
   <defs>
     <marker id="df-arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto" markerUnits="userSpaceOnUse">
       <path d="M 0 0 L 10 5 L 0 10 z" fill="#3DD6D0"/>
@@ -51,12 +51,12 @@
 
   <!-- Sources: Local reads -->
   <rect class="panel" x="24" y="380" width="340" height="170" rx="10"/>
-  <text class="h" x="40" y="404">Local reads <tspan class="ok">· no network</tspan></text>
+  <text class="h" x="40" y="404">Local reads <tspan class="ok">· one online check</tspan></text>
   <text class="t" x="40" y="430">git branch · git diff --shortstat</text>
   <text class="t" x="40" y="450">settings files <tspan class="d">(output style)</tspan></text>
   <text class="t" x="40" y="470">custom-title.json <tspan class="d">(title)</tspan></text>
   <text class="t" x="40" y="490">.claude.json <tspan class="d">account fields</tspan></text>
-  <text class="t" x="40" y="510">gentle-ai · brew <tspan class="d">local tap</tspan></text>
+  <text class="t" x="40" y="510">gentle-ai update <tspan class="d">· brew tap fallback</tspan></text>
   <text class="t" x="40" y="530">gga files <tspan class="d">read as text</tspan></text>
 
   <!-- Sources -> core -->
@@ -125,5 +125,5 @@
   <!-- Footer note -->
   <line x1="24" y1="578" x2="976" y2="578" stroke="#22364A" stroke-width="1"/>
   <circle cx="300" cy="606" r="5" fill="#7FD39B"/>
-  <text class="t" x="316" y="611">No network calls · nothing written to disk by the plugin</text>
+  <text class="t" x="316" y="611">One online check (gentle-ai update) · nothing written to disk by the plugin</text>
 </svg>

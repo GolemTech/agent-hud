@@ -31,7 +31,7 @@ from the repository root (needs `vhs`, `ffmpeg` and `gifsicle`).
 ## How it works
 
 <p align="center">
-  <img src="docs/assets/data-flow.svg" width="760" alt="Data flow in three columns. Sources: Claude Code events (agent.spawn, turn.step, prompt.compose, tool.call for TodoWrite, TaskCreate and TaskUpdate, ui.scroll), the plugin API (session usage, id, model and version, the tool list for MCP servers, the agent list) and local reads with no network (git branch and diff, settings files, custom-title.json, account fields, gentle-ai and the local brew tap, gga files read as text). Agent HUD core: a one-second poller with caches, the $.state atoms, one view built by liveView and turned into maskView in privacy mode or demoView in demo mode, clean() on external text, and actions only after a Run it confirmation. Surfaces: the sidebar pane and the band above the prompt.">
+  <img src="docs/assets/data-flow.svg" width="760" alt="Data flow in three columns. Sources: Claude Code events (agent.spawn, turn.step, prompt.compose, tool.call for TodoWrite, TaskCreate and TaskUpdate, ui.scroll), the plugin API (session usage, id, model and version, the tool list for MCP servers, the agent list) and local reads plus one online check (git branch and diff, settings files, custom-title.json, account fields, gentle-ai update with the local brew tap as fallback, gga files read as text). Agent HUD core: a one-second poller with caches, the $.state atoms, one view built by liveView and turned into maskView in privacy mode or demoView in demo mode, clean() on external text, and actions only after a Run it confirmation. Surfaces: the sidebar pane and the band above the prompt.">
 </p>
 
 Details and limits are in [How it gets its data](#how-it-gets-its-data).
