@@ -25,7 +25,7 @@ from the repository root (needs `vhs`, `ffmpeg` and `gifsicle`).
 | MCP       | MCP servers, connected first; servers waiting for authentication are dimmed and marked `· auth · /mcp`, where you sign in. `[active]` / `[all]` in its header filters the list. |
 | Subagents | Running / done / error counts, then one card per subagent: description, type, model, elapsed time and context tokens. Past 12 rows the cards scroll in a window of their own. |
 | Todo      | The main loop's task list: done first, then in progress, then pending. Past 5 rows it scrolls in a window of its own. |
-| Gentle AI | The [gentle-ai](https://github.com/Gentleman-Programming/gentle-ai) toolset: one aligned grid in four groups. **Tools**: `gentle-ai`, `gga` and `engram` versions with `✓` up to date or `↑ <newer>` (as fresh as your local brew tap); **gga**: the review hook and its rules file; **RDD**: receipt-driven development on or off and which scope decides it, then each scope's own setting; **TDD**: test-first by default under ODD, and strict TDD. One status vocabulary throughout: `✓` ok, `✗` missing, `↑` update, `●` on, `○` off, `—` unset, `?` unknown. Shows "gentle-ai not installed" when it is not. |
+| Gentle AI | The [gentle-ai](https://github.com/Gentleman-Programming/gentle-ai) toolset: one aligned grid in four groups. **Tools**: `gentle-ai`, `gga` and `engram` versions with `✓` up to date or `↑ <newer>` (from `gentle-ai update`, else your local brew tap); **gga**: the review hook and its rules file; **RDD**: receipt-driven development on or off and which scope decides it, then each scope's own setting; **TDD**: test-first by default under ODD, and strict TDD. One status vocabulary throughout: `✓` ok, `✗` missing, `↑` update, `●` on, `○` off, `—` unset, `?` unknown. Shows "gentle-ai not installed" when it is not. |
 | Footer    | Always at the bottom: the Claude Code version (`● ClaudeCode x.y.z`). |
 
 ## How it works
@@ -215,13 +215,18 @@ rest, and the limits that come with them:
 - **Dock width** cannot be forced by a plugin; a width you set wins.
 - **Gentle AI versions** come from `brew list --versions` when Homebrew is
   there, else from the tools themselves: `gentle-ai --version` and
-  `engram version`. gga is never run, so without brew it is looked up on
+  `engram version`; a version still unknown is taken from `gentle-ai update`
+  below. gga is never run, so with neither it is looked up on
   `PATH` (`which gga`, or `where gga` on Windows) and shows as `installed`
-  with `?`. **Update status** comes from
-  `brew outdated --json=v2` run with `HOMEBREW_NO_AUTO_UPDATE=1`: it compares
-  against your local tap metadata, so it is only as fresh as your last
-  `brew update`, which refreshes it. Without brew, or for tools not
-  installed through it, the status is `?`.
+  with `?`. **Update status** comes from `gentle-ai update`, a read-only
+  online check (it applies nothing) run with each detection: at session
+  start, about every 5 minutes, on `↻` and after an action. It runs with
+  `DO_NOT_TRACK=1`, so this background check sends no gentle-ai telemetry.
+  A tool it reports as up to date shows `✓` even when the local brew tap
+  says otherwise. When it fails (offline, timed out) or prints nothing
+  readable, `brew outdated --json=v2` run with `HOMEBREW_NO_AUTO_UPDATE=1`
+  answers instead: it compares against your local tap metadata, so it is
+  only as fresh as your last `brew update`. Without either, the status is `?`.
 - **gga** is detected by reading files, never by running gga (its commands
   check GitHub for updates, and `gga config` executes the project's `.gga`):
   the hook from the `pre-commit` / `commit-msg` files in the repository's
@@ -241,7 +246,8 @@ rest, and the limits that come with them:
   the project's `openspec/config.yaml`, matched as text (quoted or not,
   `true`/`false` or YAML `yes`/`no`/`on`/`off`, an inline `# comment`
   allowed; a commented-out line does not count).
-- **No network calls** are made by the plugin itself.
+- **Network**: the only call that leaves the machine is `gentle-ai update`'s
+  version check above; the plugin itself makes none.
 - **Control characters** (escape sequences, newlines, bells) are stripped from
   every displayed string that comes from outside the plugin.
 
