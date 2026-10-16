@@ -4,9 +4,11 @@ import type { Engine, MockClock } from 'claude-code/testing'
 
 import {
   ACTION_TIMEOUT_MS,
+  actionSpec,
   BREW_TIMEOUT_MS,
   CMD_TIMEOUT_MS,
   UPDATE_TIMEOUT_MS,
+  UPGRADE_TIMEOUT_MS,
   checkMark,
   GENTLE_JOIN_DEADLINE_MS,
   gentleGrid,
@@ -286,7 +288,13 @@ test('gentleGrid: headings Tools, gga, RDD, TDD, each with its item rows', () =>
     { kind: 'heading', label: 'Tools', summary: null },
     { kind: 'item', label: 'gentle-ai', value: { text: '4.0.0' }, detail: { text: '✓', tone: 'success' }, buttons: [] },
     { kind: 'item', label: 'gga', value: { text: '2.10.1' }, detail: { text: '✓', tone: 'success' }, buttons: [] },
-    { kind: 'item', label: 'engram', value: { text: '3.3.0' }, detail: { text: '↑ 3.4.0', tone: 'warning' }, buttons: [] },
+    {
+      kind: 'item',
+      label: 'engram',
+      value: { text: '3.3.0' },
+      detail: { text: '↑ 3.4.0', tone: 'warning' },
+      buttons: [{ key: 'gentle-upgrade-engram', label: 'upgrade' }],
+    },
     { kind: 'heading', label: 'gga', summary: null },
     {
       kind: 'item',
@@ -403,6 +411,68 @@ test('gentleRowLines: wrapped value-cell lines count, at the cell width', () => 
   expect(gentleRowLines(rowNamed('Tools', 'heading'), GRID, 22)).toBe(1)
 })
 
+test('gentleRowLines: an [upgrade] button counts in its tool row', () => {
+  // `3.3.0 ` ↑ 3.4.0 [upgrade]: 6 + 1 + 7 + 1 + 9 = 24 fits a 28-cell cell.
+  expect(gentleRowLines(rowNamed('engram'), GRID, 40)).toBe(1)
+  // In a 10-cell cell: the value with nothing beside it, ↑ 3.4.0, [upgrade].
+  expect(gentleRowLines(rowNamed('engram'), GRID, 22)).toBe(3)
+  // The same row without its button takes one line less.
+  const bare = { ...rowNamed('engram'), buttons: [] } as GentleRow
+  expect(gentleRowLines(bare, GRID, 22)).toBe(2)
+})
+
+// ── Upgrade actions ──────────────────────────────────────────────────────
+
+const TOOL_VERSIONS = [
+  { name: 'gentle-ai', version: '4.1.1', update: '4.2.0' },
+  { name: 'gga', version: '2.10.1', update: '2.11.0' },
+  { name: 'engram', version: '3.3.0', update: '3.4.0' },
+] as const
+
+test('actionSpec: each tool upgrades through `gentle-ai upgrade <tool>`, untracked and with a long timeout', () => {
+  for (const t of TOOL_VERSIONS) {
+    const spec = actionSpec(`gentle-upgrade-${t.name}`, '/home/myuser/code/demo-proj', TOOL_VERSIONS)
+    expect(spec.argv).toEqual(['gentle-ai', 'upgrade', t.name])
+    expect(spec.env).toEqual({ DO_NOT_TRACK: '1' })
+    expect(spec.timeoutMs).toBe(UPGRADE_TIMEOUT_MS)
+    expect(spec.question).toContain(t.name)
+    expect(spec.question).toContain(`${t.version} → ${t.update}`)
+    expect(spec.question).toContain(`gentle-ai upgrade ${t.name}`)
+    expect(spec.done).toContain(t.name)
+  }
+  expect(UPGRADE_TIMEOUT_MS).toBe(300_000)
+})
+
+test('actionSpec: only the gentle-ai upgrade suggests `gentle-ai sync` afterwards', () => {
+  const done = (tool: 'gentle-ai' | 'gga' | 'engram') => actionSpec(`gentle-upgrade-${tool}`, '/r', TOOL_VERSIONS).done
+  expect(done('gentle-ai')).toContain('gentle-ai sync')
+  expect(done('gga')).not.toContain('sync')
+  expect(done('engram')).not.toContain('sync')
+})
+
+test('actionSpec: an upgrade with unknown versions still names the tool and the command', () => {
+  const spec = actionSpec('gentle-upgrade-engram', '/r')
+  expect(spec.question).toContain('engram')
+  expect(spec.question).toContain('gentle-ai upgrade engram')
+  expect(spec.question).not.toContain('→')
+})
+
+test('actionSpec: other actions keep the default action timeout', () => {
+  expect(actionSpec('gga-install', '/r').timeoutMs).toBeUndefined()
+})
+
+test('gentleGrid: [upgrade] only on the tool rows that have an update', () => {
+  const tools = gentleGrid(VIEW).slice(1, 4)
+  expect(tools.map(r => (r.kind === 'item' ? r.buttons.map(b => b.key) : []))).toEqual([
+    [],
+    [],
+    ['gentle-upgrade-engram'],
+  ])
+  // Not installed, or up to date: no button.
+  const none = gentleGrid({ ...VIEW, tools: VIEW.tools.map(t => ({ ...t, update: null })) })
+  expect(none.some(r => r.kind === 'item' && r.buttons.some(b => b.key.startsWith('gentle-upgrade-')))).toBe(false)
+})
+
 // ── Wiring ───────────────────────────────────────────────────────────────
 
 const HOME = '/home/myuser'
@@ -443,6 +513,8 @@ let envVars: Record<string, string> = { HOME }
 // What `gentle-ai update` prints, or a rejection (offline, timed out); null
 // answers an empty stdout, as an old gentle-ai would.
 let gentleUpdate: string | Error | null = null
+// How a `gentle-ai upgrade` run ends: its exit code, or a rejection.
+let upgradeOutcome: number | Error = 0
 
 // Puts every fixture variable back, so the tests stay order-independent.
 const resetFixture = () => {
@@ -456,6 +528,7 @@ const resetFixture = () => {
   pathLookup = {}
   envVars = { HOME }
   gentleUpdate = null
+  upgradeOutcome = 0
 }
 
 const answerEngine = (
@@ -468,6 +541,7 @@ const answerEngine = (
   const toasts: string[] = []
   const exists: string[] = []
   const reads: string[] = []
+  const asks: string[] = []
   const clock = mock.clock(on)
   mock.env(on, envVars)
   on('command.register', () => ({ value: undefined }) as never)
@@ -512,6 +586,10 @@ const answerEngine = (
       if (ggaOutcome instanceof Error) throw ggaOutcome
       return out('', ggaOutcome)
     }
+    if (argv.startsWith('gentle-ai upgrade')) {
+      if (upgradeOutcome instanceof Error) throw upgradeOutcome
+      return out('', upgradeOutcome)
+    }
     if (argv === 'gentle-ai --version') return out('gentle-ai 4.0.0\n')
     if (argv === 'gentle-ai update') {
       if (gentleUpdate instanceof Error) throw gentleUpdate
@@ -552,6 +630,7 @@ const answerEngine = (
     const a = answer()
     if (a instanceof Error) throw a
     const q = (e as unknown as { questions: { question: string }[] }).questions[0]?.question ?? ''
+    asks.push(q)
     return { result: { questions: [], answers: { [q]: a } } } as never
   })
   on('prompt.fill', (_$, e) => {
@@ -563,7 +642,7 @@ const answerEngine = (
     return { value: undefined } as never
   })
   on('prompt.compose', () => ({ sections: [] }) as never)
-  return { clock, runs, fills, toasts, exists, reads }
+  return { clock, runs, fills, toasts, exists, reads, asks }
 }
 
 const mountPane = ($: Engine) =>
@@ -643,7 +722,7 @@ const headingsOf = (tree: unknown): string[] => {
 test('Gentle AI text buttons draw only their own [label], no Button chrome around it', async ($, on) => {
   await start($, on)
   const tree = JSON.stringify(await (await mountPane($)).drawn())
-  for (const key of ['rdd-project-on', 'rdd-global-off', 'gga-install', 'gentle-refresh']) {
+  for (const key of ['rdd-project-on', 'rdd-global-off', 'gga-install', 'gentle-refresh', 'gentle-upgrade-engram']) {
     expect(tree).toMatch(new RegExp(`"key":"${key}"[^}]*"plain":true`))
   }
 })
@@ -704,7 +783,7 @@ test('the Gentle AI section is one grid: headings Tools, gga, RDD, TDD and align
   expect(JSON.stringify(tree)).not.toContain('last updated')
   expect(cellsOf(tree, 'gentle-ai')).toEqual(['gentle-ai', '4.0.0', '✓'])
   expect(cellsOf(tree, 'gga')).toEqual(['gga', '2.10.1', '✓'])
-  expect(cellsOf(tree, 'engram')).toEqual(['engram', '2.2.1', '↑ 3.3.0'])
+  expect(cellsOf(tree, 'engram')).toEqual(['engram', '2.2.1', '↑ 3.3.0', '[upgrade]'])
   expect(cellsOf(tree, 'hook').slice(0, 3)).toEqual(['hook', '✗', '[install]'])
   expect(cellsOf(tree, 'rules')).toEqual(['rules', '✗', 'AGENTS.md', '[create rules]'])
   expect(cellsOf(tree, 'RDD')).toEqual(['RDD', '● on · global'])
@@ -800,9 +879,12 @@ test('in demo mode the section shows sample values and its buttons only say so',
     await pane.press({ key: 'gga-install' })
     await pane.press({ key: 'tdd-configure' })
     await pane.press({ key: 'gentle-refresh' })
+    // The demo engram row has an update, so it shows [upgrade]; it runs nothing.
+    expect(text).toContain('"key":"gentle-upgrade-engram"')
+    await pane.press({ key: 'gentle-upgrade-engram' })
     expect(runs.length).toBe(before)
     expect(fills.length).toBe(0)
-    expect(toasts.filter(t => t === 'demo mode').length).toBe(3)
+    expect(toasts.filter(t => t === 'demo mode').length).toBe(4)
   } finally {
     await $.command.run({ command: 'hud-demo', args: '' } as never) // leave demo mode, even on a failure
   }
@@ -879,6 +961,57 @@ test('an action that cannot run (or times out) says so, and detection runs again
     resetFixture()
   }
 })
+
+const upgradeRuns = (runs: Run[]) => runs.filter(r => r.argv.join(' ').startsWith('gentle-ai upgrade'))
+
+test('[upgrade] asks with the versions, then runs `gentle-ai upgrade engram` untracked and with its timeout', async ($, on) => {
+  const { clock, runs, toasts, asks: questions } = await start($, on, () => 'Run it')
+  const before = statusRuns(runs)
+  await (await mountPane($)).press({ key: 'gentle-upgrade-engram' })
+  await clock.settle()
+  expect(questions.length).toBe(1)
+  expect(questions[0]).toContain('engram 2.2.1 → 3.3.0')
+  expect(questions[0]).toContain('gentle-ai upgrade engram')
+  const ran = upgradeRuns(runs)
+  expect(ran.length).toBe(1)
+  expect(ran[0]?.argv).toEqual(['gentle-ai', 'upgrade', 'engram'])
+  expect(ran[0]?.init?.env?.DO_NOT_TRACK).toBe('1')
+  expect((ran[0]?.init as { timeoutMs?: number } | undefined)?.timeoutMs).toBe(UPGRADE_TIMEOUT_MS)
+  expect(toasts.some(t => t.includes('engram') && t.includes('upgraded'))).toBe(true)
+  expect(statusRuns(runs)).toBe(before + 1)
+})
+
+test('[upgrade] runs nothing on Cancel or a dismissed dialog', async ($, on) => {
+  let answer: string | Error = 'Cancel'
+  const { runs } = await start($, on, () => answer)
+  const pane = await mountPane($)
+  await pane.press({ key: 'gentle-upgrade-engram' })
+  answer = new Error('dismissed')
+  await pane.press({ key: 'gentle-upgrade-engram' })
+  expect(upgradeRuns(runs).length).toBe(0)
+})
+
+const failedUpgrade = async ($: Engine, on: On, outcome: number | Error, toast: string) => {
+  upgradeOutcome = outcome
+  try {
+    const { clock, runs, toasts } = await start($, on, () => 'Run it')
+    const before = statusRuns(runs)
+    await (await mountPane($)).press({ key: 'gentle-upgrade-engram' })
+    await clock.settle()
+    expect(upgradeRuns(runs).length).toBe(1)
+    expect(toasts).toContain(toast)
+    expect(toasts.some(t => t.includes('upgraded'))).toBe(false)
+    expect(statusRuns(runs)).toBe(before + 1)
+  } finally {
+    resetFixture()
+  }
+}
+
+test('an upgrade that exits non-zero says so, and detection runs again', ($, on) =>
+  failedUpgrade($, on, 1, 'failed (exit 1)'))
+
+test('an upgrade that cannot run (or times out) says so, and detection runs again', ($, on) =>
+  failedUpgrade($, on, new Error('timed out'), 'failed (could not run)'))
 
 test('outside a repository, an unreadable cwd runs nothing and says so', async ($, on) => {
   inRepo = false
@@ -1048,7 +1181,7 @@ test('gentle-ai update decides the update status over a stale brew tap, and brew
   try {
     const { runs } = await start($, on)
     const tree = await (await mountPane($)).drawn()
-    expect(cellsOf(tree, 'gentle-ai')).toEqual(['gentle-ai', '4.0.0', '↑ 4.2.0'])
+    expect(cellsOf(tree, 'gentle-ai')).toEqual(['gentle-ai', '4.0.0', '↑ 4.2.0', '[upgrade]'])
     // brew's tap would call engram outdated; gentle-ai update says it is current.
     expect(cellsOf(tree, 'engram')).toEqual(['engram', '2.2.1', '✓'])
     expect(cellsOf(tree, 'gga')).toEqual(['gga', '2.10.1', '✓'])
@@ -1064,7 +1197,7 @@ test('without brew, gentle-ai update gives engram and gga their versions and ✓
   try {
     const { runs } = await start($, on)
     const tree = await (await mountPane($)).drawn()
-    expect(cellsOf(tree, 'gentle-ai')).toEqual(['gentle-ai', '4.0.0', '↑ 4.2.0'])
+    expect(cellsOf(tree, 'gentle-ai')).toEqual(['gentle-ai', '4.0.0', '↑ 4.2.0', '[upgrade]'])
     expect(cellsOf(tree, 'engram')).toEqual(['engram', '3.4.0', '✓'])
     expect(cellsOf(tree, 'gga')).toEqual(['gga', '2.10.1', '✓'])
     expect(runs.some(r => r.argv[0] === 'gga')).toBe(false)
@@ -1079,7 +1212,7 @@ test('when gentle-ai update fails, brew outdated decides as before', async ($, o
     const { runs } = await start($, on)
     const tree = await (await mountPane($)).drawn()
     expect(cellsOf(tree, 'gentle-ai')).toEqual(['gentle-ai', '4.0.0', '✓'])
-    expect(cellsOf(tree, 'engram')).toEqual(['engram', '2.2.1', '↑ 3.3.0'])
+    expect(cellsOf(tree, 'engram')).toEqual(['engram', '2.2.1', '↑ 3.3.0', '[upgrade]'])
     expect(runs.some(r => r.argv.join(' ').startsWith('brew outdated'))).toBe(true)
   } finally {
     resetFixture()

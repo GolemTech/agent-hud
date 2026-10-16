@@ -35,7 +35,7 @@ import {
   STRICT_TDD_PROMPT,
   TOOLS,
 } from './gentle'
-import type { GentleAction, GentleButton, GentleInfo, GentleRow, GentleUpdate, GentleView, Mark, RddStatus, StrictTdd } from './gentle'
+import type { GentleAction, GentleButton, GentleInfo, GentleRow, GentleUpdate, GentleView, Mark, RddStatus, StrictTdd, ToolStatus } from './gentle'
 import {
   BRANCH_ICON,
   buttonText,
@@ -998,7 +998,15 @@ const detectGentle = async ($: EngineInterface): Promise<GentleInfo> => {
 // Outside a repository (`root` null) it runs in the session's real cwd, read
 // now: the drawn cwd may be the privacy mask (`~/…`), never a usable path;
 // when it cannot be read, nothing runs.
-const runAction = async ($: EngineInterface, action: GentleAction, root: string | null): Promise<boolean> => {
+// `tools` gives an upgrade's versions for its question. An upgrade gets
+// `UPGRADE_TIMEOUT_MS` (its spec's `timeoutMs`); every other action
+// `ACTION_TIMEOUT_MS`.
+const runAction = async (
+  $: EngineInterface,
+  action: GentleAction,
+  root: string | null,
+  tools: readonly ToolStatus[] = [],
+): Promise<boolean> => {
   let cwd: string
   try {
     cwd = root ?? (await $.session.cwd())
@@ -1006,7 +1014,7 @@ const runAction = async ($: EngineInterface, action: GentleAction, root: string 
     $.ui.toast('failed (could not run)')
     return false
   }
-  const spec = actionSpec(action, cwd)
+  const spec = actionSpec(action, cwd, tools)
   let answer: string
   try {
     answer = await $.ui.ask(spec.question, { header: 'Gentle AI', options: [RUN_IT, CANCEL] })
@@ -1017,7 +1025,7 @@ const runAction = async ($: EngineInterface, action: GentleAction, root: string 
   try {
     const r = await $.process.run(spec.argv, {
       cwd,
-      timeoutMs: ACTION_TIMEOUT_MS,
+      timeoutMs: spec.timeoutMs ?? ACTION_TIMEOUT_MS,
       ...(spec.env ? { env: spec.env } : {}),
       ...(spec.stdin === undefined ? {} : { stdin: spec.stdin }),
     })
@@ -1878,12 +1886,12 @@ export const register: Register = on => {
       </Button>
     )
     // Command buttons confirm first (`runAction`), then detection runs again.
-    const command = (key: GentleAction, label: string, root: string | null, selected = false) =>
+    const command = (key: GentleAction, label: string, g: GentleView, selected = false) =>
       action(
         key,
         label,
         async () => {
-          if (await runAction($, key, root)) await refreshGentle($, true)
+          if (await runAction($, key, g.root, g.tools)) await refreshGentle($, true)
         },
         selected,
       )
@@ -1900,7 +1908,7 @@ export const register: Register = on => {
         ? action(b.key, b.label, () => fillPrompt($, rulesPrompt(g.gga.rulesFile)))
         : b.key === 'tdd-configure'
           ? action(b.key, b.label, () => fillPrompt($, STRICT_TDD_PROMPT))
-          : command(b.key, b.label, g.root, b.selected)
+          : command(b.key, b.label, g, b.selected)
     // The rows and their column widths, built once for both the tree and its
     // row count (`gentleRows`), so the two cannot drift apart.
     const gentleLayout = (g: GentleView) => {
