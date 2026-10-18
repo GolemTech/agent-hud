@@ -1,0 +1,96 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" version="1.1" width="1000" height="500" viewBox="0 0 1000 500" role="img" aria-labelledby="hr-title hr-desc">
+  <title id="hr-title">Hide and reopen the Agent HUD sidebar</title>
+  <desc id="hr-desc">A loop of three steps. One: the sidebar is docked beside the transcript, and its header band ends in the settings button ⋮. Two: closing the sidebar with the close mark ✕ on its frame, or ctrl+x x, hides it, and a one-line band appears above the prompt reading Agent HUD 42% · MCP 3/4 · 2 agents. Three: clicking the band, or running /hud, reopens the sidebar and returns to step one. Side note: if Claude Code collapses the band, press ctrl+x ctrl+a.</desc>
+  <defs>
+    <marker id="hr-arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="9" markerHeight="9" orient="auto" markerUnits="userSpaceOnUse">
+      <path d="M 0 0 L 10 5 L 0 10 z" fill="#3DD6D0"/>
+    </marker>
+  </defs>
+  <style type="text/css"><![CDATA[
+    text { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; fill: #E6EEF5; }
+    .title { font-size: 22px; font-weight: bold; fill: #3DD6D0; }
+    .cap { font-size: 14px; font-weight: bold; fill: #E6EEF5; }
+    .num { font-size: 13px; font-weight: bold; fill: #0B1420; }
+    .t { font-size: 12px; }
+    .s { font-size: 11px; }
+    .d { font-size: 12px; fill: #8798AA; }
+    .lbl { font-size: 13px; fill: #3DD6D0; }
+    .win { fill: #12202F; stroke: #2A8C9A; stroke-width: 1.2; }
+    .bar { fill: #22364A; }
+    .flow { stroke: #3DD6D0; stroke-width: 1.8; fill: none; }
+  ]]></style>
+
+  <rect x="0" y="0" width="1000" height="500" rx="18" fill="#0B1420"/>
+  <text class="title" x="32" y="46">Hide and reopen</text>
+
+  <!-- Step 1: sidebar docked -->
+  <circle cx="52" cy="82" r="11" fill="#3DD6D0"/>
+  <text class="num" x="52" y="87" text-anchor="middle">1</text>
+  <text class="cap" x="72" y="87">Sidebar docked</text>
+
+  <rect class="win" x="40" y="102" width="360" height="220" rx="10"/>
+  <circle cx="56" cy="116" r="3.5" fill="#2A8C9A"/>
+  <circle cx="68" cy="116" r="3.5" fill="#8798AA"/>
+  <circle cx="80" cy="116" r="3.5" fill="#7FD39B"/>
+  <!-- transcript -->
+  <text class="d" x="56" y="146">transcript</text>
+  <rect class="bar" x="56" y="158" width="170" height="7" rx="3"/>
+  <rect class="bar" x="56" y="174" width="140" height="7" rx="3"/>
+  <rect class="bar" x="56" y="190" width="160" height="7" rx="3"/>
+  <rect class="bar" x="56" y="206" width="110" height="7" rx="3"/>
+  <rect class="bar" x="56" y="222" width="150" height="7" rx="3"/>
+  <rect x="52" y="282" width="180" height="26" rx="5" fill="#0B1420" stroke="#22364A"/>
+  <text class="d" x="62" y="300">&gt; prompt</text>
+  <!-- sidebar -->
+  <rect x="246" y="128" width="146" height="186" rx="6" fill="#0B1420" stroke="#2A8C9A" stroke-width="1"/>
+  <rect x="252" y="134" width="134" height="22" rx="4" fill="#3DD6D0"/>
+  <text class="s" x="260" y="149" style="fill:#0B1420; font-weight:bold;">project</text>
+  <text class="t" x="378" y="150" text-anchor="end" style="fill:#0B1420; font-weight:bold;">⋮</text>
+  <text class="s" x="258" y="174">▾ Session</text>
+  <text class="s" x="258" y="192">▾ Context</text>
+  <rect x="332" y="185" width="50" height="6" rx="3" fill="#22364A"/>
+  <rect x="332" y="185" width="21" height="6" rx="3" fill="#3DD6D0"/>
+  <text class="s" x="258" y="210">▾ MCP</text>
+  <text class="s" x="258" y="228">▾ Subagents</text>
+  <text class="s" x="258" y="246">▾ Todo</text>
+  <text class="s" x="258" y="264">▾ Gentle AI</text>
+  <line x1="252" y1="282" x2="386" y2="282" stroke="#22364A"/>
+  <text class="s" x="258" y="302" style="fill:#8798AA;"><tspan fill="#7FD39B">●</tspan> ClaudeCode</text>
+
+  <!-- Step 2: band above the prompt -->
+  <circle cx="612" cy="82" r="11" fill="#3DD6D0"/>
+  <text class="num" x="612" y="87" text-anchor="middle">2</text>
+  <text class="cap" x="632" y="87">Band above the prompt</text>
+
+  <rect class="win" x="600" y="102" width="360" height="220" rx="10"/>
+  <circle cx="616" cy="116" r="3.5" fill="#2A8C9A"/>
+  <circle cx="628" cy="116" r="3.5" fill="#8798AA"/>
+  <circle cx="640" cy="116" r="3.5" fill="#7FD39B"/>
+  <text class="d" x="616" y="146">transcript</text>
+  <rect class="bar" x="616" y="158" width="290" height="7" rx="3"/>
+  <rect class="bar" x="616" y="174" width="240" height="7" rx="3"/>
+  <rect class="bar" x="616" y="190" width="300" height="7" rx="3"/>
+  <rect class="bar" x="616" y="206" width="200" height="7" rx="3"/>
+  <rect x="612" y="244" width="336" height="28" rx="5" fill="#0B1420" stroke="#3DD6D0" stroke-width="1.4"/>
+  <text class="t" x="622" y="263"><tspan fill="#3DD6D0">▸ Agent HUD</tspan>  42% · MCP 3/4 · 2 agents</text>
+  <rect x="612" y="282" width="336" height="26" rx="5" fill="#0B1420" stroke="#22364A"/>
+  <text class="d" x="622" y="300">&gt; prompt</text>
+
+  <!-- 1 -> 2: close with the frame's ✕ or ctrl+x x -->
+  <path class="flow" d="M 404 170 L 594 170" marker-end="url(#hr-arrow)"/>
+  <text class="lbl" x="499" y="158" text-anchor="middle">close ✕ / ctrl+x x</text>
+  <text class="d" x="499" y="192" text-anchor="middle">the sidebar closes</text>
+
+  <!-- 2 -> 1: click the band or /hud -->
+  <path class="flow" d="M 780 326 C 780 410, 220 410, 220 330" marker-end="url(#hr-arrow)"/>
+  <circle cx="270" cy="422" r="11" fill="#3DD6D0"/>
+  <text class="num" x="270" y="427" text-anchor="middle">3</text>
+  <text class="lbl" x="290" y="427">click the band  (or run /hud)</text>
+  <text class="d" x="290" y="446">the sidebar opens again</text>
+
+  <!-- Side note -->
+  <rect x="600" y="440" width="360" height="40" rx="8" fill="#0B1420" stroke="#8798AA" stroke-dasharray="4 3"/>
+  <text class="d" x="614" y="465">Claude Code collapsed the band?</text>
+  <text class="t" x="946" y="465" text-anchor="end" style="fill:#7FD39B;">ctrl+x ctrl+a</text>
+</svg>

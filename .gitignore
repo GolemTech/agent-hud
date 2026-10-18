@@ -1,0 +1,7 @@
+.claude-plugin/types/
+odd/
+node_modules/
+*.log
+openspec/
+.atl/
+.gga

@@ -1,0 +1,569 @@
+
+// The Gentle AI section: the gentle-ai toolset's versions and update status,
+// the Gentleman Guardian Angel (gga) review hook, receipt-driven development
+// (RDD) and the TDD policy. Detection only reads files and runs read-only
+// commands; gga itself is never run for it (every gga command but `run` checks
+// GitHub for updates, and `gga config` sources the repository's `.gga`).
+
+import { buttonText, flowRows, textRows } from './layout'
+import type { Grid } from './layout'
+import { clean } from './text'
+
+// ── Pure helpers ─────────────────────────────────────────────────────────
+
+// `gentle-ai 4.0.0` → 4.0.0: the first x.y.z in the text.
+export const parseVersion = (text: string): string | null => /(\d+\.\d+\.\d+)/.exec(text)?.[1] ?? null
+
+// A gga config (`.gga`, `~/.config/gga/config`) is a shell file of
+// `KEY="value"` lines. It is read as text and never executed: `$(...)` or
+// backticks in a value stay literal text. Comments and other lines are
+// skipped; a later assignment wins, as it would in the shell.
+export const parseGgaConfig = (text: string): Record<string, string> => {
+  const out: Record<string, string> = {}
+  for (const line of text.split('\n')) {
+    const m = /^\s*(?:export\s+)?([A-Za-z_][A-Za-z0-9_]*)=(?:"([^"]*)"|'([^']*)'|([^\s#]*))\s*(?:#.*)?$/.exec(line)
+    if (!m?.[1]) continue
+    out[m[1]] = clean(m[2] ?? m[3] ?? m[4] ?? '')
+  }
+  return out
+}
+
+// gga marks its block in a hook file. Before the markers it wrote a bare
+// `gga run` line (what its own uninstall still looks for), and older still,
+// as `ai-code-review`, an `ai-code-review run` line (which `gga install`
+// migrates). Only such a run command counts: a comment or any other text
+// that mentions either name does not.
+const GGA_MARKER = '# ======== GGA START ========'
+const LEGACY_RUN = /^[ \t]*(?:gga|ai-code-review)[ \t]+run\b/m
+export const ggaHookInstalled = (text: string): boolean => text.includes(GGA_MARKER) || LEGACY_RUN.test(text)
+
+// An absolute path: POSIX `/…`, a Windows drive (`C:\\…`, `C:/…`) or UNC
+// (`\\\\server\\…`). Git for Windows may print any of them.
+export const isAbsolutePath = (p: string): boolean => p.startsWith('/') || /^[A-Za-z]:[\\/]/.test(p) || p.startsWith('\\\\')
+
+// The repo's hooks folder. Claude Code runs git with `core.hooksPath` forced to
+// /dev/null, so `git rev-parse --git-path hooks` cannot be asked; the repo's
+// own `core.hooksPath` (read from its config file alone) or `<common dir>/hooks`
+// is what git uses outside Claude Code. Relative paths are from the repo root.
+export const hooksDir = (root: string, commonDir: string, configured: string, home: string | null): string => {
+  const abs = (p: string) => (isAbsolutePath(p) ? p : `${root}/${p}`)
+  const set = configured.trim()
+  if (!set) return `${abs(commonDir.trim())}/hooks`
+  if (set === '~' || set.startsWith('~/')) return home ? `${home}${set.slice(1)}` : abs(set)
+  return abs(set)
+}
+
+export type OnOff = 'on' | 'off'
+export type RddStatus = {
+  effective: OnOff
+  /** Which setting decides: `global`, `clone` or `default`. */
+  source: string
+  global: OnOff | null
+  /** The clone-local (project) setting; null when unset. */
+  project: OnOff | null
+}
+
+const onOff = (v: unknown): OnOff | null => (v === 'on' || v === 'off' ? v : null)
+
+// `gentle-ai review mode status --json`; null when it is not that shape.
+export const parseRddStatus = (json: string): RddStatus | null => {
+  try {
+    const s = (JSON.parse(json) as { status?: Record<string, unknown> }).status
+    const effective = onOff(s?.effective)
+    if (!s || !effective) return null
+    return {
+      effective,
+      source: typeof s.source === 'string' ? clean(s.source) : 'unknown',
+      global: onOff(s.global),
+      project: onOff(s.clone_local),
+    }
+  } catch {
+    return null
+  }
+}
+
+export type StrictTdd = 'on' | 'off' | 'unset'
+
+// `strict_tdd: true` in `openspec/config.yaml`, written by the sdd-init flow.
+// A line match, not a YAML parser: the value may be quoted, in any case, a
+// YAML 1.1 yes/no/on/off, and followed by spaces and a `# comment`; a
+// commented-out line or any other value does not count.
+const STRICT_TDD_LINE = /^[ \t]*strict_tdd[ \t]*:[ \t]*(["']?)([A-Za-z]+)\1[ \t]*(?:#.*)?\r?$/m
+const YAML_TRUE = new Set(['true', 'yes', 'on'])
+const YAML_FALSE = new Set(['false', 'no', 'off'])
+export const parseStrictTdd = (yaml: string): StrictTdd => {
+  const value = STRICT_TDD_LINE.exec(yaml)?.[2]?.toLowerCase() ?? ''
+  return YAML_TRUE.has(value) ? 'on' : YAML_FALSE.has(value) ? 'off' : 'unset'
+}
+
+// `brew outdated --json=v2` → newer version by short formula name (only
+// outdated formulae are listed); null when the output is not that JSON.
+export const parseBrewOutdated = (json: string): Record<string, string> | null => {
+  try {
+    const { formulae } = JSON.parse(json) as { formulae?: unknown }
+    if (!Array.isArray(formulae)) return null
+    const out: Record<string, string> = {}
+    for (const f of formulae as { name?: unknown; current_version?: unknown }[]) {
+      if (typeof f.name !== 'string' || typeof f.current_version !== 'string') continue
+      out[clean(f.name.split('/').pop() ?? f.name)] = clean(f.current_version)
+    }
+    return out
+  } catch {
+    return null
+  }
+}
+
+// `brew list --versions` → installed version by name (the first listed).
+export const parseBrewList = (text: string): Record<string, string> => {
+  const out: Record<string, string> = {}
+  for (const line of text.split('\n')) {
+    const [name, version] = clean(line).trim().split(/\s+/)
+    if (name && version) out[name] = version
+  }
+  return out
+}
+
+// `gentle-ai update` (a read-only online check; it has no JSON output) →
+// installed and latest version per known tool, from rows like
+// `  [UP] gentle-ai  installed: 4.1.1  latest: 4.2.0  brew upgrade ...`.
+// Its spinner redraws on `\r`, so the text is split on `\r` and `\n`, ANSI
+// sequences are dropped and each line is cleaned; unknown tools, rows without
+// two versions and trailing columns are ignored. Null when no row parses.
+export type GentleUpdate = Partial<Record<ToolName, { installed: string; latest: string }>>
+const ANSI = /\u001b\[[0-9;?]*[ -/]*[@-~]/g
+const UPDATE_ROW = /^\s*\[[^\]]*\]\s+(\S+)\s+installed:\s*(\S+)\s+latest:\s*(\S+)/
+export const parseGentleUpdate = (stdout: string): GentleUpdate | null => {
+  const out: GentleUpdate = {}
+  for (const line of stdout.replace(ANSI, '').split(/[\r\n]/)) {
+    const m = UPDATE_ROW.exec(clean(line))
+    const name = TOOLS.find(t => t === m?.[1])
+    const installed = parseVersion(m?.[2] ?? '')
+    const latest = parseVersion(m?.[3] ?? '')
+    if (name && installed && latest) out[name] = { installed, latest }
+  }
+  return Object.keys(out).length > 0 ? out : null
+}
+
+// `gentle-ai upgrade <tool>` → its summary counts (`0 succeeded, 0 failed,
+// 1 skipped.`) and the tool row's message (`[--] gga  manual update required:
+// ...`), which may wrap onto the following lines until a blank one. Its exit
+// code is 0 even when it upgraded nothing, so the summary is what counts.
+// CRLF is folded first so a wrapped message stays one block; of a line the
+// spinner redrew on `\r`, only its last frame is kept. Null without a summary.
+export type UpgradeResult = { succeeded: number; failed: number; skipped: number; reason: string | null }
+const UPGRADE_SUMMARY = /(\d+)\s+succeeded,\s*(\d+)\s+failed,\s*(\d+)\s+skipped/
+const UPGRADE_ROW = /^\s*\[[^\]]*\]\s+(\S+)\s+(.*)$/
+export const parseUpgradeResult = (stdout: string): UpgradeResult | null => {
+  const lines = stdout
+    .replace(ANSI, '')
+    .replace(/\r\n/g, '\n')
+    .split('\n')
+    .map(l => clean(l.split('\r').filter(f => f.trim() !== '').pop() ?? ''))
+  let counts: Omit<UpgradeResult, 'reason'> | null = null
+  let reason: string | null = null
+  let parts: string[] | null = null
+  for (const line of lines) {
+    const summary = UPGRADE_SUMMARY.exec(line)
+    const row = UPGRADE_ROW.exec(line)
+    if (summary || row || line.trim() === '') {
+      if (parts) reason = parts.join(' ').replace(/\s+/g, ' ').trim() || null
+      parts = null
+    } else if (parts) parts.push(line)
+    if (summary) counts = { succeeded: Number(summary[1]), failed: Number(summary[2]), skipped: Number(summary[3]) }
+    else if (row && TOOLS.some(t => t === row[1])) parts = [row[2] ?? '']
+  }
+  if (parts) reason = parts.join(' ').replace(/\s+/g, ' ').trim() || null
+  return counts ? { ...counts, reason } : null
+}
+
+// A reason longer than this is cut, keeping a trailing URL when it has one.
+export const UPGRADE_REASON_MAX = 120
+const URL_AT_END = /\s*(https?:\/\/\S+)\s*$/
+const shortReason = (reason: string): string => {
+  if (reason.length <= UPGRADE_REASON_MAX) return reason
+  const url = URL_AT_END.exec(reason)?.[1]
+  const keep = url && url.length <= UPGRADE_REASON_MAX - 20 ? url : null
+  const budget = keep ? UPGRADE_REASON_MAX - keep.length - 2 : UPGRADE_REASON_MAX - 1
+  let head = reason.slice(0, budget)
+  const space = head.lastIndexOf(' ')
+  if (space > budget / 2) head = head.slice(0, space)
+  head = head.trimEnd()
+  return keep ? `${head}… ${keep}` : `${head}…`
+}
+
+// The toast after an upgrade: the summary decides, since gentle-ai exits 0
+// when it skips a tool; a non-zero exit is a failure whatever it printed; with
+// no summary at all an exit 0 claims nothing.
+export const upgradeToast = (tool: string, exitCode: number, r: UpgradeResult | null, done: string): string => {
+  if (r && r.failed > 0) return `failed (${r.reason ? shortReason(r.reason) : `exit ${exitCode}`})`
+  if (exitCode !== 0) return `failed (exit ${exitCode})`
+  if (!r) return `${tool}: upgrade finished, check the version`
+  if (r.succeeded > 0) return done
+  if (r.skipped > 0) return r.reason ? `${tool} not upgraded: ${shortReason(r.reason)}` : `${tool} not upgraded`
+  return `${tool}: upgrade finished, check the version`
+}
+
+// `$.process.run` rejects both when a command cannot start and when it is
+// killed at its timeout, with no documented error shape, so the time the call
+// took tells them apart: a start failure rejects at once. A second of slack
+// covers the engine's timer and `$.clock.now()` not agreeing to the ms.
+const TIMEOUT_SLACK_MS = 1_000
+export const runFailure = (elapsedMs: number, timeoutMs: number): string =>
+  elapsedMs >= timeoutMs - TIMEOUT_SLACK_MS ? 'failed (timed out)' : 'failed (could not run)'
+
+// Only a plain relative file name goes into the prompt text; anything else
+// (an absolute path, spaces, punctuation) falls back to the default.
+const SAFE_RULES = /^(?!\/)(?!.*\.\.)[\w./-]{1,80}$/
+export const rulesFileName = (raw: string | undefined): string =>
+  raw && SAFE_RULES.test(raw) ? raw : 'AGENTS.md'
+
+// A RULES_FILE that is set but unsafe: `AGENTS.md` is checked instead, and
+// the section says so.
+export const rulesFileOverridden = (raw: string | undefined): boolean => Boolean(raw) && !SAFE_RULES.test(raw ?? '')
+
+export const rulesPrompt = (raw: string): string => {
+  const name = rulesFileName(raw)
+  const what = name === 'AGENTS.md' ? 'an AGENTS.md' : name
+  return `Create ${what} at the repository root with code review rules for Gentleman Guardian Angel (gga) tailored to this project's stack and conventions; keep it concise and actionable.`
+}
+
+export const STRICT_TDD_PROMPT =
+  "Configure strict TDD for this project: run the sdd-init flow so that openspec/config.yaml sets strict_tdd: true with the project's test command."
+
+// ── Detection ────────────────────────────────────────────────────────────
+
+export const TOOLS = ['gentle-ai', 'gga', 'engram'] as const
+export type ToolName = (typeof TOOLS)[number]
+
+export type ToolStatus = {
+  name: ToolName
+  /** Installed version; null when not installed or unknown. */
+  version: string | null
+  /** Newer version `gentle-ai update` (else brew) knows of; null when up to date or unknown. */
+  update: string | null
+  /** Found on PATH although its version is unknown (gga without brew). */
+  installed?: boolean
+}
+
+// Installed: a known version, or found on PATH without one.
+export const toolInstalled = (t: ToolStatus): boolean => Boolean(t.version) || t.installed === true
+
+export type GentleInfo = {
+  tools: ToolStatus[]
+  /** Whether `gentle-ai update` or brew answered the update check (else no up-to-date claim). */
+  updatesKnown: boolean
+  /** The session's repository root; null outside a repository. */
+  root: string | null
+  gga: {
+    hook: boolean | null
+    /** A project `.gga` exists. */
+    projectConfig: boolean
+    /** The rules file checked: RULES_FILE when safe, else `AGENTS.md`. */
+    rulesFile: string
+    /** RULES_FILE was set but unsafe, so `AGENTS.md` is checked instead. */
+    rulesOverridden?: boolean
+    rules: boolean | null
+  }
+  rdd: RddStatus | null
+  strictTdd: StrictTdd | null
+}
+
+// brew reads its local tap metadata only: no auto-update, no analytics.
+export const BREW_ENV = {
+  HOMEBREW_NO_AUTO_UPDATE: '1',
+  HOMEBREW_NO_ANALYTICS: '1',
+  HOMEBREW_NO_ENV_HINTS: '1',
+} as const
+
+// `gentle-ai update` fires gentle-ai's opportunistic telemetry check; a
+// background check opts out of it for its own run. Set over the host's env.
+export const UPDATE_ENV = { DO_NOT_TRACK: '1' } as const
+
+// How long a read-only command may run before `$.process.run` kills it and
+// rejects: git, gentle-ai and date answer at once; brew loads Ruby first;
+// `gentle-ai update` asks the network and takes a few seconds.
+export const CMD_TIMEOUT_MS = 5_000
+export const BREW_TIMEOUT_MS = 15_000
+export const UPDATE_TIMEOUT_MS = 15_000
+// A confirmed action (`gga install`, `gentle-ai review mode ...`) may write
+// files, so it gets longer than a read-only probe.
+export const ACTION_TIMEOUT_MS = 30_000
+// `gentle-ai upgrade <tool>` downloads and installs a release (brew, go or a
+// binary), which can take minutes.
+export const UPGRADE_TIMEOUT_MS = 300_000
+// A refresh joins a detection under way only this long after it started.
+// Detection runs its probes one after another, each with its own timeout
+// (two brew runs and `gentle-ai update` at most 15 s each, seven other
+// commands at most 5 s: 80 s), so a
+// run older than this is stuck (a read that never answers) and a new one
+// starts; the generation number drops the stuck run's result if it ever ends.
+export const GENTLE_JOIN_DEADLINE_MS = 90_000
+
+// What the section draws.
+export type GentleView = GentleInfo
+
+// ── Actions ──────────────────────────────────────────────────────────────
+
+export type GentleAction =
+  | 'gga-install'
+  | 'gga-init'
+  | 'rdd-project-on'
+  | 'rdd-project-off'
+  | 'rdd-global-on'
+  | 'rdd-global-off'
+  | UpgradeAction
+
+export type UpgradeAction = `gentle-upgrade-${ToolName}`
+
+const OFF_WINS = 'Off always wins: a project "on" cannot override a global "off".'
+
+const UPGRADE_PREFIX = 'gentle-upgrade-'
+export const upgradeAction = (tool: ToolName): UpgradeAction => `${UPGRADE_PREFIX}${tool}`
+const isUpgrade = (action: GentleAction): action is UpgradeAction => action.startsWith(UPGRADE_PREFIX)
+
+export type ActionSpec = {
+  question: string
+  argv: string[]
+  env?: Record<string, string>
+  stdin?: string
+  /** Set only when the action needs longer than `ACTION_TIMEOUT_MS`. */
+  timeoutMs?: number
+  done: string
+  /** The tool an upgrade action upgrades; its result is read by `upgradeToast`. */
+  upgrades?: ToolName
+}
+
+// The confirmation, constant argv and result message of each command button.
+// `tools` gives an upgrade's installed and latest versions for its question.
+export const actionSpec = (action: GentleAction, root: string, tools: readonly ToolStatus[] = []): ActionSpec => {
+  if (isUpgrade(action)) {
+    const tool = action.slice(UPGRADE_PREFIX.length) as ToolName
+    const t = tools.find(x => x.name === tool)
+    const versions = t?.version && t.update ? ` ${t.version} → ${t.update}` : ''
+    return {
+      question: `Upgrade ${tool}${versions} (runs \`gentle-ai upgrade ${tool}\`)? Agent configs are kept.`,
+      argv: ['gentle-ai', 'upgrade', tool],
+      env: { ...UPDATE_ENV },
+      timeoutMs: UPGRADE_TIMEOUT_MS,
+      upgrades: tool,
+      done: tool === 'gentle-ai' ? 'gentle-ai upgraded · run `gentle-ai sync` to refresh agent configs' : `${tool} upgraded`,
+    }
+  }
+  const mode = (verb: 'enable' | 'disable', scope: 'clone' | 'global') =>
+    scope === 'clone'
+      ? ['gentle-ai', 'review', 'mode', verb, '--scope', 'clone', '--cwd', root, '--json']
+      : ['gentle-ai', 'review', 'mode', verb, '--scope', 'global', '--json']
+  switch (action) {
+    case 'gga-install':
+      return {
+        question: 'Install the gga pre-commit hook in this repository (runs `gga install`)?',
+        argv: ['gga', 'install'],
+        env: { CURL_CMD: 'false' },
+        done: 'gga hook installed',
+      }
+    case 'gga-init':
+      return {
+        question: 'Create a sample .gga config in this repository (runs `gga init`)?',
+        argv: ['gga', 'init'],
+        env: { CURL_CMD: 'false' },
+        stdin: 'n\n',
+        done: 'gga config created',
+      }
+    case 'rdd-project-on':
+      return {
+        question: `Turn receipt-driven development on for this project (gentle-ai review mode enable --scope clone)? ${OFF_WINS}`,
+        argv: mode('enable', 'clone'),
+        done: 'RDD on for this project',
+      }
+    case 'rdd-project-off':
+      return {
+        question: `Turn receipt-driven development off for this project (gentle-ai review mode disable --scope clone)? ${OFF_WINS}`,
+        argv: mode('disable', 'clone'),
+        done: 'RDD off for this project',
+      }
+    case 'rdd-global-on':
+      return {
+        question: `Turn receipt-driven development on for every project (gentle-ai review mode enable --scope global)? ${OFF_WINS}`,
+        argv: mode('enable', 'global'),
+        done: 'RDD on globally',
+      }
+    case 'rdd-global-off':
+      return {
+        question: `Turn receipt-driven development off for every project (gentle-ai review mode disable --scope global)? ${OFF_WINS}`,
+        argv: mode('disable', 'global'),
+        done: 'RDD off globally',
+      }
+  }
+}
+
+export const RUN_IT = 'Run it'
+export const CANCEL = 'Cancel'
+
+// ── Section grid ─────────────────────────────────────────────────────────
+
+// One status vocabulary for the whole section, colored by meaning with theme
+// keys: ✓ ok, ✗ missing, ↑ x.y.z update, ● on, ○ off, — unset, ? unknown.
+// A Mark without a tone draws in the default text color.
+export type Tone = 'success' | 'error' | 'warning' | 'subtle'
+export type Mark = { text: string; tone?: Tone }
+
+const OK: Mark = { text: '✓', tone: 'success' }
+const MISSING: Mark = { text: '✗', tone: 'error' }
+const ACTIVE: Mark = { text: '●', tone: 'success' }
+const INACTIVE: Mark = { text: '○', tone: 'subtle' }
+const UNSET: Mark = { text: '—', tone: 'subtle' }
+const UNKNOWN: Mark = { text: '?', tone: 'subtle' }
+
+export const checkMark = (v: boolean | null): Mark => (v ? OK : v === false ? MISSING : UNKNOWN)
+
+// A tool's status: a newer version, up to date, or ? when no update check answered
+// or the version is unknown (no up-to-date claim without it); ✗ when it is
+// not installed.
+export const toolMark = (t: ToolStatus, updatesKnown: boolean): Mark =>
+  !toolInstalled(t)
+    ? MISSING
+    : !t.version
+      ? UNKNOWN
+      : t.update
+        ? { text: `↑ ${t.update}`, tone: 'warning' }
+        : updatesKnown
+          ? OK
+          : UNKNOWN
+
+const INSTALLED: Mark = { text: 'installed' }
+const toolValue = (t: ToolStatus): Mark => (t.version ? { text: t.version } : t.installed ? INSTALLED : UNSET)
+
+// One RDD scope's own setting; `known` is false when RDD could not be read.
+export const scopeMark = (v: OnOff | null, known: boolean): Mark =>
+  !known ? UNKNOWN : v === 'on' ? ACTIVE : v === 'off' ? INACTIVE : UNSET
+
+export const strictMark = (v: StrictTdd): Mark => (v === 'on' ? ACTIVE : v === 'off' ? INACTIVE : UNSET)
+
+// The effective RDD value and what decides it; gentle-ai's `clone` scope is
+// the row the section calls `project`.
+export const rddSummary = (rdd: RddStatus | null): Mark => {
+  if (!rdd) return { text: '? unknown', tone: 'subtle' }
+  const source = rdd.source === 'clone' ? 'project' : rdd.source
+  return rdd.effective === 'on'
+    ? { text: `● on · ${source}`, tone: 'success' }
+    : { text: `○ off · ${source}`, tone: 'subtle' }
+}
+
+// Buttons that fill the prompt instead of running a command.
+export type PromptKey = 'gga-rules' | 'tdd-configure'
+export type GentleButton = { key: GentleAction | PromptKey; label: string; selected?: boolean }
+
+export type GentleRow =
+  | { kind: 'heading'; label: string; summary: Mark | null }
+  | { kind: 'item'; label: string; value: Mark; detail: Mark | null; buttons: GentleButton[] }
+
+const RULES_IGNORED = ' (RULES_FILE ignored)'
+const TDD_SUMMARY: Mark = { text: 'test-first (ODD)' }
+
+// The section's rows, in order, as data: the Pane draws them and counts their
+// rows from the same list, so the tree and the estimate cannot drift apart.
+// Called once gentle-ai is known to be installed.
+export const gentleGrid = (g: GentleView): GentleRow[] => {
+  const rows: GentleRow[] = []
+  const item = (label: string, value: Mark, detail: Mark | null = null, buttons: GentleButton[] = []) =>
+    rows.push({ kind: 'item', label, value, detail, buttons })
+  const scope = (v: OnOff | null, scopeName: 'project' | 'global'): GentleButton[] =>
+    (['on', 'off'] as const).map(choice => ({
+      key: `rdd-${scopeName}-${choice}` as GentleAction,
+      label: choice,
+      selected: v === choice,
+    }))
+
+  rows.push({
+    kind: 'heading',
+    label: 'Tools',
+    summary: null,
+  })
+  // A tool with a newer version offers [upgrade] after its `↑ x.y.z` mark.
+  for (const t of g.tools)
+    item(
+      t.name,
+      toolValue(t),
+      toolMark(t, g.updatesKnown),
+      toolInstalled(t) && t.version && t.update ? [{ key: upgradeAction(t.name), label: 'upgrade' }] : [],
+    )
+
+  const gga = g.tools.find(t => t.name === 'gga')
+  if (gga && toolInstalled(gga)) {
+    rows.push({ kind: 'heading', label: 'gga', summary: g.root ? null : { text: 'no repository', tone: 'subtle' } })
+    if (g.root) {
+      item('hook', checkMark(g.gga.hook), null, [
+        ...(g.gga.hook === false ? [{ key: 'gga-install' as const, label: 'install' }] : []),
+        ...(g.gga.projectConfig ? [] : [{ key: 'gga-init' as const, label: 'init' }]),
+      ])
+      item(
+        'rules',
+        checkMark(g.gga.rules),
+        { text: `${g.gga.rulesFile}${g.gga.rulesOverridden ? RULES_IGNORED : ''}` },
+        g.gga.rules === false ? [{ key: 'gga-rules', label: 'create rules' }] : [],
+      )
+    }
+  }
+
+  rows.push({ kind: 'heading', label: 'RDD', summary: rddSummary(g.rdd) })
+  if (g.root) item('project', scopeMark(g.rdd?.project ?? null, Boolean(g.rdd)), null, scope(g.rdd?.project ?? null, 'project'))
+  item('global', scopeMark(g.rdd?.global ?? null, Boolean(g.rdd)), null, scope(g.rdd?.global ?? null, 'global'))
+
+  rows.push({ kind: 'heading', label: 'TDD', summary: TDD_SUMMARY })
+  if (g.strictTdd)
+    item('strict', strictMark(g.strictTdd), null, g.strictTdd === 'on' ? [] : [{ key: 'tdd-configure', label: 'configure' }])
+  return rows
+}
+
+// ── Grid rows ────────────────────────────────────────────────────────────
+// A row is a label cell and a value cell holding the rest of the line. The
+// value cell wraps inside its own width, so a wrapped part (a button, a
+// detail, a summary) lines up under the value column, never at column 0.
+
+// The label and value cells of a row at `columns`. A heading's summary sits
+// in the detail column (the label spans the value column) when it fits there,
+// else in the value column; the value cell is never under one column.
+export const rowCells = (r: GentleRow, grid: Grid, columns: number): { label: number; cell: number } => {
+  const label =
+    r.kind === 'item' ? grid.label : !r.summary || grid.head + 1 + r.summary.text.length <= columns ? grid.head : grid.label
+  return { label, cell: Math.max(1, columns - label - 1) }
+}
+
+// The widths of what a row's value cell holds, in order: a heading's summary;
+// an item's padded value, detail and buttons.
+export const cellWidths = (r: GentleRow, grid: Grid): number[] =>
+  r.kind === 'heading'
+    ? r.summary
+      ? [r.summary.text.length]
+      : []
+    : [grid.value, ...(r.detail ? [r.detail.text.length] : []), ...r.buttons.map(b => buttonText(b.label, b.selected).length)]
+
+// Lines a value cell of `cell` columns takes: greedy, as flex wrapping places
+// its items; an item wider than the cell sits alone and wraps over its own
+// lines (`textRows`).
+export const cellLines = (widths: readonly number[], cell: number): number => {
+  let lines = 0
+  let used = -1 // no open line
+  for (const w of widths) {
+    if (w > cell) {
+      lines += textRows(w, cell)
+      used = -1
+    } else if (used >= 0 && used + 1 + w <= cell) {
+      used += 1 + w
+    } else {
+      lines += 1
+      used = w
+    }
+  }
+  return lines
+}
+
+// Rows one grid row draws at `columns`: its value cell's lines (one for a
+// bare heading), plus a line when the label cell alone fills the row.
+export const gentleRowLines = (r: GentleRow, grid: Grid, columns: number): number => {
+  const { label, cell } = rowCells(r, grid, columns)
+  const widths = cellWidths(r, grid)
+  if (widths.length === 0) return 1
+  return flowRows([label, cell], columns) - 1 + cellLines(widths, cell)
+}
+
